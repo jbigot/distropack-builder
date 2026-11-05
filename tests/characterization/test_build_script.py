@@ -1,4 +1,4 @@
-"""Record the docker calls of the image build script: Phase 7's bake file must produce the same."""
+"""Record the docker calls of the image build script: Phase 2's bake file must produce the same."""
 
 import sys
 from collections.abc import Callable
