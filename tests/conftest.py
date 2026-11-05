@@ -3,6 +3,7 @@
 import gzip
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -158,12 +159,28 @@ def project(tmp_path: Path) -> Iterator[Callable[[dict[str, list[str]], list[str
     server.server_close()
 
 
+@pytest.fixture(scope='session')
+def pkgbuild_env() -> dict[str, str]:
+    """The environment of the subprocesses running master's scripts.
+
+    tests/e2e/hermetic/sitecustomize.py serves them the recorded release data, so that the release
+    list is the one of the characterization tests, whatever the date and the network.
+    """
+    paths = [str(REPO_ROOT / 'tests' / 'e2e' / 'hermetic'), str(REPO_ROOT)]
+    if os.environ.get('PYTHONPATH'):
+        paths.append(os.environ['PYTHONPATH'])
+    return os.environ | {'PYTHONPATH': os.pathsep.join(paths),
+                         'DISTROPACK_TEST_RECORDINGS': str(DATA)}
+
+
 @pytest.fixture
-def run_pkgbuild() -> Callable[[Path], subprocess.CompletedProcess[str]]:
+def run_pkgbuild(
+        pkgbuild_env: dict[str, str]) -> Callable[[Path], subprocess.CompletedProcess[str]]:
     """Run master's pkgbuild in a project directory, as pdidev/pkgs does, output merged."""
     def run(project_dir: Path) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, str(REPO_ROOT / 'pkgbuild'), '-j', '3', '-p', FIXTURE_PASSPHRASE,
              'build.conf'],
-            cwd=project_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            cwd=project_dir, env=pkgbuild_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True)
     return run
