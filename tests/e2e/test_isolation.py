@@ -20,8 +20,11 @@ def test_undeclared_tool_fails(docker_engine: bool, project: Project, run_pkgbui
     assert shutil.which('cmake'), 'needs cmake on the host, to show that the build cannot see it'
     result = run_pkgbuild(project({dist: [rel]}, ['hello-undeclared']))
     assert result.returncode != 0
-    # make echoes the command whatever happens: only the shell's error proves cmake was missing
-    assert re.search(r'cmake: (command )?not found', result.stdout), result.stdout
+    # make echoes the command whatever happens: only the error of the shell (rpm, "cmake: command not
+    # found") or of make running it directly (deb, "cmake: No such file or directory") proves cmake
+    # was missing
+    assert re.search(r'cmake: (command not found|not found|No such file or directory)',
+                     result.stdout), result.stdout
 
 
 @pytest.mark.e2e
