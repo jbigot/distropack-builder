@@ -1,0 +1,24 @@
+# The fixture project of the end-to-end and golden-master tests; @ORIG_BASE@ is the URL of the
+# local server the tests start, and the tests narrow distribs.*.versions and packages per test.
+distribs:
+  debian:
+    versions: [trixie]
+    repository: {path: repositories/debian, url: "http://repo.example.invalid/debian", name: hello, description: Hello test}
+    gpg: {file: key.gpg}
+  ubuntu:
+    versions: [noble]
+    repository: {path: repositories/ubuntu, url: "http://repo.example.invalid/ubuntu", name: hello, description: Hello test}
+    gpg: {file: key.gpg}
+  fedora:
+    versions: ['44']
+    repository: {path: repositories/fedora, url: "http://repo.example.invalid/fedora", name: hello, description: Hello test}
+    gpg: {file: key.gpg}
+  rocky:
+    versions: ['10']
+    repository: {path: repositories/rocky, url: "http://repo.example.invalid/rocky", name: hello, description: Hello test}
+    gpg: {file: key.gpg}
+packages:
+  hello-lib: {orig: "@ORIG_BASE@/hello-lib-{upstream_version}.tar.gz"}
+  hello-app: {}
+  hello-undeclared: {}
+  hello-needs-root: {}

@@ -1,0 +1,26 @@
+Name:           hello-lib
+Version:        1.0
+Release:        1%{?dist}
+Summary:        Shell library of the distropack-builder test fixture
+License:        MIT
+BuildArch:      noarch
+Source0:        @ORIG_BASE@/hello-lib-%{version}.tar.gz
+BuildRequires:  make
+
+%description
+Defines the hello function that hello-app uses at build time.
+
+%prep
+%autosetup
+
+%build
+
+%install
+%make_install
+
+%files
+/usr/share/hello-lib/hello.sh
+
+%changelog
+* Thu Nov 05 2026 distropack test <test@example.invalid> - 1.0-1
+- Initial release.
