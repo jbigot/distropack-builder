@@ -1,5 +1,6 @@
 """Packaging that relies on more than it declares must fail to build, in every family."""
 
+import re
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -17,7 +18,8 @@ def test_undeclared_tool_fails(rootful_docker: None, project: Project, run_pkgbu
                                dist: str, rel: str) -> None:
     result = run_pkgbuild(project({dist: [rel]}, ['hello-undeclared']))
     assert result.returncode != 0
-    assert 'cmake' in result.stdout
+    # make echoes the command whatever happens: only the shell's error proves cmake was missing
+    assert re.search(r'cmake: (command )?not found', result.stdout), result.stdout
 
 
 @pytest.mark.e2e

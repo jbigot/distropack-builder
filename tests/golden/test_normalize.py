@@ -1,8 +1,11 @@
 """Unit tests of the golden-master normalization, on synthetic aptly and createrepo trees."""
 
 import gzip
+import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 
+import pytest
 import zstandard
 
 from normalize import normalize_repository
@@ -107,3 +110,113 @@ def test_normalize_keeps_release_set(tmp_path: Path) -> None:
 def test_normalize_keeps_rpm_requires(tmp_path: Path) -> None:
     assert (normalize_repository(rpm_tree(tmp_path / 'a'))
             != normalize_repository(rpm_tree(tmp_path / 'b', requires='other')))
+
+
+class Signer:
+    """A throwaway key in its own GNUPGHOME, signing as the repository builders do."""
+
+    def __init__(self, home: Path, uid: str) -> None:
+        self.home = home
+        home.mkdir(mode=0o700)
+        self.gpg('--passphrase', '', '--quick-gen-key', uid, 'ed25519', 'sign', 'never')
+        self.fingerprint = next(
+            line.split(':')[9] for line in self.gpg('--with-colons', '--list-keys').splitlines()
+            if line.startswith('fpr:'))
+
+    def gpg(self, *args: str) -> str:
+        return subprocess.run(['gpg', '--homedir', str(self.home), '--batch', '--pinentry-mode',
+                               'loopback', *args], capture_output=True, text=True,
+                              check=True).stdout
+
+    def clearsign(self, source: Path, target: Path) -> None:
+        self.gpg('--yes', '--output', str(target), '--clearsign', str(source))
+
+    def detach_sign(self, source: Path, target: Path, armor: bool = False) -> None:
+        self.gpg('--yes', '--output', str(target), *(['--armor'] if armor else []),
+                 '--detach-sign', str(source))
+
+    def export(self, target: Path, *, armor: bool = False, secret: bool = False) -> None:
+        self.gpg('--yes', '--output', str(target), *(['--armor'] if armor else []),
+                 '--export-secret-keys' if secret else '--export')
+
+    def close(self) -> None:
+        subprocess.run(['gpgconf', '--homedir', str(self.home), '--kill', 'all'], check=False)
+
+
+@pytest.fixture(scope='module')
+def signers(tmp_path_factory: pytest.TempPathFactory) -> Iterator[tuple[Signer, Signer]]:
+    base = tmp_path_factory.mktemp('gnupg')
+    pair = (Signer(base / 'a', 'repository <a@example.invalid>'),
+            Signer(base / 'b', 'someone else <b@example.invalid>'))
+    yield pair
+    for signer in pair:
+        signer.close()
+
+
+def signed_deb_tree(root: Path, signer: Signer, *, keyring_from: Signer | None = None,
+                    stale_inrelease: bool = False, secret_keyring: bool = False) -> Path:
+    """deb_tree() with its InRelease, Release.gpg and keyring made by real keys."""
+    deb_tree(root, codenames=('trixie',))
+    dist = root / 'dists' / 'trixie'
+    signed = dist / 'Release'
+    if stale_inrelease:
+        signed = root / 'stale-Release'
+        signed.write_text((dist / 'Release').read_text().replace('trixie', 'bookworm'))
+    signer.clearsign(signed, dist / 'InRelease')
+    if stale_inrelease:
+        signed.unlink()
+    signer.detach_sign(dist / 'Release', dist / 'Release.gpg')
+    (keyring_from or signer).export(root / 'hello-archive-keyring.gpg', secret=secret_keyring)
+    return root
+
+
+def signed_rpm_tree(root: Path, signer: Signer) -> Path:
+    """rpm_tree() with its repomd.xml.asc and key made by a real key."""
+    rpm_tree(root)
+    repodata = root / '44' / 'repodata'
+    signer.detach_sign(repodata / 'repomd.xml', repodata / 'repomd.xml.asc', armor=True)
+    signer.export(root / 'hello.key', armor=True)
+    return root
+
+
+def test_signatures_record_the_signing_key(tmp_path: Path,
+                                           signers: tuple[Signer, Signer]) -> None:
+    a, _ = signers
+    result = normalize_repository(signed_deb_tree(tmp_path / 'deb', a))
+    assert result['signatures'] == {
+        'dists/trixie/InRelease': f'VALIDSIG {a.fingerprint}, payload is Release',
+        'dists/trixie/Release.gpg': f'VALIDSIG {a.fingerprint}',
+    }
+    rpm = normalize_repository(signed_rpm_tree(tmp_path / 'rpm', a))
+    assert rpm['signatures'] == {'44/repodata/repomd.xml.asc': f'VALIDSIG {a.fingerprint}'}
+
+
+def test_signatures_detect_a_stale_inrelease(tmp_path: Path,
+                                             signers: tuple[Signer, Signer]) -> None:
+    a, _ = signers
+    result = normalize_repository(signed_deb_tree(tmp_path / 'deb', a, stale_inrelease=True))
+    assert result['signatures']['dists/trixie/InRelease'] == (
+        f'VALIDSIG {a.fingerprint}, payload differs from Release')
+
+
+def test_signatures_detect_another_key(tmp_path: Path, signers: tuple[Signer, Signer]) -> None:
+    a, b = signers
+    result = normalize_repository(signed_deb_tree(tmp_path / 'deb', a, keyring_from=b))
+    assert result['signatures']['dists/trixie/Release.gpg'] == 'not verified'
+
+
+def test_keys_record_public_keys_only(tmp_path: Path, signers: tuple[Signer, Signer]) -> None:
+    a, _ = signers
+    public = normalize_repository(signed_deb_tree(tmp_path / 'pub', a))
+    assert ['fpr', a.fingerprint] in public['keys']['hello-archive-keyring.gpg']
+    assert not any(r[0] == 'sec' for r in public['keys']['hello-archive-keyring.gpg'])
+    secret = normalize_repository(signed_deb_tree(tmp_path / 'sec', a, secret_keyring=True))
+    assert any(r[0] == 'sec' for r in secret['keys']['hello-archive-keyring.gpg'])
+
+
+def test_release_keeps_the_files_it_lists(tmp_path: Path) -> None:
+    a = deb_tree(tmp_path / 'a', codenames=('trixie',))
+    b = deb_tree(tmp_path / 'b', codenames=('trixie',))
+    release = b / 'dists' / 'trixie' / 'Release'
+    release.write_text(release.read_text() + f' {SHA_A} 45 main/source/Sources\n')
+    assert normalize_repository(a) != normalize_repository(b)

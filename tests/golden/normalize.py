@@ -1,18 +1,22 @@
 """Reduce a published repository to what must stay identical from one build to the next.
 
 Two builds of the same packages differ in what is volatile by nature: the `.pdidev.<seconds>`
-suffix of deb versions, dates, checksums, sizes, signatures, and the hash prefixes of the rpm
+suffix of deb versions, dates, checksums, sizes, signature bytes, and the hash prefixes of the rpm
 metadata files. normalize_repository() keeps everything else: the files published, the package
-stanzas, the releases, the dependencies, the file lists, the generated README and .repo files.
+stanzas, the releases and the files they list, the dependencies, the file lists, the generated
+README and .repo files, which key made each repository signature and whether it verifies against
+the key the repository publishes, and the key packets of that published key.
 """
 
 import bz2
 import gzip
 import lzma
 import re
+import subprocess
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import IO
 
 import zstandard
@@ -23,6 +27,9 @@ REPODATA_HASH = re.compile(r'(^|/)[0-9a-f]{64}-')
 DEB_INDEXES = ('Packages', 'Sources')
 DEB_VOLATILE = {'md5sum', 'sha1', 'sha256', 'sha512', 'size', 'files', 'checksums-sha1',
                 'checksums-sha256', 'checksums-sha512', 'date', 'valid-until'}
+# Fields of a Release file listing the indexes it covers, one "<hash> <size> <path>" per line.
+RELEASE_FILE_LISTS = ('md5sum', 'sha1', 'sha256', 'sha512')
+KEY_FILES = ('*-archive-keyring.gpg', '*.key')
 TEXT_FILES = ('index.html', 'README.html')
 NS = {
     'repo': 'http://linux.duke.edu/metadata/repo',
@@ -58,12 +65,20 @@ def read_bytes(path: Path) -> bytes:
 
 
 def deb822_stanzas(path: Path) -> list[dict[str, str]]:
-    """The stanzas of a deb822 index, without their volatile fields, sorted."""
-    stanzas = [
-        {key: normalize_text(value) for key, value in stanza.items()
-         if key.lower() not in DEB_VOLATILE}
-        for stanza in Deb822.iter_paragraphs(read_bytes(path).decode().splitlines())
-    ]
+    """The stanzas of a deb822 index, without their volatile fields, sorted.
+
+    The file lists of a Release file are kept as the sorted paths they list, without hash nor size.
+    """
+    stanzas = []
+    for stanza in Deb822.iter_paragraphs(read_bytes(path).decode().splitlines()):
+        kept = {key: normalize_text(value) for key, value in stanza.items()
+                if key.lower() not in DEB_VOLATILE}
+        if path.name == 'Release':
+            kept |= {f'{key} paths': '\n'.join(sorted(line.split()[-1]
+                                                      for line in value.splitlines()
+                                                      if line.strip()))
+                     for key, value in stanza.items() if key.lower() in RELEASE_FILE_LISTS}
+        stanzas.append(kept)
     return sorted(stanzas, key=lambda s: sorted(s.items()))
 
 
@@ -127,6 +142,77 @@ def rpm_metadata(repodata: Path) -> dict[str, object]:
     return dict(sorted(packages.items()))
 
 
+def published_key(root: Path) -> Path | None:
+    """The public key a repository publishes for its users, if any."""
+    return next((p for pattern in KEY_FILES for p in sorted(root.glob(pattern))), None)
+
+
+def key_packets(key: Path) -> list[list[str]]:
+    """The key, subkey, fingerprint and user id records of a key file, as gpg lists them.
+
+    A file gpg cannot read gives [['unreadable']]: a corrupt published key is a difference too.
+    """
+    with TemporaryDirectory() as home:
+        listing = subprocess.run(['gpg', '--homedir', home, '--batch', '--with-colons',
+                                  '--show-keys', str(key)], capture_output=True, text=True)
+    if listing.returncode != 0:
+        return [['unreadable']]
+    records = []
+    for line in listing.stdout.splitlines():
+        fields = line.split(':')
+        if fields[0] in ('pub', 'sec', 'sub', 'ssb'):
+            records.append([fields[0], fields[3], fields[2]])  # algorithm, length
+        elif fields[0] in ('fpr', 'uid'):
+            records.append([fields[0], fields[9]])
+    return records
+
+
+def verify(signature: Path, key: Path | None, signed: Path | None = None) -> str:
+    """'VALIDSIG <fingerprint>' when signature verifies against key, else 'not verified'.
+
+    A clear-signed file (signed is None) also says whether its payload is the file next to it
+    named Release, as an InRelease must be.
+    """
+    if key is None:
+        return 'not verified'
+    with TemporaryDirectory() as tmp:
+        keyring = Path(tmp) / 'keyring.gpg'
+        subprocess.run(['gpg', '--homedir', tmp, '--batch', '--yes', '--output', str(keyring),
+                        '--dearmor', str(key)] if key.read_bytes().startswith(b'-----BEGIN')
+                       else ['cp', str(key), str(keyring)], check=True, capture_output=True)
+        payload = Path(tmp) / 'payload'
+        status = subprocess.run(
+            ['gpgv', '--homedir', tmp, '--status-fd', '1', '--keyring', str(keyring),
+             *(['--output', str(payload)] if signed is None else []),
+             str(signature), *([str(signed)] if signed is not None else [])],
+            capture_output=True, text=True).stdout
+        fingerprints = [line.split()[2] for line in status.splitlines()
+                        if line.startswith('[GNUPG:] VALIDSIG ')]
+        if not fingerprints:
+            return 'not verified'
+        verdict = 'VALIDSIG ' + ' '.join(fingerprints)
+        release = signature.with_name('Release')
+        if signed is None and signature.name == 'InRelease':
+            same = release.exists() and payload.read_bytes() == release.read_bytes()
+            verdict += ', payload is Release' if same else ', payload differs from Release'
+        return verdict
+
+
+def signatures(root: Path, files: list[Path]) -> dict[str, str]:
+    """Each repository signature, checked against the key the repository publishes."""
+    key = published_key(root)
+    result = {}
+    for path in files:
+        rel = normalize_path(str(path.relative_to(root)))
+        if path.name == 'InRelease' or path.suffix == '.dsc':
+            result[rel] = verify(path, key)
+        elif path.name == 'Release.gpg':
+            result[rel] = verify(path, key, path.with_name('Release'))
+        elif path.name == 'repomd.xml.asc':
+            result[rel] = verify(path, key, path.with_name('repomd.xml'))
+    return result
+
+
 def normalize_repository(root: Path) -> dict[str, object]:
     """What two builds of the same packages into root must have in common."""
     files = sorted(p for p in root.rglob('*') if p.is_file())
@@ -137,4 +223,7 @@ def normalize_repository(root: Path) -> dict[str, object]:
                 for p in files if p.name == 'repomd.xml'},
         'text': {normalize_path(str(p.relative_to(root))): normalize_text(p.read_text())
                  for p in files if p.suffix == '.repo' or p.name in TEXT_FILES},
+        'signatures': signatures(root, files),
+        'keys': {str(p.relative_to(root)): key_packets(p)
+                 for pattern in KEY_FILES for p in sorted(root.glob(pattern))},
     }
