@@ -1,0 +1,134 @@
+{
+  "deb": {},
+  "keys": {
+    "hello.key": [
+      [
+        "pub",
+        "1",
+        "3072"
+      ],
+      [
+        "fpr",
+        "B1C5D1374F33A60728C275E347F88E74A1846964"
+      ],
+      [
+        "uid",
+        "distropack test <test@example.invalid>"
+      ]
+    ]
+  },
+  "rpm": {
+    "10/repodata": {
+      "hello-app.noarch": {
+        "files": [
+          "/usr/share/hello-app/greeting"
+        ],
+        "provides": [
+          {
+            "epoch": "0",
+            "flags": "EQ",
+            "name": "hello-app",
+            "rel": "1.el10",
+            "ver": "1.0"
+          }
+        ],
+        "requires": [],
+        "version": {
+          "epoch": "0",
+          "rel": "1.el10",
+          "ver": "1.0"
+        }
+      },
+      "hello-app.src": {
+        "files": [
+          "hello-app.spec"
+        ],
+        "provides": [
+          {
+            "epoch": "0",
+            "flags": "EQ",
+            "name": "hello-app",
+            "rel": "1.el10",
+            "ver": "1.0"
+          }
+        ],
+        "requires": [
+          {
+            "name": "hello-lib"
+          }
+        ],
+        "version": {
+          "epoch": "0",
+          "rel": "1.el10",
+          "ver": "1.0"
+        }
+      },
+      "hello-lib.noarch": {
+        "files": [
+          "/usr/share/hello-lib/hello.sh"
+        ],
+        "provides": [
+          {
+            "epoch": "0",
+            "flags": "EQ",
+            "name": "hello-lib",
+            "rel": "1.el10",
+            "ver": "1.0"
+          }
+        ],
+        "requires": [],
+        "version": {
+          "epoch": "0",
+          "rel": "1.el10",
+          "ver": "1.0"
+        }
+      },
+      "hello-lib.src": {
+        "files": [
+          "hello-lib-1.0.tar.gz",
+          "hello-lib.spec"
+        ],
+        "provides": [
+          {
+            "epoch": "0",
+            "flags": "EQ",
+            "name": "hello-lib",
+            "rel": "1.el10",
+            "ver": "1.0"
+          }
+        ],
+        "requires": [
+          {
+            "name": "make"
+          }
+        ],
+        "version": {
+          "epoch": "0",
+          "rel": "1.el10",
+          "ver": "1.0"
+        }
+      }
+    }
+  },
+  "signatures": {
+    "10/repodata/repomd.xml.asc": "VALIDSIG B1C5D1374F33A60728C275E347F88E74A1846964"
+  },
+  "text": {
+    "10/hello.repo": "[hello]\nname=Hello test (Rocky Linux 10)\ntype=rpm-md\nbaseurl=http://repo.example.invalid/rocky/10\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=http://repo.example.invalid/rocky/hello.key\nenabled=1\n\n",
+    "README.html": "<h1>Hello test repositories</h1>\n<p>Distributions: Rocky Linux</p>\n<h2>rocky: Rocky Linux 10</h2><p>codename None, at http://repo.example.invalid/rocky/10</p>\n\n"
+  },
+  "tree": [
+    "10/hello.repo",
+    "10/noarch/hello-app-1.0-1.el10.noarch.rpm",
+    "10/noarch/hello-lib-1.0-1.el10.noarch.rpm",
+    "10/repodata/filelists.xml.zst",
+    "10/repodata/other.xml.zst",
+    "10/repodata/primary.xml.zst",
+    "10/repodata/repomd.xml",
+    "10/repodata/repomd.xml.asc",
+    "10/src/hello-app-1.0-1.el10.src.rpm",
+    "10/src/hello-lib-1.0-1.el10.src.rpm",
+    "README.html",
+    "hello.key"
+  ]
+}
