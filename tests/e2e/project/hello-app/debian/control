@@ -1,0 +1,13 @@
+Source: hello-app
+Section: misc
+Priority: optional
+Maintainer: distropack test <test@example.invalid>
+Build-Depends: debhelper-compat (= 13), hello-lib
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+
+Package: hello-app
+Architecture: all
+Depends: ${misc:Depends}
+Description: application of the distropack-builder test fixture
+ Built with the hello function of hello-lib, which it build-depends on.
