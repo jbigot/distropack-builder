@@ -42,6 +42,19 @@ def test_release_list_misplaced_sign(load_script: Callable[[str], ModuleType], f
         load_script('pkgbuild').release_list(cfg)
 
 
+def test_release_list_unknown_release(load_script: Callable[[str], ModuleType],
+                                      frozen: date) -> None:
+    # master selects nothing, silently
+    assert load_script('pkgbuild').release_list({'debian': ['nosuch']}) == set()
+
+
+def test_release_list_unknown_distribution(load_script: Callable[[str], ModuleType],
+                                           frozen: date) -> None:
+    # master fails with the bare StopIteration of next(distributions(id=...))
+    with pytest.raises(StopIteration):
+        load_script('pkgbuild').release_list({'nosuch': ['1']})
+
+
 @pytest.mark.parametrize('flt', FILTERS, ids=filter_id)
 def test_release_filter(load_script: Callable[[str], ModuleType], frozen: date, flt: str,
                         snapshot: object) -> None:
