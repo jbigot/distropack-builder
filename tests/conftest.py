@@ -31,6 +31,9 @@ SCRIPTS = ('distinfo', 'downloader', 'pkgbuild', 'build')
 FROZEN_DATE = date(2026, 11, 5)
 FIXTURE_PROJECT = REPO_ROOT / 'tests' / 'e2e' / 'project'
 FIXTURE_PASSPHRASE = 'test-passphrase'
+# The releases the shared fixture build covers: one per family, and Rocky Linux for Phase 10's el.
+FIXTURE_RELEASES = {'debian': ['trixie'], 'ubuntu': ['noble'], 'fedora': ['44'], 'rocky': ['10']}
+DOCKER_SHIM_DIR = REPO_ROOT / 'tests' / 'e2e' / 'docker-shim'
 
 
 @pytest.fixture
@@ -91,15 +94,18 @@ def snapshot(snapshot: SnapshotAssertion) -> SnapshotAssertion:
 
 
 @pytest.fixture(scope='session')
-def rootful_docker() -> None:
-    """Skip unless a rootful Docker engine answers: master's pkgbuild fails on rootless ones."""
+def docker_engine() -> bool:
+    """Whether the Docker engine is rootless; skips when no engine answers.
+
+    Master's pkgbuild fails on rootless engines (note 164): run_pkgbuild then goes through the
+    docker shim, which drops --user. The golden master itself is recorded on a rootful engine.
+    """
     try:
         info = subprocess.run(['docker', 'info', '--format', '{{json .SecurityOptions}}'],
                               capture_output=True, text=True, check=True).stdout
     except (OSError, subprocess.CalledProcessError):
         pytest.skip('no Docker engine answers')
-    if 'name=rootless' in info:
-        pytest.skip("master's pkgbuild needs a rootful engine (note 164)")
+    return 'name=rootless' in info
 
 
 class QuietHandler(SimpleHTTPRequestHandler):
@@ -123,40 +129,47 @@ def write_tarball(source: Path, target: Path) -> None:
         gz.write(data.getvalue())
 
 
-@pytest.fixture
-def project(tmp_path: Path) -> Iterator[Callable[[dict[str, list[str]], list[str]], Path]]:
-    """Make a copy of the fixture project limited to some releases and packages.
-
-    The upstream tarballs are served on 127.0.0.1 for the lifetime of the test, and every *.in file
-    of the copy is rendered with @ORIG_BASE@ set to that server's URL.
-    """
-    served = tmp_path / 'served'
-    served.mkdir()
+@pytest.fixture(scope='session')
+def orig_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+    """Serve the fixture's upstream tarballs on 127.0.0.1 for the session; yields the base URL."""
+    served = tmp_path_factory.mktemp('served')
     for upstream in (FIXTURE_PROJECT / 'upstream').iterdir():
         write_tarball(upstream, served / f'{upstream.name}.tar.gz')
     server = ThreadingHTTPServer(('127.0.0.1', 0), partial(QuietHandler, directory=served))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-
-    def make(versions: dict[str, list[str]], packages: list[str]) -> Path:
-        project_dir = Path(shutil.copytree(FIXTURE_PROJECT, tmp_path / 'project',
-                                           ignore=shutil.ignore_patterns('upstream')))
-        for template in project_dir.rglob('*.in'):
-            template.with_suffix('').write_text(template.read_text().replace(
-                '@ORIG_BASE@', f'http://127.0.0.1:{server.server_port}'))
-            template.unlink()
-        conf_path = project_dir / 'build.conf'
-        conf = yaml.safe_load(conf_path.read_text())
-        conf['distribs'] = {dist: conf['distribs'][dist] | {'versions': rels}
-                            for dist, rels in versions.items()}
-        conf['packages'] = {name: conf['packages'][name] for name in packages}
-        conf_path.write_text(yaml.safe_dump(conf))
-        return project_dir
-
-    yield make
+    yield f'http://127.0.0.1:{server.server_port}'
     server.shutdown()
     thread.join()
     server.server_close()
+
+
+def make_project(target: Path, orig_base: str, versions: dict[str, list[str]],
+                 packages: list[str]) -> Path:
+    """Copy the fixture project to target, limited to some releases and packages.
+
+    Every *.in file of the copy is rendered with @ORIG_BASE@ set to orig_base.
+    """
+    project_dir = Path(shutil.copytree(FIXTURE_PROJECT, target,
+                                       ignore=shutil.ignore_patterns('upstream')))
+    for template in project_dir.rglob('*.in'):
+        template.with_suffix('').write_text(template.read_text().replace('@ORIG_BASE@', orig_base))
+        template.unlink()
+    conf_path = project_dir / 'build.conf'
+    conf = yaml.safe_load(conf_path.read_text())
+    conf['distribs'] = {dist: conf['distribs'][dist] | {'versions': rels}
+                        for dist, rels in versions.items()}
+    conf['packages'] = {name: conf['packages'][name] for name in packages}
+    conf_path.write_text(yaml.safe_dump(conf))
+    return project_dir
+
+
+@pytest.fixture
+def project(tmp_path: Path,
+            orig_server: str) -> Callable[[dict[str, list[str]], list[str]], Path]:
+    """Copies of the fixture project limited to some releases and packages (see make_project)."""
+    return lambda versions, packages: make_project(tmp_path / 'project', orig_server, versions,
+                                                   packages)
 
 
 @pytest.fixture(scope='session')
@@ -174,13 +187,32 @@ def pkgbuild_env() -> dict[str, str]:
 
 
 @pytest.fixture
-def run_pkgbuild(
-        pkgbuild_env: dict[str, str]) -> Callable[[Path], subprocess.CompletedProcess[str]]:
+def run_pkgbuild(pkgbuild_env: dict[str, str],
+                 docker_engine: bool) -> Callable[[Path], subprocess.CompletedProcess[str]]:
     """Run master's pkgbuild in a project directory, as pdidev/pkgs does, output merged."""
-    def run(project_dir: Path) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [sys.executable, str(REPO_ROOT / 'pkgbuild'), '-j', '3', '-p', FIXTURE_PASSPHRASE,
-             'build.conf'],
-            cwd=project_dir, env=pkgbuild_env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True)
-    return run
+    return partial(pkgbuild_run, pkgbuild_env, docker_engine)
+
+
+def pkgbuild_run(env: dict[str, str], rootless: bool,
+                 project_dir: Path) -> subprocess.CompletedProcess[str]:
+    """Run master's pkgbuild in project_dir, through the docker shim on a rootless engine."""
+    if rootless:
+        env = env | {'PATH': os.pathsep.join([str(DOCKER_SHIM_DIR), env['PATH']])}
+    return subprocess.run(
+        [sys.executable, str(REPO_ROOT / 'pkgbuild'), '-j', '3', '-p', FIXTURE_PASSPHRASE,
+         'build.conf'],
+        cwd=project_dir, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+
+@pytest.fixture(scope='session')
+def fixture_build(tmp_path_factory: pytest.TempPathFactory, orig_server: str,
+                  pkgbuild_env: dict[str, str], docker_engine: bool) -> Path:
+    """hello-lib and hello-app built once per session for FIXTURE_RELEASES; the project directory.
+
+    Shared by the golden-master and install tests, so that one run builds the fixture once.
+    """
+    project_dir = make_project(tmp_path_factory.mktemp('fixture-build') / 'project', orig_server,
+                               FIXTURE_RELEASES, ['hello-lib', 'hello-app'])
+    result = pkgbuild_run(pkgbuild_env, docker_engine, project_dir)
+    assert result.returncode == 0, result.stdout
+    return project_dir

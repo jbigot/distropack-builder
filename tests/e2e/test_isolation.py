@@ -15,7 +15,7 @@ RunPkgbuild = Callable[[Path], subprocess.CompletedProcess[str]]
 
 @pytest.mark.e2e
 @pytest.mark.parametrize('dist,rel', RELEASES)
-def test_undeclared_tool_fails(rootful_docker: None, project: Project, run_pkgbuild: RunPkgbuild,
+def test_undeclared_tool_fails(docker_engine: bool, project: Project, run_pkgbuild: RunPkgbuild,
                                dist: str, rel: str) -> None:
     assert shutil.which('cmake'), 'needs cmake on the host, to show that the build cannot see it'
     result = run_pkgbuild(project({dist: [rel]}, ['hello-undeclared']))
@@ -27,6 +27,6 @@ def test_undeclared_tool_fails(rootful_docker: None, project: Project, run_pkgbu
 @pytest.mark.e2e
 @pytest.mark.xfail(strict=True, reason='builds run as root until Phase 6')
 @pytest.mark.parametrize('dist,rel', RELEASES)
-def test_needs_root_fails(rootful_docker: None, project: Project, run_pkgbuild: RunPkgbuild,
+def test_needs_root_fails(docker_engine: bool, project: Project, run_pkgbuild: RunPkgbuild,
                           dist: str, rel: str) -> None:
     assert run_pkgbuild(project({dist: [rel]}, ['hello-needs-root'])).returncode != 0
