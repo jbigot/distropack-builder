@@ -11,7 +11,7 @@ This repository is a uv workspace of two packages:
 Run the builder from a project directory holding a `build.conf`:
 
 ```sh
-uv run --project <path to this repository> distropack-build build.conf
+uv run --project <path to this repository> distropack-build run build.conf
 ```
 
 `python -m distropack_builder` is equivalent. `./build` builds the Docker images.

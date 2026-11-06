@@ -1038,21 +1038,29 @@ def main():
     base_dir = Path.cwd().absolute()
 
     parser = argparse.ArgumentParser(
-        description='Builds deb & RPM repositories.', allow_abbrev=False
+        prog='distropack-build',
+        description='Builds deb & RPM repositories, and the Docker images that build them.',
+        allow_abbrev=False,
     )
-    parser.add_argument(
+    commands = parser.add_subparsers(dest='command', required=True)
+    run = commands.add_parser(
+        'run', description='Builds deb & RPM repositories.', allow_abbrev=False
+    )
+    images = commands.add_parser(
+        'images', description='Works with the Docker images.', allow_abbrev=False
+    )
+    images.add_subparsers(dest='images_command', required=True)
+    run.add_argument(
         '-p', '--passphrase', action='store', help='The passphrase for the GPG release key'
     )
-    parser.add_argument(
-        '-v', '--verbose', action='store_true', help='Wether to run in verbose mode'
-    )
-    parser.add_argument(
+    run.add_argument('-v', '--verbose', action='store_true', help='Wether to run in verbose mode')
+    run.add_argument(
         '-i', '--interactive', action='store_true', help='Wether to run in interactive mode'
     )
-    parser.add_argument(
+    run.add_argument(
         '-D', '--distributions', action='append', nargs='+', help='The distributions to build'
     )
-    parser.add_argument(
+    run.add_argument(
         '-j',
         '--jobs',
         action='store',
@@ -1061,7 +1069,7 @@ def main():
         default=None,
         help='Number of jobs to run in parallel',
     )
-    parser.add_argument(
+    run.add_argument(
         'build_conf',
         action='store',
         metavar='build.conf',

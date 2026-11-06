@@ -64,14 +64,17 @@ def test_console_script_from_wheel(
     ]:
         result = run(cmd, tmp_path, pkgbuild_env)
         assert result.returncode == 0, result.stdout
-        assert '-D' in result.stdout and 'build.conf' in result.stdout
+        assert 'run' in result.stdout and 'images' in result.stdout
+    result = run([str(installed / 'distropack-build'), 'run', '--help'], tmp_path, pkgbuild_env)
+    assert result.returncode == 0, result.stdout
+    assert '-D' in result.stdout and 'build.conf' in result.stdout
 
 
 def test_arguments_reach_the_configuration(
     installed: Path, tmp_path: Path, pkgbuild_env: dict[str, str]
 ) -> None:
     result = run(
-        [str(installed / 'distropack-build'), '-D', 'debian', '-j', '3', 'nosuch.conf'],
+        [str(installed / 'distropack-build'), 'run', '-D', 'debian', '-j', '3', 'nosuch.conf'],
         tmp_path,
         pkgbuild_env,
     )

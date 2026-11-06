@@ -233,6 +233,7 @@ def pkgbuild_run(
             sys.executable,
             '-m',
             'distropack_builder',
+            'run',
             '-j',
             '3',
             '-p',
