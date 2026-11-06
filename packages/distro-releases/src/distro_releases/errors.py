@@ -25,3 +25,22 @@ class UnknownDistribution(LookupError):
         """An error for id, which is none of known."""
         super().__init__(f'unknown distribution {id}; the distributions are {", ".join(known)}')
         self.id = id
+
+
+class SelectorError(ValueError):
+    """A list of release tokens that cannot be read."""
+
+
+class UnknownRelease(SelectorError):
+    """A release token that names no release and no suite of its distribution.
+
+    Attributes:
+        distribution: the id of the distribution the token was given for.
+        token: the token.
+    """
+
+    def __init__(self, distribution: str, token: str) -> None:
+        """An error for token, given for distribution."""
+        super().__init__(f'{distribution} has no release, nor suite, named {token}')
+        self.distribution = distribution
+        self.token = token

@@ -1,13 +1,17 @@
 """Characterize pkgbuild's release selectors, release filters and deb build order."""
 
+import json
 from collections.abc import Callable
 from datetime import date
+from pathlib import Path
 from types import ModuleType
 from typing import cast
 
 import pytest
+import respx
 
-from support import REPO_ROOT
+from distro_releases import distribution, distributions, matches, select
+from support import FROZEN_DATE, REPO_ROOT
 
 RELEASE_LISTS = [
     {'debian': 'all'},
@@ -101,3 +105,29 @@ def test_deb_build_order(load_script: Callable[[str], ModuleType], frozen: date)
     pkgbuild.order_packages([lib, app])
     assert app._depends == {lib}
     assert lib._depends == set()
+
+
+SNAPSHOTS = Path(__file__).parent / '__snapshots__' / 'test_selectors'
+
+
+@pytest.mark.parametrize('cfg', RELEASE_LISTS, ids=cfg_id)
+def test_select_equals_the_builder(recorded_http: respx.MockRouter, cfg: dict[str, object]) -> None:
+    """distro_releases.select gives the releases the builder's release_list gave."""
+    ((dist, tokens),) = cfg.items()
+    expected = json.loads((SNAPSHOTS / f'test_release_list[{cfg_id(cfg)}].json').read_text())
+    selected = select(distribution(dist), cast(str | list[str], tokens), FROZEN_DATE)
+    assert sorted(r.uid for r in selected) == expected
+
+
+@pytest.mark.parametrize('flt', FILTERS, ids=filter_id)
+def test_matches_equals_the_builder(recorded_http: respx.MockRouter, flt: str) -> None:
+    """distro_releases.matches keeps what the builder's release_filter kept (rhel is new)."""
+    expected = json.loads((SNAPSHOTS / f'test_release_filter[{filter_id(flt)}].json').read_text())
+    kept = [
+        r.uid
+        for d in distributions()
+        if d.id != 'rhel'
+        for r in d.releases(FROZEN_DATE)
+        if matches(r, flt)
+    ]
+    assert sorted(kept) == expected
