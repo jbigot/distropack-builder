@@ -33,5 +33,47 @@ markers = [
 addopts = "--import-mode=importlib -m 'not golden and not e2e and not packaging' --disable-socket --allow-hosts=127.0.0.1"
 
 [tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-include = ["build", "tests/e2e/docker-shim/docker"]  # Python scripts without .py
+src = ["tests", "tests/golden", "packages/*/src"]
+
+[tool.ruff.format]
+quote-style = "single"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]
+"packages/*/tests/**" = ["D"]
+# The ratchet: the code moved unchanged from master ignores exactly the rules it breaks today. The
+# lists only shrink, as later phases rewrite the modules.
+"build" = ["D100", "D103", "SIM300"]
+"packages/distro-releases/src/distro_releases/distinfo.py" = ["B006", "B905", "D100", "D101", "D102", "D103", "D105", "D107", "I001", "SIM103", "UP006", "UP035"]
+"packages/distropack-builder/src/distropack_builder/cli.py" = ["D100", "D101", "D102", "D103", "D107", "D403", "D415", "I001", "SIM102", "SIM117", "SIM910", "UP006", "UP035"]
+"packages/distropack-builder/src/distropack_builder/downloader.py" = ["B904", "D100", "D101", "D102", "D107", "I001"]
 
 [tool.mypy]
+strict = true
+files = ["packages/*/src", "tests"]
+mypy_path = "tests:tests/golden"
+explicit_package_bases = true  # tests/conftest.py and tests/workspace/conftest.py
+
+# The ratchet: the modules moved unchanged from master, typed as later phases rewrite them. The
+# list only shrinks.
+[[tool.mypy.overrides]]
+module = [
+    "distro_releases.distinfo",
+    "distropack_builder.cli",
+    "distropack_builder.downloader",
+]
+ignore_errors = true
+
+# It calls the untyped cli.main; goes when cli leaves the ratchet.
+[[tool.mypy.overrides]]
+module = "distropack_builder.__main__"
+disallow_untyped_calls = false
