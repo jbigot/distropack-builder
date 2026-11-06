@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from support import DATA
+from support import DATA, FIXTURE_RELEASES
 
 # The docker calls of `build --publish` (Phase 0), cut into one block per image, each starting
 # with its build.
@@ -105,3 +105,21 @@ def test_registry_has(
     monkeypatch.setattr(subprocess, 'run', run)
     assert bake.registry_has('debian:trixie-slim') is exists
     assert commands == [['docker', 'buildx', 'imagetools', 'inspect', 'debian:trixie-slim']]
+
+
+def test_runner_pulls_baked_images(
+    bake: ModuleType, load_script: Callable[[str], ModuleType]
+) -> None:
+    """Every image the runner asks for, builders of FIXTURE_RELEASES and tools, is baked."""
+    cli = load_script('pkgbuild')
+    definition = bake.bake_definition(Path('/images'), everything_exists)
+    tags = {tag for target in definition['target'].values() for tag in target['tags']}
+    pulled = [
+        bake.REGISTRY + cli.builder_image(release)
+        for distrib in cli.distributions()
+        for release in distrib.releases(eoled=False)
+        if {release.id, release.codename} & set(FIXTURE_RELEASES.get(distrib.id, []))
+    ]
+    assert len(pulled) == sum(len(releases) for releases in FIXTURE_RELEASES.values())
+    pulled += [f'{bake.REGISTRY}{tool}:latest' for tool in bake.TOOLS]
+    assert set(pulled) <= tags

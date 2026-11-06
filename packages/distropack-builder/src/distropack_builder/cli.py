@@ -26,10 +26,20 @@ from debian.deb822 import Deb822, _PkgRelationMixin
 import yaml
 
 from distro_releases.distinfo import ReleaseInfo, distributions
+from distropack_builder.bake import REGISTRY
 from distropack_builder.downloader import Downloader
 
 VERBOSE = None
-REPO = 'ghcr.io/jbigot/pkg_builder/'
+
+
+def builder_image(dist_release: ReleaseInfo) -> str:
+    """The builder image of a release, relative to REGISTRY, as the bake definition tags it.
+
+    The tag is the release's codename in the Debian family, its version elsewhere.
+    """
+    if 'debian' in dist_release.distrib.id_like:
+        return f'{dist_release.distrib.id}_builder:{dist_release.codename}'
+    return f'{dist_release.distrib.id}_builder:{dist_release.id}'
 
 
 def mount_spec(*fields):
@@ -111,7 +121,7 @@ class DockerContainer:
     _DOCKERCMD = ['docker', 'run', '--rm']
 
     def __init__(self, img_name):
-        self._img_name = [REPO + img_name]
+        self._img_name = [REGISTRY + img_name]
 
     def __call__(
         self,
@@ -512,9 +522,7 @@ class DebPackageBuilder:
             DebRepoBuilder(localrepo, self._gpg).build(self.__dep_packages())
 
             # Build the package in docker
-            DockerContainer(
-                self.dist_release.distrib.id + '_builder:' + self.dist_release.codename
-            )(
+            DockerContainer(builder_image(self.dist_release))(
                 '-j' + str(self._parallelism),
                 '-sa',
                 '-P' + self.dist_release.distrib.id + ',' + self.dist_release.codename,
@@ -802,7 +810,7 @@ class RpmPackageBuilder:
                     orig_file = Path(urlparse(orig_url).path).name
                 self._downloader.download(orig_url, pkg_dir / orig_file)
 
-            DockerContainer(self.dist_release.distrib.id + '_builder:' + self.dist_release.id)(
+            DockerContainer(builder_image(self.dist_release))(
                 mounts=[
                     DockerBindMount('/src', pkg_dir, ro=True),
                     DockerBindMount('/output', self.outdir),
