@@ -5,6 +5,9 @@ description = "Release data of Linux distributions: which releases exist and whi
 requires-python = ">=3.12"
 dependencies = ["httpx", "stamina", "typer"]
 
+[project.scripts]
+distro-releases = "distro_releases.cli:app"
+
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"

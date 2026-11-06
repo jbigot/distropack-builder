@@ -81,3 +81,15 @@ def test_arguments_reach_the_configuration(
     assert result.returncode == 1, result.stdout
     assert 'unrecognized arguments' not in result.stdout
     assert f"No such file or directory: '{tmp_path / 'nosuch.conf'}'" in result.stdout
+
+
+def test_distro_releases_script_from_wheel(
+    installed: Path, tmp_path: Path, pkgbuild_env: dict[str, str]
+) -> None:
+    for cmd in [
+        [str(installed / 'distro-releases'), '--help'],
+        [str(installed / 'python'), '-m', 'distro_releases', '--help'],
+    ]:
+        result = run(cmd, tmp_path, pkgbuild_env)
+        assert result.returncode == 0, result.stdout
+        assert 'list' in result.stdout
