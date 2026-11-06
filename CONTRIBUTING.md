@@ -7,7 +7,7 @@ The repository is a [uv](https://docs.astral.sh/uv/) workspace of two packages,
 
 ```sh
 uv sync                     # the workspace environment, with the dev group
-uv run pre-commit install   # ruff, the lock, actionlint and zizmor at each commit
+uv run pre-commit install   # ruff, mypy, the lock, actionlint and zizmor at each commit
 ```
 
 `uv run <command>` runs a command in that environment. ruff and mypy come from `uv.lock`, in the

@@ -14,6 +14,14 @@ repos:
     language: system
     types_or: [python, pyi]
     require_serial: true
+  - id: mypy
+    name: mypy
+    # Checks the files of [tool.mypy] as a whole: one module's change can break another.
+    entry: uv run --frozen mypy
+    language: system
+    types_or: [python, pyi, toml]
+    pass_filenames: false
+    require_serial: true
 - repo: https://github.com/astral-sh/uv-pre-commit
   rev: 0.13.7
   hooks:
