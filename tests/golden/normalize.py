@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import IO
+from typing import IO, cast
 
 import zstandard
 from debian.deb822 import Deb822
@@ -50,7 +50,7 @@ NS = {
 }
 # Openers, not open files: the callers open them in a with statement.
 OPENERS: dict[str, Callable[[Path], IO[bytes]]] = {
-    '.gz': lambda p: gzip.open(p),  # noqa: SIM115
+    '.gz': lambda p: cast(IO[bytes], gzip.open(p)),  # noqa: SIM115
     '.bz2': lambda p: bz2.open(p),  # noqa: SIM115
     '.xz': lambda p: lzma.open(p),  # noqa: SIM115
     '.zst': lambda p: zstandard.open(p, 'rb'),

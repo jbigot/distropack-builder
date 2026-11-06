@@ -14,7 +14,7 @@ BODHI = 'https://bodhi.fedoraproject.org/releases/?exclude_archived=False&rows_p
 
 def fetch(url: str, name: str, urls: dict[str, str]) -> bytes:
     with urlopen(url) as response:
-        content = response.read()
+        content: bytes = response.read()
     (DATA / name).write_bytes(content)
     urls[url] = name
     return content

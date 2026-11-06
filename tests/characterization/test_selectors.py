@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from datetime import date
 from types import ModuleType
+from typing import cast
 
 import pytest
 
@@ -39,7 +40,9 @@ FILTERS = [
 def cfg_id(cfg: dict[str, object]) -> str:
     """A test id, and snapshot file name: 'debian-bookworm-+' for {'debian': ['bookworm', '+']}."""
     ((dist, versions),) = cfg.items()
-    return '-'.join([dist, *([versions] if isinstance(versions, str) else versions)])
+    return '-'.join(
+        [dist, *([versions] if isinstance(versions, str) else cast(list[str], versions))]
+    )
 
 
 def filter_id(flt: str) -> str:

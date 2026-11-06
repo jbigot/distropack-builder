@@ -4,11 +4,18 @@ import gzip
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 import zstandard
 
 from normalize import normalize_repository
+
+
+def part(result: dict[str, object], key: str) -> dict[str, Any]:
+    """One part of a normalized repository, typed for indexing."""
+    return cast(dict[str, Any], result[key])
+
 
 SHA_A = 'a' * 64
 SHA_B = 'b' * 64
@@ -228,7 +235,7 @@ def signed_rpm_tree(root: Path, signer: Signer) -> Path:
 def test_signatures_record_the_signing_key(tmp_path: Path, signers: tuple[Signer, Signer]) -> None:
     a, _ = signers
     result = normalize_repository(signed_deb_tree(tmp_path / 'deb', a))
-    assert result['signatures'] == {
+    assert part(result, 'signatures') == {
         'dists/trixie/InRelease': f'VALIDSIG {a.fingerprint}, payload is Release',
         'dists/trixie/Release.gpg': f'VALIDSIG {a.fingerprint}',
     }
@@ -241,7 +248,7 @@ def test_signatures_detect_a_stale_inrelease(
 ) -> None:
     a, _ = signers
     result = normalize_repository(signed_deb_tree(tmp_path / 'deb', a, stale_inrelease=True))
-    assert result['signatures']['dists/trixie/InRelease'] == (
+    assert part(result, 'signatures')['dists/trixie/InRelease'] == (
         f'VALIDSIG {a.fingerprint}, payload differs from Release'
     )
 
@@ -249,16 +256,16 @@ def test_signatures_detect_a_stale_inrelease(
 def test_signatures_detect_another_key(tmp_path: Path, signers: tuple[Signer, Signer]) -> None:
     a, b = signers
     result = normalize_repository(signed_deb_tree(tmp_path / 'deb', a, keyring_from=b))
-    assert result['signatures']['dists/trixie/Release.gpg'] == 'not verified'
+    assert part(result, 'signatures')['dists/trixie/Release.gpg'] == 'not verified'
 
 
 def test_keys_record_public_keys_only(tmp_path: Path, signers: tuple[Signer, Signer]) -> None:
     a, _ = signers
     public = normalize_repository(signed_deb_tree(tmp_path / 'pub', a))
-    assert ['fpr', a.fingerprint] in public['keys']['hello-archive-keyring.gpg']
-    assert not any(r[0] == 'sec' for r in public['keys']['hello-archive-keyring.gpg'])
+    assert ['fpr', a.fingerprint] in part(public, 'keys')['hello-archive-keyring.gpg']
+    assert not any(r[0] == 'sec' for r in part(public, 'keys')['hello-archive-keyring.gpg'])
     secret = normalize_repository(signed_deb_tree(tmp_path / 'sec', a, secret_keyring=True))
-    assert any(r[0] == 'sec' for r in secret['keys']['hello-archive-keyring.gpg'])
+    assert any(r[0] == 'sec' for r in part(secret, 'keys')['hello-archive-keyring.gpg'])
 
 
 def test_release_keeps_the_files_it_lists(tmp_path: Path) -> None:

@@ -46,7 +46,8 @@ from support import (
 @pytest.fixture
 def recordings() -> dict[str, str]:
     """The URL -> recorded file mapping; a test may remove entries before loading a script."""
-    return json.loads((DATA / 'urls.json').read_text())
+    urls: dict[str, str] = json.loads((DATA / 'urls.json').read_text())
+    return urls
 
 
 @pytest.fixture
