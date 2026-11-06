@@ -7,17 +7,16 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA = REPO_ROOT / 'tests' / 'characterization' / 'data'
 # The recorded release data, shared with distro-releases' own tests.
 RELEASE_DATA = REPO_ROOT / 'packages' / 'distro-releases' / 'tests' / 'data'
-# The modules load_script reloads, so that distinfo fetches its data again at each test.
+# The modules load_script reloads, so that each test starts from fresh module state.
 MODULES = (
-    'distro_releases.distinfo',
     'distropack_builder.downloader',
+    'distropack_builder.targets',
     'distropack_builder.bake',
     'distropack_builder.cli',
 )
 # The names the tests pass to load_script, from before the move, and the modules they load.
 SCRIPT_MODULES = {
     'build': 'distropack_builder.bake',
-    'distinfo.py': 'distro_releases.distinfo',
     'pkgbuild': 'distropack_builder.cli',
 }
 FROZEN_DATE = date(2026, 11, 5)

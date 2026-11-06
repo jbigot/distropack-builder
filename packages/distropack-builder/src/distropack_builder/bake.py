@@ -11,8 +11,11 @@ import re
 import subprocess
 import sys
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 from typing import Any, Final
+
+from distropack_builder import targets
 
 REGISTRY: Final = 'ghcr.io/jbigot/distropack-builder/'
 PROTOCOL: Final = 1
@@ -56,28 +59,27 @@ def bake_definition(images_dir: Path, base_image_exists: Callable[[str], bool]) 
     Returns:
         The definition, with one target per image and every target in the `default` group.
     """
-    # Imported here: distinfo fetches the release data when it is imported.
-    from distro_releases.distinfo import distributions
-
-    targets: dict[str, dict[str, Any]] = {}
+    on = date.today()
+    entries: dict[str, dict[str, Any]] = {}
     for tool in TOOLS:
-        targets[tool] = {
+        entries[tool] = {
             'context': str(images_dir / tool),
             'tags': [f'{REGISTRY}{tool}:latest', f'{REGISTRY}{tool}:p{PROTOCOL}'],
         }
-    for distrib in distributions():
-        supported = list(distrib.releases(supported=True))
-        for release in distrib.releases(eoled=False):
-            release_tag = release.id
+    for distrib in targets.targets():
+        releases = distrib.releases(on)
+        supported = [r for r in releases if r.is_supported(on)]
+        for release in (r for r in releases if not r.is_eol(on)):
+            release_tag = str(release.version)
             builder = 'rpm_builder'
-            if 'debian' in distrib.id_like:
-                release_tag = release.codename
+            if targets.is_deb(distrib):
+                release_tag = str(release.codename)
                 builder = 'deb_builder'
             docker_release = release_tag
             if distrib.id == 'debian' and release.codename != 'rc-buggy':
                 docker_release += '-slim'
             name = f'{distrib.id}_builder-{release_tag}'
-            base_image = f'{distrib.docker_image}:{docker_release}'
+            base_image = f'{targets.BASE_IMAGES[distrib.id]}:{docker_release}'
             if not base_image_exists(base_image):
                 print(f'UNAVAILABLE {base_image} for {name}', file=sys.stderr)
                 continue
@@ -87,20 +89,19 @@ def bake_definition(images_dir: Path, base_image_exists: Callable[[str], bool]) 
                 tags.append(f'{repository}:{release.codename}')
             if release.suite is not None:
                 tags.append(f'{repository}:{release.suite}')
-            supported_now = release.supported()  # type: ignore[no-untyped-call]
-            if supported_now and not any(release < r for r in supported):
+            if release.is_supported(on) and not any(release < r for r in supported):
                 tags.append(f'{repository}:latest')
-            targets[name] = {
+            entries[name] = {
                 'context': str(images_dir / builder),
                 'tags': tags,
                 'args': {
                     'DIST_ID': distrib.id,
-                    'DIST_IMAGE': distrib.docker_image,
+                    'DIST_IMAGE': targets.BASE_IMAGES[distrib.id],
                     'DIST_RELEASE': docker_release,
                     'DIST_CODENAME': str(release.codename),
                 },
             }
     return {
-        'group': {'default': {'targets': sorted(targets)}},
-        'target': dict(sorted(targets.items())),
+        'group': {'default': {'targets': sorted(entries)}},
+        'target': dict(sorted(entries.items())),
     }

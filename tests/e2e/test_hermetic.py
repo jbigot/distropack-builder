@@ -4,9 +4,11 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from types import ModuleType
 
+import respx
 import yaml
+
+from distro_releases import distribution
 
 Project = Callable[[dict[str, list[str]], list[str]], Path]
 
@@ -16,17 +18,22 @@ def run_python(code: str, env: dict[str, str]) -> subprocess.CompletedProcess[st
 
 
 def test_subprocess_reads_recorded_releases(
-    load_script: Callable[[str], ModuleType], pkgbuild_env: dict[str, str]
+    recorded_http: respx.MockRouter, pkgbuild_env: dict[str, str]
 ) -> None:
-    debian = next(load_script('distinfo.py').distributions(id='debian'))
+    debian = distribution('debian').releases()
     result = run_python(
-        'from distro_releases.distinfo import distributions\n'
-        'debian = next(distributions(id="debian"))\n'
-        'print(",".join(str(r.codename) for r in debian.releases()))',
+        'from distro_releases import distribution\n'
+        'print(",".join(str(r.codename) for r in distribution("debian").releases()))',
         pkgbuild_env,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == ','.join(str(r.codename) for r in debian.releases())
+    assert result.stdout.strip() == ','.join(str(r.codename) for r in debian)
+
+
+def test_subprocess_refuses_unrecorded_http(pkgbuild_env: dict[str, str]) -> None:
+    result = run_python('import httpx\nhttpx.get("https://example.invalid/x")', pkgbuild_env)
+    assert result.returncode != 0
+    assert 'https://example.invalid/x' in result.stderr
 
 
 def test_subprocess_refuses_unrecorded_urls(pkgbuild_env: dict[str, str]) -> None:

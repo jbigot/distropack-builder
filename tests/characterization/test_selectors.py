@@ -10,7 +10,14 @@ from typing import cast
 import pytest
 import respx
 
-from distro_releases import distribution, distributions, matches, select
+from distro_releases import (
+    UnknownDistribution,
+    UnknownRelease,
+    distribution,
+    distributions,
+    matches,
+    select,
+)
 from support import FROZEN_DATE, REPO_ROOT
 
 RELEASE_LISTS = [
@@ -58,7 +65,7 @@ def filter_id(flt: str) -> str:
 def test_release_list(
     load_script: Callable[[str], ModuleType], frozen: date, cfg: dict[str, object], snapshot: object
 ) -> None:
-    assert sorted(r.uid() for r in load_script('pkgbuild').release_list(cfg)) == snapshot
+    assert sorted(r.uid for r in load_script('pkgbuild').release_list(cfg)) == snapshot
 
 
 @pytest.mark.parametrize('cfg', [{'debian': ['+']}, {'debian': ['-']}], ids=cfg_id)
@@ -72,15 +79,16 @@ def test_release_list_misplaced_sign(
 def test_release_list_unknown_release(
     load_script: Callable[[str], ModuleType], frozen: date
 ) -> None:
-    # master selects nothing, silently
-    assert load_script('pkgbuild').release_list({'debian': ['nosuch']}) == set()
+    # Intended difference: master selected nothing, silently.
+    with pytest.raises(UnknownRelease, match='nosuch'):
+        load_script('pkgbuild').release_list({'debian': ['nosuch']})
 
 
 def test_release_list_unknown_distribution(
     load_script: Callable[[str], ModuleType], frozen: date
 ) -> None:
-    # master fails with the bare StopIteration of next(distributions(id=...))
-    with pytest.raises(StopIteration):
+    # Intended difference: master failed with the bare StopIteration of next(distributions(id=...)).
+    with pytest.raises(UnknownDistribution, match='nosuch'):
         load_script('pkgbuild').release_list({'nosuch': ['1']})
 
 
@@ -89,13 +97,13 @@ def test_release_filter(
     load_script: Callable[[str], ModuleType], frozen: date, flt: str, snapshot: object
 ) -> None:
     pkgbuild = load_script('pkgbuild')
-    releases = {r for d in pkgbuild.distributions() for r in d.releases()}
-    assert sorted(r.uid() for r in pkgbuild.release_filter(releases, [flt])) == snapshot
+    releases = {r for d in pkgbuild.targets.targets() for r in d.releases()}
+    assert sorted(r.uid for r in pkgbuild.release_filter(releases, [flt])) == snapshot
 
 
 def test_deb_build_order(load_script: Callable[[str], ModuleType], frozen: date) -> None:
     pkgbuild = load_script('pkgbuild')
-    trixie = next(pkgbuild.distributions(id='debian')).releases(codename='trixie')[0]
+    (trixie,) = (r for r in distribution('debian').releases() if r.codename == 'trixie')
     lib, app = (
         pkgbuild.DebPackageBuilder(
             trixie, REPO_ROOT / 'tests' / 'e2e' / 'project', None, name, None, None, 1

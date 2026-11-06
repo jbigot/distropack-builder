@@ -3,7 +3,7 @@ import atexit
 import csv
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from configparser import ConfigParser
-from datetime import datetime
+from datetime import date, datetime
 from email.utils import parsedate_to_datetime
 import filetype
 import importlib.resources
@@ -25,21 +25,22 @@ from debian.changelog import Changelog, format_date
 from debian.deb822 import Deb822, _PkgRelationMixin
 import yaml
 
-from distro_releases.distinfo import ReleaseInfo, distributions
+from distro_releases import Release, SelectorError, UnknownDistribution, matches, select
+from distropack_builder import targets
 from distropack_builder.bake import REGISTRY
 from distropack_builder.downloader import Downloader
 
 VERBOSE = None
 
 
-def builder_image(dist_release: ReleaseInfo) -> str:
+def builder_image(dist_release: Release) -> str:
     """The builder image of a release, relative to REGISTRY, as the bake definition tags it.
 
     The tag is the release's codename in the Debian family, its version elsewhere.
     """
-    if 'debian' in dist_release.distrib.id_like:
-        return f'{dist_release.distrib.id}_builder:{dist_release.codename}'
-    return f'{dist_release.distrib.id}_builder:{dist_release.id}'
+    if targets.is_deb(dist_release.distribution):
+        return f'{dist_release.distribution.id}_builder:{dist_release.codename}'
+    return f'{dist_release.distribution.id}_builder:{dist_release.version}'
 
 
 def mount_spec(*fields):
@@ -374,7 +375,7 @@ class Control(Deb822, _PkgRelationMixin):
 class DebPackageBuilder:
     def __init__(
         self,
-        dist_release: ReleaseInfo,
+        dist_release: Release,
         base_dir: Path,
         gpg: GpgInfo,
         name: str,
@@ -449,7 +450,7 @@ class DebPackageBuilder:
                 return
 
             # Setup our directories
-            wk_dir = wk_dir / (self._name + '.' + self.dist_release.uid() + '.deb-build')
+            wk_dir = wk_dir / (self._name + '.' + self.dist_release.uid + '.deb-build')
             wk_dir.mkdir()
             self.outdir = wk_dir / 'output'
             self.outdir.mkdir()
@@ -477,8 +478,8 @@ class DebPackageBuilder:
 
             # Generate the automated entry in changelog
             version = str(changelog.version)
-            if self.dist_release.id is not None and self.dist_release.id != '':
-                version += '~bpo' + self.dist_release.id
+            if self.dist_release.version:
+                version += '~bpo' + self.dist_release.version
             chlg_date = parsedate_to_datetime(changelog.date)
             chlg_date = datetime.now(tz=chlg_date.tzinfo) - chlg_date
             version += '.pdidev.' + str(int(chlg_date.total_seconds()))
@@ -514,7 +515,7 @@ class DebPackageBuilder:
             self._deb_tools.mk_build_deps(
                 debian_dir / 'control',
                 deps_dir,
-                [self.dist_release.distrib.id, self.dist_release.codename],
+                [self.dist_release.distribution.id, self.dist_release.codename],
             )
 
             # Build a repo with all dependencies
@@ -525,7 +526,7 @@ class DebPackageBuilder:
             DockerContainer(builder_image(self.dist_release))(
                 '-j' + str(self._parallelism),
                 '-sa',
-                '-P' + self.dist_release.distrib.id + ',' + self.dist_release.codename,
+                '-P' + self.dist_release.distribution.id + ',' + self.dist_release.codename,
                 mounts=[
                     DockerBindMount('/src', pkg_dir),
                     DockerBindMount('/deps', deps_dir),
@@ -598,7 +599,7 @@ class DebRepoBuilder:
         self._deb_tools = DebTools(gpg)
 
     def build(self, pkgs: Iterable[DebPackageBuilder]):
-        pkgs = list(filter(lambda p: 'debian' in p.dist_release.distrib.id_like, pkgs))
+        pkgs = list(filter(lambda p: targets.is_deb(p.dist_release.distribution), pkgs))
 
         if len(pkgs) == 0:
             return
@@ -644,22 +645,23 @@ class DebRepoBuilder:
                     continue
                 if pkg.dist_release not in repos:
                     repos.add(pkg.dist_release)
-                    aptly('repo', 'create', pkg.dist_release.uid())
+                    aptly('repo', 'create', pkg.dist_release.uid)
                 aptly(
                     'repo',
                     'include',
                     '-keyring=/gnupghome/keyring.pgp',
                     '-no-remove-files',
-                    '-repo=' + pkg.dist_release.uid(),
+                    '-repo=' + pkg.dist_release.uid,
                     '/data',
                     data=pkg.outdir,
                 )
             repos = sorted(repos, key=str)
             for dist_release in repos:
-                distribs.add(str(dist_release.distrib))
+                distribs.add(str(dist_release.distribution))
                 if self._readme_tpl is not None:
                     with open(
-                        self._readme_tpl / ('INSTALL.' + str(dist_release.distrib.id) + '.tpl.html')
+                        self._readme_tpl
+                        / ('INSTALL.' + str(dist_release.distribution.id) + '.tpl.html')
                     ) as template_file:
                         install += Template(template_file.read()).substitute(
                             dist_release=str(dist_release),
@@ -687,7 +689,7 @@ class DebRepoBuilder:
                             *publish_repo,
                             *names,
                             '-distribution=' + distribution,
-                            dist_release.uid(),
+                            dist_release.uid,
                             'filesystem:default:',
                         )
 
@@ -712,7 +714,7 @@ class DebRepoBuilder:
 class RpmPackageBuilder:
     def __init__(
         self,
-        dist_release: ReleaseInfo,
+        dist_release: Release,
         base_dir: Path,
         gpg: GpgInfo,
         name: str,
@@ -780,7 +782,7 @@ class RpmPackageBuilder:
                 return
 
             # Setup our directories
-            wk_dir = wk_dir / (self._name + '.' + self.dist_release.uid() + '.rpm-build')
+            wk_dir = wk_dir / (self._name + '.' + self.dist_release.uid + '.rpm-build')
             wk_dir.mkdir()
             self.outdir = wk_dir / 'output'
             self.outdir.mkdir()
@@ -814,7 +816,7 @@ class RpmPackageBuilder:
                 mounts=[
                     DockerBindMount('/src', pkg_dir, ro=True),
                     DockerBindMount('/output', self.outdir),
-                    DockerBindMount('/localrepo', localrepo / self.dist_release.id, ro=True),
+                    DockerBindMount('/localrepo', localrepo / self.dist_release.version, ro=True),
                 ],
                 shm_size='5g',
                 user=None,
@@ -879,7 +881,7 @@ class RpmRepoBuilder:
         self._readme_tpl = readme_tpl
 
     def build(self, pkgs: Iterable[RpmPackageBuilder]):
-        pkgs = list(filter(lambda p: 'fedora' in p.dist_release.distrib.id_like, pkgs))
+        pkgs = list(filter(lambda p: targets.is_rpm(p.dist_release.distribution), pkgs))
         if len(pkgs) == 0:
             return
 
@@ -888,7 +890,7 @@ class RpmRepoBuilder:
         for pkg in pkgs:
             if pkg.outdir is None or not pkg.outdir.is_dir():
                 continue
-            release_dir = self._output_dir / pkg.dist_release.id
+            release_dir = self._output_dir / pkg.dist_release.version
             release_dir.mkdir(parents=True, exist_ok=True)
             for file in pkg.outdir.iterdir():
                 if file.suffix == '.rpm' and len(file.suffixes) >= 2:
@@ -914,9 +916,9 @@ class RpmRepoBuilder:
         distribs = set()
         releases_set = sorted(releases_set, key=str)
         for dist_release in releases_set:
-            release_dir = self._output_dir / dist_release.id
+            release_dir = self._output_dir / dist_release.version
 
-            distribs.add(str(dist_release.distrib))
+            distribs.add(str(dist_release.distribution))
 
             self._rpm_tools.createrepo(release_dir)
             (release_dir / 'repodata' / 'repomd.xml.asc').unlink(missing_ok=True)
@@ -924,7 +926,7 @@ class RpmRepoBuilder:
                 '-b', '-a', 'repodata/repomd.xml', mounts=[DockerBindMount('/data', release_dir)]
             )
             if self._url is not None:
-                baseurl = urljoin(self._url, dist_release.id)
+                baseurl = urljoin(self._url, dist_release.version)
                 repo_data = ConfigParser()
                 repo_data.add_section(self._name)
                 repo_data.set(
@@ -940,7 +942,8 @@ class RpmRepoBuilder:
                     repo_data.write(repo_file, space_around_delimiters=False)
                 if self._readme_tpl is not None:
                     with open(
-                        self._readme_tpl / ('INSTALL.' + str(dist_release.distrib.id) + '.tpl.html')
+                        self._readme_tpl
+                        / ('INSTALL.' + str(dist_release.distribution.id) + '.tpl.html')
                     ) as template_file:
                         install += Template(template_file.read()).substitute(
                             dist_release=str(dist_release),
@@ -970,54 +973,19 @@ def order_packages(pkglst):
         }
 
 
-def release_list(cfg: dict) -> Set[ReleaseInfo]:
+def release_list(cfg: dict, on: date | None = None) -> Set[Release]:
+    """The releases a {distribution id: release tokens} mapping names, as of on."""
     releases = set()
-    for dist_id, release_id_lst in cfg.items():
-        dist = next(distributions(id=dist_id))
-        if not isinstance(release_id_lst, list):
-            release_id_lst = [release_id_lst]
-        prev = set()
-        for release_id in release_id_lst:
-            cur = set()
-            if release_id == 'all':
-                cur.update(dist.releases())
-            elif release_id == '+':
-                if len(prev) == 0:
-                    raise Exception("'+' must follow a release in " + dist_id + ' versions')
-                cur.update(dist.releases(after=max(prev)))
-            elif release_id == '-':
-                if len(prev) == 0:
-                    raise Exception("'-' must follow a release in " + dist_id + ' versions')
-                cur.update(dist.releases(before=min(prev)))
-            elif release_id == 'supported':
-                cur.update(dist.releases(supported=True))
-            else:
-                cur.update(dist.releases(codename=release_id))
-                cur.update(dist.releases(suite=release_id))
-                cur.update(dist.releases(id=release_id))
-            releases |= cur
-            prev = cur
+    for dist_id, tokens in cfg.items():
+        if not isinstance(tokens, list):
+            tokens = [tokens]
+        releases |= select(targets.target(dist_id), [str(token) for token in tokens], on)
     return releases
 
 
-def release_filter(releases: Iterable[ReleaseInfo], dist_filter: Iterable[str]) -> Set[ReleaseInfo]:
-    result = set()
-    for one_filter in dist_filter:
-        for release in releases:
-            if (
-                release.distrib.name == one_filter
-                or one_filter == (str(release.distrib.name) + ':' + str(release.id))
-                or one_filter == (str(release.distrib.name) + ':' + str(release.name))
-                or one_filter == (str(release.distrib.name) + ':' + str(release.suite))
-                or one_filter == (str(release.distrib.name) + ':' + str(release.codename))
-                or str(release.distrib.id) == str(one_filter)
-                or one_filter == (str(release.distrib.id) + ':' + str(release.id))
-                or one_filter == (str(release.distrib.id) + ':' + str(release.name))
-                or one_filter == (str(release.distrib.id) + ':' + str(release.suite))
-                or one_filter == (str(release.distrib.id) + ':' + str(release.codename))
-            ):
-                result.add(release)
-    return result
+def release_filter(releases: Iterable[Release], dist_filter: Iterable[str]) -> Set[Release]:
+    """The releases one of the -D patterns names."""
+    return {release for release in releases if any(matches(release, f) for f in dist_filter)}
 
 
 def build_packages(packages, parallelism: int = None):
@@ -1121,11 +1089,17 @@ def main():
     elif args.jobs is None:
         args.jobs = cpu_count() + 1
 
+    # One date for the whole run, so that a run crossing midnight sees one list of releases.
+    on = date.today()
     try:
         with (base_dir / args.build_conf).open('r') as cfg_file:
             cfg = yaml.safe_load(cfg_file)
 
         downloader = Downloader(verbose=args.verbose, cancellation_point=cancellation_point)
+
+        # The configuration's errors come before any work.
+        for dist_id in cfg['distribs']:
+            targets.target(dist_id)
 
         packages = set()
         repo_builders = []
@@ -1135,7 +1109,7 @@ def main():
             uid = distrib_cfg.get('gpg', {}).get('uid', None)
             gpg = GpgInfo(keyfile, keyid, args.passphrase, uid)
 
-            releases = release_list({dist_id: distrib_cfg.get('versions', {})})
+            releases = release_list({dist_id: distrib_cfg.get('versions', {})}, on)
             if args.distributions is not None and len(args.distributions) != 0:
                 releases = release_filter(releases, {e for el in args.distributions for e in el})
 
@@ -1144,9 +1118,9 @@ def main():
                 for name, pkg_cfg in cfg['packages'].items():
                     if not isinstance(pkg_cfg, dict):
                         pkg_cfg = {'value': pkg_cfg}
-                    if dist_release in release_list(pkg_cfg.get('disable', {})):
+                    if dist_release in release_list(pkg_cfg.get('disable', {}), on):
                         continue
-                    if 'debian' in dist_release.distrib.id_like:
+                    if targets.is_deb(dist_release.distribution):
                         dist_packages.add(
                             DebPackageBuilder(
                                 dist_release,
@@ -1158,7 +1132,7 @@ def main():
                                 args.jobs,
                             )
                         )
-                    if 'fedora' in dist_release.distrib.id_like:
+                    if targets.is_rpm(dist_release.distribution):
                         dist_packages.add(
                             RpmPackageBuilder(
                                 dist_release,
@@ -1175,11 +1149,11 @@ def main():
             url = distrib_cfg.get('repository', {}).get('url')
             name = distrib_cfg.get('repository', {}).get('name')
             description = distrib_cfg.get('repository', {}).get('description')
-            if 'debian' in next(distributions(id=dist_id)).id_like:
+            if targets.is_deb(targets.target(dist_id)):
                 repo_builder = DebRepoBuilder(
                     output_path, gpg, url, name, description, base_dir / 'README.tpl'
                 )
-            elif 'fedora' in next(distributions(id=dist_id)).id_like:
+            elif targets.is_rpm(targets.target(dist_id)):
                 repo_builder = RpmRepoBuilder(
                     output_path, gpg, url, name, description, base_dir / 'README.tpl'
                 )
@@ -1196,6 +1170,8 @@ def main():
         for builder in repo_builders:
             builder[0].build(builder[1])
 
+    except (targets.NotATarget, UnknownDistribution, SelectorError) as error:
+        parser.error(str(error))
     except KeyboardInterrupt:
         if args.interactive:
             input('Press Enter to clean-up and continue...')

@@ -141,10 +141,17 @@ def test_runner_pulls_baked_images(
     tags = {tag for target in definition['target'].values() for tag in target['tags']}
     pulled = [
         bake.REGISTRY + cli.builder_image(release)
-        for distrib in cli.distributions()
-        for release in distrib.releases(eoled=False)
-        if {release.id, release.codename} & set(FIXTURE_RELEASES.get(distrib.id, []))
+        for distrib in cli.targets.targets()
+        for release in distrib.releases()
+        if not release.is_eol()
+        if {release.version, release.codename} & set(FIXTURE_RELEASES.get(distrib.id, []))
     ]
     assert len(pulled) == sum(len(releases) for releases in FIXTURE_RELEASES.values())
     pulled += [f'{bake.REGISTRY}{tool}:latest' for tool in bake.TOOLS]
     assert set(pulled) <= tags
+
+
+def test_bake_file_has_no_rhel(bake: ModuleType) -> None:
+    """distro-releases lists RHEL, which is not a build target."""
+    definition = bake.bake_definition(Path('/images'), everything_exists)
+    assert not [name for name in definition['target'] if name.startswith('rhel')]

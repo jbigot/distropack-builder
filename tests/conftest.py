@@ -14,7 +14,6 @@ import subprocess
 import sys
 import tarfile
 import threading
-import urllib.request
 from collections.abc import Callable, Iterator
 from datetime import date
 from functools import partial
@@ -65,26 +64,13 @@ def recorded_http(recordings: dict[str, str]) -> Iterator[respx.MockRouter]:
 
 
 @pytest.fixture
-def recorded_urlopen(monkeypatch: pytest.MonkeyPatch, recordings: dict[str, str]) -> None:
-    """Serve urllib.request.urlopen from the recordings, failing on any other URL."""
-
-    def urlopen(url: str, *args: object, **kwargs: object) -> object:
-        if url not in recordings:
-            raise KeyError(f'no recording for {url}')
-        return (RELEASE_DATA / recordings[url]).open('rb')
-
-    monkeypatch.setattr(urllib.request, 'urlopen', urlopen)
-
-
-@pytest.fixture
 def load_script(
-    recorded_urlopen: None, monkeypatch: pytest.MonkeyPatch
+    recorded_http: respx.MockRouter, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[Callable[[str], ModuleType]]:
     """Load a fresh copy of the module a script of master became, by the script's name.
 
-    'distinfo.py', 'pkgbuild' and 'build' load the modules they became (SCRIPT_MODULES). The
-    modules are dropped from sys.modules first, so that distinfo fetches its data again, from the
-    recordings, at each test.
+    'pkgbuild' and 'build' load the modules they became (SCRIPT_MODULES), dropped from sys.modules
+    first; the release data come from the recordings, fetched again at each test.
     """
     for name in MODULES:
         monkeypatch.delitem(sys.modules, name, raising=False)

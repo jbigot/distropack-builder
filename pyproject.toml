@@ -39,7 +39,7 @@ addopts = "--import-mode=importlib -m 'not golden and not e2e and not packaging'
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-include = ["build", "tests/e2e/docker-shim/docker"]  # Python scripts without .py
+extend-include = ["tests/e2e/docker-shim/docker"]  # a Python script without .py
 src = ["tests", "tests/golden", "packages/*/src"]
 
 [tool.ruff.format]
@@ -56,8 +56,6 @@ convention = "google"
 "packages/*/tests/**" = ["D"]
 # The ratchet: the code moved unchanged from master ignores exactly the rules it breaks today. The
 # lists only shrink, as later phases rewrite the modules.
-"build" = ["D100", "D103", "SIM300"]
-"packages/distro-releases/src/distro_releases/distinfo.py" = ["B006", "B905", "D100", "D101", "D102", "D103", "D105", "D107", "I001", "SIM103", "UP006", "UP035"]
 "packages/distropack-builder/src/distropack_builder/cli.py" = ["D100", "D101", "D102", "D103", "D107", "D403", "D415", "I001", "SIM102", "SIM117", "SIM910", "UP006", "UP035"]
 "packages/distropack-builder/src/distropack_builder/downloader.py" = ["B904", "D100", "D101", "D102", "D107", "I001"]
 
@@ -71,7 +69,6 @@ explicit_package_bases = true  # tests/conftest.py and tests/workspace/conftest.
 # list only shrinks.
 [[tool.mypy.overrides]]
 module = [
-    "distro_releases.distinfo",
     "distropack_builder.cli",
     "distropack_builder.downloader",
 ]

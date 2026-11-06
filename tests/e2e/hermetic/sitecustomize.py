@@ -1,9 +1,10 @@
 """Serve recorded release data to the builder when the tests run it as a subprocess.
 
-Python imports this module at startup when its directory is on PYTHONPATH, before distinfo imports
-urlopen. Recorded URLs (DISTROPACK_TEST_RECORDINGS/urls.json) are served from their recording, the
-local test server (127.0.0.1) is reached for real, and any other URL fails, naming it: the builder
-runs unchanged, with neither network nor date-dependent data.
+Python imports this module at startup when its directory is on PYTHONPATH, before the builder makes
+any request. Recorded URLs (DISTROPACK_TEST_RECORDINGS/urls.json) are served from their recording,
+the local test server (127.0.0.1) is reached for real, and any other URL fails, naming it: the
+builder runs unchanged, with neither network nor date-dependent data. distro-releases fetches with
+httpx, served by respx; the downloader still uses urllib's urlopen, patched below.
 """
 
 import json
@@ -28,3 +29,19 @@ def _urlopen(url: Any, *args: Any, **kwargs: Any) -> Any:
 
 
 urllib.request.urlopen = _urlopen
+
+
+try:
+    import httpx
+    import respx
+except ImportError:
+    # The interpreters of the test scripts (the docker shim) have neither, and fetch nothing.
+    pass
+else:
+    _router = respx.mock(assert_all_called=False, assert_all_mocked=True)
+    for _url, _name in _URLS.items():
+        _router.get(_url).mock(
+            return_value=httpx.Response(200, content=(_RECORDINGS / _name).read_bytes())
+        )
+    _router.route(host='127.0.0.1').pass_through()
+    _router.start()

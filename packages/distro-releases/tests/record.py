@@ -1,7 +1,8 @@
-"""Record the release data distro_releases.distinfo fetches, for the characterization tests.
+"""Record the release data the sources of distro-releases fetch, for the tests.
 
 Run by hand, with the network: it is never collected by pytest. The URLs must stay byte-identical
-to the ones distinfo builds, since the recorded urlopen looks them up verbatim.
+to the ones the sources build, since the recordings are looked up verbatim. Re-recording changes
+the release data every snapshot was taken from: record a new distribution's file alone.
 """
 
 import json

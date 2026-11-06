@@ -69,3 +69,18 @@ def test_bake_file_command(
     assert len(definition['target']) == 22
     for target in definition['target'].values():
         assert (Path(target['context']) / 'Dockerfile').is_file()
+
+
+def test_rhel_is_not_a_target(
+    main: Callable[..., None], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / 'build.conf').write_text(
+        'distribs:\n  rhel:\n    versions: [supported]\npackages: {}\n'
+    )
+    with pytest.raises(SystemExit) as exit:
+        main('run', 'build.conf')
+    assert exit.value.code == 2
+    assert (
+        'rhel is not a build target; the targets are almalinux, debian, fedora, rocky, ubuntu'
+        in capsys.readouterr().err
+    )
