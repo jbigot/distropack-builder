@@ -52,6 +52,51 @@ jobs:
       with: { persist-credentials: false }
     - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
     - run: uv run --python 3.13 pytest -m "golden or e2e" -rs -v
+  docker:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [docker, docker-rootless, podman]
+    env:
+      DISTROPACK_TEST_ENGINE: ${{ matrix.engine }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with: { persist-credentials: false }
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+    - name: Runtime directory
+      if: matrix.engine != 'docker'
+      shell: bash
+      run: |
+        # Where rootless engines put their sockets; the runner's session may not provide it.
+        dir=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+        [ -d "$dir" ] || sudo install -d -o "$(id -u)" -g "$(id -g)" -m 700 "$dir"
+        echo "XDG_RUNTIME_DIR=$dir" >> "$GITHUB_ENV"
+    - name: Rootless Docker
+      if: matrix.engine == 'docker-rootless'
+      shell: bash
+      run: |
+        # Ubuntu 24.04 restricts the unprivileged user namespaces rootlesskit needs.
+        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        if ! command -v dockerd-rootless-setuptool.sh; then
+          sudo apt-get install -y docker-ce-rootless-extras
+        fi
+        sudo apt-get install -y uidmap
+        start=$SECONDS
+        dockerd-rootless-setuptool.sh install --force
+        echo "rootless Docker set up in $((SECONDS - start)) s"
+        echo "DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock" >> "$GITHUB_ENV"
+    - name: Podman, alone
+      if: matrix.engine == 'podman'
+      shell: bash
+      run: |
+        # Rootful Docker's socket goes, so that the builder has to find Podman's by itself.
+        sudo systemctl stop docker.service docker.socket
+        mkdir -p "$XDG_RUNTIME_DIR/podman"
+        nohup podman system service --time=0 "unix://$XDG_RUNTIME_DIR/podman/podman.sock" > /dev/null 2>&1 &
+        until [ -S "$XDG_RUNTIME_DIR/podman/podman.sock" ]; do sleep 0.2; done
+    - run: uv run --python 3.13 pytest -m docker -rs -v
   docs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
