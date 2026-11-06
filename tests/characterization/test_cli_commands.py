@@ -154,3 +154,31 @@ def test_disable_naming_a_non_target_exits_2(
         main('run', 'build.conf')
     assert exit.value.code == 2
     assert 'rhel is not a build target' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('how', ['option', 'environment'])
+def test_docker_host_option(
+    main: Callable[..., None],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    how: str,
+) -> None:
+    """A remote endpoint is refused before any work, given by option or by environment."""
+    write_conf(tmp_path, {'distribs': {'debian': {'versions': ['supported']}}, 'packages': {}})
+    if how == 'option':
+        args = ['run', '--docker-host', 'tcp://x:2375', 'build.conf']
+    else:
+        monkeypatch.setenv('DISTROPACK_DOCKER_HOST', 'tcp://x:2375')
+        args = ['run', 'build.conf']
+    with pytest.raises(SystemExit) as exit:
+        main(*args)
+    assert exit.value.code == 2
+    assert 'tcp://x:2375 is not a local engine' in capsys.readouterr().err
+
+
+def test_cancellation_reaches_the_runner(load_script: Callable[[str], ModuleType]) -> None:
+    cli = load_script('pkgbuild')
+    assert not cli.CANCELLATION.cancelled
+    cli.cancellation_request()
+    assert cli.CANCELLATION.cancelled

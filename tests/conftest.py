@@ -32,7 +32,6 @@ from syrupy.extensions.json import JSONSnapshotExtension
 
 from distro_releases import catalog
 from support import (
-    DOCKER_SHIM_DIR,
     FIXTURE_PASSPHRASE,
     FIXTURE_PROJECT,
     FIXTURE_RELEASES,
@@ -105,23 +104,18 @@ def snapshot(snapshot: SnapshotAssertion) -> SnapshotAssertion:
 
 
 @pytest.fixture(scope='session')
-def docker_engine() -> bool:
-    """Whether the Docker engine is rootless; skips when no engine answers.
+def docker_engine() -> None:
+    """Skips when no container engine answers the builder (Docker or Podman, rootful or rootless).
 
-    The builder, as master's pkgbuild, fails on rootless engines (note 164): run_pkgbuild then goes
-    through the docker shim, which drops --user. The golden master itself is recorded on a rootful
-    engine.
+    Asked in a subprocess, as the builder runs in the tests that need it.
     """
-    try:
-        info = subprocess.run(
-            ['docker', 'info', '--format', '{{json .SecurityOptions}}'],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout
-    except (OSError, subprocess.CalledProcessError):
-        pytest.skip('no Docker engine answers')
-    return 'name=rootless' in info
+    result = subprocess.run(
+        [sys.executable, '-c', 'from distropack_builder.docker import Engine; Engine.connect()'],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        pytest.skip(f'no container engine answers: {result.stderr.strip().splitlines()[-1:]}')
 
 
 class QuietHandler(SimpleHTTPRequestHandler):
@@ -212,18 +206,14 @@ def pkgbuild_env() -> dict[str, str]:
 
 @pytest.fixture
 def run_pkgbuild(
-    pkgbuild_env: dict[str, str], docker_engine: bool
+    pkgbuild_env: dict[str, str], docker_engine: None
 ) -> Callable[[Path], subprocess.CompletedProcess[str]]:
     """Run the builder in a project directory, as pdidev/pkgs runs pkgbuild, output merged."""
-    return partial(pkgbuild_run, pkgbuild_env, docker_engine)
+    return partial(pkgbuild_run, pkgbuild_env)
 
 
-def pkgbuild_run(
-    env: dict[str, str], rootless: bool, project_dir: Path
-) -> subprocess.CompletedProcess[str]:
-    """Run the builder in project_dir, through the docker shim on a rootless engine."""
-    if rootless:
-        env = env | {'PATH': os.pathsep.join([str(DOCKER_SHIM_DIR), env['PATH']])}
+def pkgbuild_run(env: dict[str, str], project_dir: Path) -> subprocess.CompletedProcess[str]:
+    """Run the builder in project_dir, on whatever engine answers it."""
     return subprocess.run(
         [
             sys.executable,
@@ -249,7 +239,7 @@ def fixture_build(
     tmp_path_factory: pytest.TempPathFactory,
     orig_server: str,
     pkgbuild_env: dict[str, str],
-    docker_engine: bool,
+    docker_engine: None,
 ) -> Path:
     """hello-lib and hello-app built once per session for FIXTURE_RELEASES; the project directory.
 
@@ -261,6 +251,6 @@ def fixture_build(
         FIXTURE_RELEASES,
         ['hello-lib', 'hello-app'],
     )
-    result = pkgbuild_run(pkgbuild_env, docker_engine, project_dir)
+    result = pkgbuild_run(pkgbuild_env, project_dir)
     assert result.returncode == 0, result.stdout
     return project_dir

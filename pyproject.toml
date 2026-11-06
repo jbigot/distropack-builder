@@ -42,7 +42,6 @@ addopts = "--import-mode=importlib -m 'not golden and not e2e and not packaging 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-include = ["tests/e2e/docker-shim/docker"]  # a Python script without .py
 src = ["tests", "tests/golden", "packages/*/src"]
 
 [tool.ruff.format]

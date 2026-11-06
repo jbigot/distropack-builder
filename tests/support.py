@@ -24,4 +24,3 @@ FIXTURE_PROJECT = REPO_ROOT / 'tests' / 'e2e' / 'project'
 FIXTURE_PASSPHRASE = 'test-passphrase'
 # The releases the shared fixture build covers: one per family, and Rocky Linux for Phase 10's el.
 FIXTURE_RELEASES = {'debian': ['trixie'], 'ubuntu': ['noble'], 'fedora': ['44'], 'rocky': ['10']}
-DOCKER_SHIM_DIR = REPO_ROOT / 'tests' / 'e2e' / 'docker-shim'

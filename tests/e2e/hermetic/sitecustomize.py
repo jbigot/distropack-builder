@@ -35,7 +35,7 @@ try:
     import httpx
     import respx
 except ImportError:
-    # The interpreters of the test scripts (the docker shim) have neither, and fetch nothing.
+    # The interpreters without them (the installed wheels of the packaging tests) fetch nothing.
     pass
 else:
     _router = respx.mock(assert_all_called=False, assert_all_mocked=True)

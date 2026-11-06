@@ -1,19 +1,19 @@
 import argparse
 import atexit
-import csv
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from configparser import ConfigParser
 from datetime import date, datetime
 from email.utils import parsedate_to_datetime
 import filetype
 import importlib.resources
-from io import StringIO
 import json
-from os import cpu_count, getegid, geteuid, link
+import logging
+import os
+from os import cpu_count, link
 from pathlib import Path
 import re
 from shutil import copy2, copytree, rmtree
-from subprocess import Popen, CalledProcessError, PIPE, STDOUT
+from subprocess import CalledProcessError
 import sys
 from sys import stderr
 from string import Template
@@ -23,6 +23,7 @@ from urllib.parse import parse_qsl, ParseResult, urljoin, urlparse, urlunparse
 
 from debian.changelog import Changelog, format_date
 from debian.deb822 import Deb822, _PkgRelationMixin
+import docker.errors
 import yaml
 
 from distro_releases import (
@@ -35,6 +36,9 @@ from distro_releases import (
 )
 from distropack_builder import targets
 from distropack_builder.bake import REGISTRY
+from distropack_builder.docker import Cancellation, Engine, Mount
+from distropack_builder.docker import run as run_container
+from distropack_builder.docker.endpoint import EngineNotFound, RemoteEndpoint
 from distropack_builder.downloader import Downloader
 
 VERBOSE = None
@@ -50,21 +54,18 @@ def builder_image(dist_release: Release) -> str:
     return f'{dist_release.distribution.id}_builder:{dist_release.version}'
 
 
-def mount_spec(*fields):
-    """docker parses the value of --mount as a CSV line"""
-    spec = StringIO()
-    csv.writer(spec, lineterminator='').writerow(fields)
-    return spec.getvalue()
-
-
 def urlnormalize(url):
     su = urlparse(url)
     su = ParseResult(su.scheme, su.netloc, str(Path(su.path)), su.params, su.query, su.fragment)
     return urlunparse(su)
 
 
-RUNNING_PROCESSES = set()
-TERMINATE_REQUEST = False
+# The engine every container runs on, connected by main; until Phase 5's BuildContext.
+ENGINE: Engine | None = None
+# What cancels every container of the run, and the downloads between them.
+CANCELLATION = Cancellation()
+# How a container is run: the seam the orchestration tests replace.
+RUN = run_container
 
 
 class CancellationException(Exception):
@@ -72,50 +73,12 @@ class CancellationException(Exception):
 
 
 def cancellation_point():
-    if TERMINATE_REQUEST:
+    if CANCELLATION.cancelled:
         raise CancellationException('Termination request received')
 
 
 def cancellation_request():
-    global TERMINATE_REQUEST
-    TERMINATE_REQUEST = True
-    for process in RUNNING_PROCESSES:
-        if process.poll() is None:
-            process.terminate()
-
-
-def checked_run(cmd, cwd=None, return_stdout=False):
-    with TemporaryDirectory() as tmp:
-        if cwd is None:
-            cwd = tmp
-        err = STDOUT
-        if VERBOSE:
-            out = None
-            print('$ ' + ' '.join([str(c) for c in cmd]))
-        else:
-            out = PIPE
-        if return_stdout:
-            err = out
-            out = PIPE
-        cancellation_point()
-        with Popen(cmd, cwd=cwd, stdout=out, stderr=err, encoding='UTF8') as process:
-            try:
-                RUNNING_PROCESSES.add(process)
-                out, err = process.communicate()
-            except BaseException:
-                process.kill()
-                raise
-            finally:
-                RUNNING_PROCESSES.remove(process)
-                cancellation_point()
-            retcode = process.poll()
-            if retcode:
-                raise CalledProcessError(retcode, process.args, output=out, stderr=err)
-            if return_stdout:
-                if VERBOSE:
-                    print(out, end='')
-                return out
-    return None
+    CANCELLATION.cancel()
 
 
 class DockerBindMount:
@@ -126,10 +89,8 @@ class DockerBindMount:
 
 
 class DockerContainer:
-    _DOCKERCMD = ['docker', 'run', '--rm']
-
     def __init__(self, img_name):
-        self._img_name = [REGISTRY + img_name]
+        self._img_name = REGISTRY + img_name
 
     def __call__(
         self,
@@ -138,41 +99,21 @@ class DockerContainer:
         shm_size: str | None = None,
         workdir: Path | str | None = None,
         return_stdout: bool = False,
-        user: str = str(geteuid()) + ':' + str(getegid()),
+        as_root: bool = False,
         env: Iterable[tuple[str, any]] = [],
     ):
-        mountparam = []
-        for m in mounts:
-            mountparam += [
-                '--mount',
-                mount_spec(
-                    'type=bind',
-                    *(['ro'] if m.ro else []),
-                    'target=' + str(m.target),
-                    'source=' + str(m.source),
-                ),
-            ]
-        workdirparam = []
-        if workdir is not None:
-            workdirparam = ['--workdir', str(Path(workdir))]
-        shmsizeparam = []
-        if shm_size is not None:
-            shmsizeparam = ['--shm-size', shm_size]
-        userparam = []
-        if user is not None:
-            userparam = ['--user', str(user)]
-        envparam = ['--env=' + str(e[0]) + '=' + str(e[1]) for e in env]
-        return checked_run(
-            DockerContainer._DOCKERCMD
-            + userparam
-            + mountparam
-            + workdirparam
-            + envparam
-            + shmsizeparam
-            + self._img_name
-            + [*args],
-            return_stdout=return_stdout,
+        result = RUN(
+            ENGINE,
+            self._img_name,
+            [str(arg) for arg in args],
+            mounts=[Mount(str(m.target), m.source, m.ro) for m in mounts],
+            env={str(name): str(value) for name, value in env},
+            workdir=None if workdir is None else str(workdir),
+            shm_size=shm_size,
+            as_root=as_root,
+            cancellation=CANCELLATION,
         )
+        return result.stdout if return_stdout else None
 
 
 class GpgInfo(DockerContainer):
@@ -540,7 +481,7 @@ class DebPackageBuilder:
                     DockerBindMount('/localrepo', localrepo),
                 ],
                 shm_size='5g',
-                user=None,
+                as_root=True,
                 env=[('DH_VERBOSE', 1)],
             )
 
@@ -826,7 +767,7 @@ class RpmPackageBuilder:
                     DockerBindMount('/localrepo', localrepo / self.dist_release.version, ro=True),
                 ],
                 shm_size='5g',
-                user=None,
+                as_root=True,
             )
             rmtree(localrepo)
 
@@ -1105,6 +1046,12 @@ def main():
         '-i', '--interactive', action='store_true', help='Wether to run in interactive mode'
     )
     run.add_argument(
+        '--docker-host',
+        default=os.environ.get('DISTROPACK_DOCKER_HOST'),
+        help='The endpoint of the container engine (default: $DISTROPACK_DOCKER_HOST, '
+        "$DOCKER_HOST, the current Docker context, Docker's socket, then Podman's)",
+    )
+    run.add_argument(
         '-D', '--distributions', action='append', nargs='+', help='The distributions to build'
     )
     run.add_argument(
@@ -1139,6 +1086,12 @@ def main():
 
     # One date for the whole run, so that a run crossing midnight sees one list of releases.
     on = date.today()
+    if args.verbose:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter('%(message)s'))
+        logging.getLogger('distropack_builder').addHandler(handler)
+        logging.getLogger('distropack_builder').setLevel(logging.DEBUG)
+    global ENGINE
     try:
         with (base_dir / args.build_conf).open('r') as cfg_file:
             cfg = yaml.safe_load(cfg_file)
@@ -1149,6 +1102,15 @@ def main():
         patterns = {e for el in args.distributions or [] for e in el}
         selected = configured_releases(cfg, patterns, on)
         disabled = disabled_releases(cfg, selected, on)
+
+        # Then the engine, before any container.
+        try:
+            ENGINE = Engine.connect(args.docker_host)
+        except RemoteEndpoint as error:
+            parser.error(str(error))
+        except (EngineNotFound, docker.errors.DockerException) as error:
+            print(f'{parser.prog}: error: {error}', file=sys.stderr)
+            sys.exit(1)
 
         packages = set()
         repo_builders = []

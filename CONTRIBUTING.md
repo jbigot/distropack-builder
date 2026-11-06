@@ -30,7 +30,7 @@ those lists only shrink.
 `.python-version` makes 3.13 the default interpreter, the one the golden master is recorded with;
 `uv run --python 3.12 pytest` runs the unit tests on another one, as the CI matrix does.
 
-A rootless Docker engine works for `golden` and `e2e`: the tests then go through a docker shim.
+Rootless Docker and rootless Podman work for `golden` and `e2e` as rootful Docker does.
 The golden master itself is recorded on a rootful engine, the one of GitHub's runners.
 The `docker` layer of the design comes in Phase 4.
 

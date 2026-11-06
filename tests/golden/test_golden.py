@@ -1,7 +1,7 @@
 """The repositories built for the fixture project must stay those master's pkgbuild built.
 
-Recorded on a rootful-Docker GitHub runner, the reference; under a rootless engine the test runs
-through the docker shim, which drops the --user master's pkgbuild passes (note 164). One snapshot
+Recorded on a rootful-Docker GitHub runner, the reference; the builder now runs as well on rootless
+engines, which choose no container user (note 164, fixed in Phase 4). One snapshot
 per distribution, so that Phase 10 can compare its el repository with the Rocky one. Retired at the
 end of Phase 7 of the modernization.
 """
