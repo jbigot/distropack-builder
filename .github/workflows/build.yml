@@ -1,41 +1,129 @@
-# Builds the images, without publishing them: nothing is published from this repository before
-# Phase 2, which brings publication back under ghcr.io/jbigot/distropack-builder/*.
+# Builds the Docker images from the bake definition distropack-build writes, one job per image, and
+# pushes them to ghcr.io/jbigot/distropack-builder/* from main only. A release whose base image its
+# registry does not publish (yet) gets no image, by design: it is left out of the definition and
+# listed in the run summary. The registry is the availability data: a release is available when its
+# protocol tag exists there.
 name: Docker images
 on:
   push:
     paths: &paths
     - packages/distro-releases/src/**
     - packages/distropack-builder/src/distropack_builder/images/**
-    - build
+    - packages/distropack-builder/src/distropack_builder/bake.py
+    - packages/distropack-builder/src/distropack_builder/cli.py
     - .github/workflows/build.yml
   pull_request:
     paths: *paths
+  schedule:
+  # Nightly, so that the images follow their distributions' updates.
+  - cron: '0 2 * * *'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  build:
+  prepare:
     # A pull request from this repository is already covered by its push run.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with: { persist-credentials: false }
-    - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-      with: { python-version: "3.13" }
-    - name: Build the images
-      shell: bash
-      run: ./build | tee build.log
-    - name: Check that every available image built
-      # build exits 0 when an image fails: it prints SKIPPED instead of DONE. A release whose base
-      # image its registry does not publish (yet) is UNAVAILABLE, by design, and not attempted.
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with: { enable-cache: false }
+    - name: Write the bake definition
       shell: bash
       run: |
-        built=$(grep -c '===> docker build ' build.log || true)
-        done=$(grep -c '===> DONE ' build.log || true)
-        unavailable=$(grep -c '===> UNAVAILABLE ' build.log || true)
-        echo "$built images built, $done done, $unavailable without a base image"
-        if grep -q '===> SKIPPED ' build.log || [ "$built" -eq 0 ] || [ "$built" -ne "$done" ]; then
-          echo "::error::an image failed to build: see SKIPPED in the log of the previous step"
+        uv run --locked distropack-build images bake-file -o docker-bake.json 2> bake-file.log \
+          || { cat bake-file.log; exit 1; }
+        cat bake-file.log
+        {
+          echo '### Images'
+          jq -r '.group.default.targets[] | "- `\(.)`"' docker-bake.json
+          if grep -q '^UNAVAILABLE ' bake-file.log; then
+            echo '### Without a base image (not built, by design)'
+            sed -n 's/^UNAVAILABLE \(.*\) for \(.*\)$/- `\2`: no `\1`/p' bake-file.log
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+    - name: List the targets
+      id: matrix
+      shell: bash
+      run: |
+        matrix=$(jq -c '[.group.default.targets[] | {target: .}]' docker-bake.json)
+        if [ "$matrix" = '[]' ]; then
+          echo '::error::the bake definition has no target'
           exit 1
         fi
+        echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: docker-bake
+        path: docker-bake.json
+        if-no-files-found: error
+        retention-days: 7
+  build:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      # One image failing must not stop the others from building and being published.
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    concurrency:
+      group: images-${{ matrix.target }}
+      cancel-in-progress: false
+    env:
+      TARGET: ${{ matrix.target }}
+      PUBLISH: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with: { persist-credentials: false }
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with: { name: docker-bake }
+    # The runner's default docker driver: the image lands in the local store, for the smoke run.
+    - uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
+      with:
+        source: .
+        files: docker-bake.json
+        targets: ${{ matrix.target }}
+        load: true
+    - name: Smoke-run the image
+      # Runs the tools the builder calls in that image.
+      shell: bash
+      run: |
+        image=$(jq -r --arg t "$TARGET" '.target[$t].tags[0]' docker-bake.json)
+        kind=$(basename "$(jq -r --arg t "$TARGET" '.target[$t].context' docker-bake.json)")
+        case "$kind" in
+        deb_builder)
+          check='dpkg-buildpackage --version && test -x /entrypoint' ;;
+        rpm_builder)
+          check='rpmbuild --version && dnf builddep --help > /dev/null && test -x /entrypoint' ;;
+        deb_tools)
+          check='aptly version && debsign --help > /dev/null && gpg --version' ;;
+        rpm_tools)
+          check='createrepo_c --version && rpm --version && gpg --version' ;;
+        gpg2)
+          docker run --rm "$image" --version
+          exit ;;
+        *)
+          echo "::error::no smoke run for $kind"
+          exit 1 ;;
+        esac
+        docker run --rm --entrypoint sh "$image" -c "$check"
+    - if: env.PUBLISH == 'true'
+      uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Push the image
+      if: env.PUBLISH == 'true'
+      shell: bash
+      run: |
+        jq -r --arg t "$TARGET" '.target[$t].tags[]' docker-bake.json | while read -r tag; do
+          docker push "$tag"
+        done
