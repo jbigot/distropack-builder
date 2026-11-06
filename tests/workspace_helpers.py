@@ -58,8 +58,9 @@ def git_archive(repo: Path, dest: Path) -> Path:
     An enclosing work tree would give its own tags to the version (design §9), so dest must lie
     outside any.
     """
+    existing = next(p for p in dest.parents if p.exists())  # git -C fails on a missing directory
     probe = subprocess.run(
-        ['git', '-C', str(dest.parent), 'rev-parse', '--show-toplevel'],
+        ['git', '-C', str(existing), 'rev-parse', '--show-toplevel'],
         env=os.environ | GIT_ENV,
         capture_output=True,
         text=True,
