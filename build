@@ -3,7 +3,7 @@
 import argparse
 from subprocess import run
 
-from distinfo import ReleaseInfo, distributions
+from distinfo import distributions
 
 REPO = 'ghcr.io/jbigot/pkg_builder/'
 

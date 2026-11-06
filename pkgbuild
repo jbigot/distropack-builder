@@ -8,23 +8,18 @@ from configparser import ConfigParser
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 import filetype
-from hashlib import sha256
 from io import StringIO
 import json
 from os import cpu_count, getegid, geteuid, link
 from pathlib import Path
 import re
-import socket
 from shutil import copy2, copytree, rmtree
 from subprocess import Popen, CalledProcessError, PIPE, STDOUT
-from sys import argv, stderr
+from sys import stderr
 from string import Template
 from tempfile import mkdtemp, TemporaryDirectory
-from time import sleep, time
 from typing import Iterable, Set
-from urllib.error import URLError
 from urllib.parse import parse_qsl, ParseResult, urljoin, urlparse, urlunparse
-from urllib.request import url2pathname, urlopen
 
 from debian.changelog import Changelog, format_date
 from debian.deb822 import Deb822, _PkgRelationMixin
