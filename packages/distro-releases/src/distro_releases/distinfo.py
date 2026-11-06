@@ -151,6 +151,9 @@ def __debubun_rel(distribution: DistInfo) -> DistInfo:
         # version,codename,series,created,release,eol,eol-server
         next(csv_data)
         for order, rel in enumerate(csv_data):
+            # a release announced ahead of its creation does not exist yet
+            if date.fromisoformat(rel[3].strip()) > date.today():
+                continue
             release = ReleaseInfo(
                 distribution,
                 rel[1] if rel[0] == '' else rel[0] + ' (' + rel[1] + ')',

@@ -3,6 +3,5 @@
   "debian--sid",
   "debian-12-bookworm",
   "debian-13-trixie",
-  "debian-14-forky",
-  "debian-15-duke"
+  "debian-14-forky"
 ]

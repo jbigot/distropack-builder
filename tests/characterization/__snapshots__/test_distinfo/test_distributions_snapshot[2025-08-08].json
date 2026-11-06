@@ -313,34 +313,6 @@
         "uid": "debian-13-trixie"
       },
       {
-        "codename": "forky",
-        "cpe": null,
-        "eol_date": "9999-12-31",
-        "eoled": false,
-        "id": "14",
-        "name": "14 (Forky)",
-        "release_date": "9999-12-31",
-        "released": false,
-        "str": "Debian GNU/Linux 14 (Forky)",
-        "suite": null,
-        "supported": false,
-        "uid": "debian-14-forky"
-      },
-      {
-        "codename": "duke",
-        "cpe": null,
-        "eol_date": "9999-12-31",
-        "eoled": false,
-        "id": "15",
-        "name": "15 (Duke)",
-        "release_date": "9999-12-31",
-        "released": false,
-        "str": "Debian GNU/Linux 15 (Duke)",
-        "suite": null,
-        "supported": false,
-        "uid": "debian-15-duke"
-      },
-      {
         "codename": "sid",
         "cpe": null,
         "eol_date": "9999-12-31",
@@ -1406,48 +1378,6 @@
         "suite": "devel",
         "supported": false,
         "uid": "ubuntu-25.10-questing"
-      },
-      {
-        "codename": "resolute",
-        "cpe": null,
-        "eol_date": "2031-05-29",
-        "eoled": false,
-        "id": "26.04",
-        "name": "26.04 LTS (Resolute Raccoon)",
-        "release_date": "2026-04-23",
-        "released": false,
-        "str": "Ubuntu 26.04 LTS (Resolute Raccoon)",
-        "suite": null,
-        "supported": false,
-        "uid": "ubuntu-26.04-resolute"
-      },
-      {
-        "codename": "stonking",
-        "cpe": null,
-        "eol_date": "2027-07-15",
-        "eoled": false,
-        "id": "26.10",
-        "name": "26.10 (Stonking Stingray)",
-        "release_date": "2026-10-15",
-        "released": false,
-        "str": "Ubuntu 26.10 (Stonking Stingray)",
-        "suite": null,
-        "supported": false,
-        "uid": "ubuntu-26.10-stonking"
-      },
-      {
-        "codename": "tenacious",
-        "cpe": null,
-        "eol_date": "2028-01-20",
-        "eoled": false,
-        "id": "27.04",
-        "name": "27.04 (Tenacious T-Rex)",
-        "release_date": "2027-04-22",
-        "released": false,
-        "str": "Ubuntu 27.04 (Tenacious T-Rex)",
-        "suite": null,
-        "supported": false,
-        "uid": "ubuntu-27.04-tenacious"
       }
     ]
   }

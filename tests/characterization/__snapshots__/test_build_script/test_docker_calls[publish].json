@@ -94,29 +94,6 @@
       "ghcr.io/jbigot/pkg_builder/deb_tools"
     ]
   ],
-  "ghcr.io/jbigot/pkg_builder/debian_builder:duke": [
-    [
-      "docker",
-      "build",
-      "--force-rm",
-      "-t",
-      "ghcr.io/jbigot/pkg_builder/debian_builder:duke",
-      "--build-arg",
-      "DIST_ID=debian",
-      "--build-arg",
-      "DIST_IMAGE=debian",
-      "--build-arg",
-      "DIST_RELEASE=duke-slim",
-      "--build-arg",
-      "DIST_CODENAME=duke",
-      "deb_builder"
-    ],
-    [
-      "docker",
-      "push",
-      "ghcr.io/jbigot/pkg_builder/debian_builder:duke"
-    ]
-  ],
   "ghcr.io/jbigot/pkg_builder/debian_builder:forky": [
     [
       "docker",

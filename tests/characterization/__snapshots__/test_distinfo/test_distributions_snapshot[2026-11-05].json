@@ -327,20 +327,6 @@
         "uid": "debian-14-forky"
       },
       {
-        "codename": "duke",
-        "cpe": null,
-        "eol_date": "9999-12-31",
-        "eoled": false,
-        "id": "15",
-        "name": "15 (Duke)",
-        "release_date": "9999-12-31",
-        "released": false,
-        "str": "Debian GNU/Linux 15 (Duke)",
-        "suite": null,
-        "supported": false,
-        "uid": "debian-15-duke"
-      },
-      {
         "codename": "sid",
         "cpe": null,
         "eol_date": "9999-12-31",
