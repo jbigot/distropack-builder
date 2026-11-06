@@ -23,6 +23,14 @@ def run_docker(*args):
     return run(['docker'] + list(args)).returncode
 
 
+def base_image_exists(image):
+    # A release can open before its registry publishes an image: no builder for it, by design.
+    return (
+        run(['docker', 'buildx', 'imagetools', 'inspect', image], capture_output=True).returncode
+        == 0
+    )
+
+
 def main():
     os.chdir(IMAGES)
     parser = argparse.ArgumentParser(
@@ -67,6 +75,16 @@ def main():
             docker_release = release_id
             if 'debian' == distrib.id and release.codename != 'rc-buggy':
                 docker_release = docker_release + '-slim'
+            base_image = distrib.docker_image + ':' + docker_release
+            if not base_image_exists(base_image):
+                print(
+                    '\n\n   \033[33m===> UNAVAILABLE '
+                    + base_image
+                    + ' for '
+                    + docker_image
+                    + '\033[39m'
+                )
+                continue
             res = run_docker(
                 'build',
                 '--force-rm',

@@ -4,6 +4,7 @@ name: Docker images
 on:
   push:
     paths: &paths
+    - packages/distro-releases/src/**
     - packages/distropack-builder/src/distropack_builder/images/**
     - build
     - .github/workflows/build.yml
@@ -23,13 +24,15 @@ jobs:
     - name: Build the images
       shell: bash
       run: ./build | tee build.log
-    - name: Check that every image built
-      # build exits 0 when an image fails: it prints SKIPPED instead of DONE.
+    - name: Check that every available image built
+      # build exits 0 when an image fails: it prints SKIPPED instead of DONE. A release whose base
+      # image its registry does not publish (yet) is UNAVAILABLE, by design, and not attempted.
       shell: bash
       run: |
         built=$(grep -c '===> docker build ' build.log || true)
         done=$(grep -c '===> DONE ' build.log || true)
-        echo "$built images built, $done done"
+        unavailable=$(grep -c '===> UNAVAILABLE ' build.log || true)
+        echo "$built images built, $done done, $unavailable without a base image"
         if grep -q '===> SKIPPED ' build.log || [ "$built" -eq 0 ] || [ "$built" -ne "$done" ]; then
           echo "::error::an image failed to build: see SKIPPED in the log of the previous step"
           exit 1
