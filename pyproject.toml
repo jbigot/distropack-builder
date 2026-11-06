@@ -17,6 +17,7 @@ dev = [
     "types-PyYAML",
     "zstandard",
 ]
+docs = ["furo", "myst-parser", "sphinx"]
 
 [tool.uv.sources]
 distro-releases = { workspace = true }
