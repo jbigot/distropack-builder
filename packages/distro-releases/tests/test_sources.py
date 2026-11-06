@@ -94,3 +94,29 @@ def test_retries_exhausted(
     with pytest.raises(SourceError, match='debian.csv'):
         rows(DEBIAN)
     assert route.call_count == 5
+
+
+BODHI = 'https://bodhi.fedoraproject.org/releases/?exclude_archived=False&rows_per_page=100&page=1'
+RHEL_URL = 'https://endoflife.date/api/v1/products/rhel'
+HTML = b'<html><body>Down for maintenance</body></html>'
+
+
+@pytest.mark.parametrize(
+    ('distribution', 'url', 'content'),
+    [
+        (DEBIAN, DEBIAN_CSV, HTML),
+        (DEBIAN, DEBIAN_CSV, b'version,codename,series,created\n13,Trixie,trixie,yesterday\n'),
+        (FEDORA, BODHI, HTML),
+        (FEDORA, BODHI, b'{"pages": 1, "releases": [{"name": "F44"}]}'),
+        (RHEL, RHEL_URL, HTML),
+        (RHEL, RHEL_URL, b'{"result": {"releases": [{"name": "ten"}]}}'),
+    ],
+    ids=['csv-html', 'csv-date', 'bodhi-html', 'bodhi-fields', 'endoflife-html', 'endoflife-name'],
+)
+def test_unexpected_content_is_a_source_error(
+    recorded: respx.MockRouter, distribution: Distribution, url: str, content: bytes
+) -> None:
+    recorded.routes[url].return_value = httpx.Response(200, content=content)
+    with pytest.raises(SourceError, match='unexpected content') as error:
+        rows(distribution)
+    assert error.value.url == url

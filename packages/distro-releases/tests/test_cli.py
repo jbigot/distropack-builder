@@ -2,6 +2,7 @@
 
 import json
 
+import httpx
 import respx
 from typer.testing import CliRunner, Result
 
@@ -84,3 +85,16 @@ def test_list_unknown(recorded: respx.MockRouter) -> None:
     result = invoke('nosuch')
     assert result.exit_code == 2
     assert 'unknown distribution nosuch' in result.stderr
+
+
+BODHI = 'https://bodhi.fedoraproject.org/releases/?exclude_archived=False&rows_per_page=100&page=1'
+
+
+def test_list_source_down(recorded: respx.MockRouter) -> None:
+    """The other distributions are listed; the failure is reported, and the exit status is 1."""
+    recorded.routes[BODHI].return_value = httpx.Response(503)
+    result = invoke()
+    assert result.exit_code == 1
+    assert BODHI in result.stderr
+    distributions = {line.split()[0] for line in result.stdout.splitlines()[1:]}
+    assert distributions == {'almalinux', 'debian', 'rhel', 'rocky', 'ubuntu'}

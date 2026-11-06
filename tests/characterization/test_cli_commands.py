@@ -7,7 +7,9 @@ from datetime import date
 from pathlib import Path
 from types import ModuleType
 
+import httpx
 import pytest
+import respx
 
 
 @pytest.fixture
@@ -84,3 +86,71 @@ def test_rhel_is_not_a_target(
         'rhel is not a build target; the targets are almalinux, debian, fedora, rocky, ubuntu'
         in capsys.readouterr().err
     )
+
+
+BODHI = 'https://bodhi.fedoraproject.org/releases/?exclude_archived=False&rows_per_page=100&page=1'
+TWO_FAMILIES = {
+    'distribs': {'debian': {'versions': ['supported']}, 'fedora': {'versions': ['supported']}},
+    'packages': {'p': {'disable': {'fedora': ['rawhide']}}, 'q': 'x'},
+}
+
+
+def test_source_down_spares_other_distributions(
+    load_script: Callable[[str], ModuleType], recorded_http: respx.MockRouter, frozen: date
+) -> None:
+    """-D debian reads Debian's source alone: Bodhi down changes nothing."""
+    recorded_http.routes[BODHI].return_value = httpx.Response(503)
+    cli = load_script('pkgbuild')
+    releases = cli.configured_releases(TWO_FAMILIES, {'debian'}, frozen)
+    assert {d: sorted(r.uid for r in rs) for d, rs in releases.items()} == {
+        'debian': ['debian-13-trixie'],
+        'fedora': [],
+    }
+    assert cli.disabled_releases(TWO_FAMILIES, releases, frozen) == {'p': set(), 'q': set()}
+    assert recorded_http.routes[BODHI].call_count == 0
+
+
+def test_disabled_releases(
+    load_script: Callable[[str], ModuleType], recorded_http: respx.MockRouter, frozen: date
+) -> None:
+    cli = load_script('pkgbuild')
+    releases = cli.configured_releases(TWO_FAMILIES, set(), frozen)
+    disabled = cli.disabled_releases(TWO_FAMILIES, releases, frozen)
+    assert {p: sorted(r.uid for r in rs) for p, rs in disabled.items()} == {
+        'p': ['fedora-46'],
+        'q': [],
+    }
+
+
+def write_conf(tmp_path: Path, conf: dict[str, object]) -> None:
+    (tmp_path / 'build.conf').write_text(json.dumps(conf))
+
+
+def test_source_down_exits_1_before_any_work(
+    main: Callable[..., None],
+    recorded_http: respx.MockRouter,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    recorded_http.routes[BODHI].return_value = httpx.Response(503)
+    write_conf(tmp_path, TWO_FAMILIES)
+    with pytest.raises(SystemExit) as exit:
+        main('run', 'build.conf')
+    assert exit.value.code == 1
+    assert BODHI in capsys.readouterr().err
+
+
+def test_disable_naming_a_non_target_exits_2(
+    main: Callable[..., None], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_conf(
+        tmp_path,
+        {
+            'distribs': {'debian': {'versions': ['supported']}},
+            'packages': {'p': {'disable': {'rhel': ['9']}}},
+        },
+    )
+    with pytest.raises(SystemExit) as exit:
+        main('run', 'build.conf')
+    assert exit.value.code == 2
+    assert 'rhel is not a build target' in capsys.readouterr().err

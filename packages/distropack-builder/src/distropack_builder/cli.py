@@ -25,7 +25,14 @@ from debian.changelog import Changelog, format_date
 from debian.deb822 import Deb822, _PkgRelationMixin
 import yaml
 
-from distro_releases import Release, SelectorError, UnknownDistribution, matches, select
+from distro_releases import (
+    Release,
+    SelectorError,
+    SourceError,
+    UnknownDistribution,
+    matches,
+    select,
+)
 from distropack_builder import targets
 from distropack_builder.bake import REGISTRY
 from distropack_builder.downloader import Downloader
@@ -988,6 +995,47 @@ def release_filter(releases: Iterable[Release], dist_filter: Iterable[str]) -> S
     return {release for release in releases if any(matches(release, f) for f in dist_filter)}
 
 
+def configured_releases(cfg: dict, patterns: Set[str], on: date) -> dict[str, Set[Release]]:
+    """The releases build.conf names for each of its distributions, as of on.
+
+    With -D patterns, a distribution none of them names gets no release, and its source is not
+    read: a source being down only stops the distributions it serves. Every distribution, and every
+    distribution a package's disable list names, must be a target.
+    """
+    for dist_id in cfg['distribs']:
+        targets.target(dist_id)
+    for pkg_cfg in cfg['packages'].values():
+        if isinstance(pkg_cfg, dict):
+            for dist_id in pkg_cfg.get('disable', {}):
+                targets.target(dist_id)
+    result = {}
+    for dist_id, distrib_cfg in cfg['distribs'].items():
+        distribution = targets.target(dist_id)
+        named = {pattern.partition(':')[0] for pattern in patterns}
+        if patterns and not named & {distribution.id, distribution.name}:
+            result[dist_id] = set()
+            continue
+        releases = release_list({dist_id: distrib_cfg.get('versions', {})}, on)
+        result[dist_id] = release_filter(releases, patterns) if patterns else releases
+    return result
+
+
+def disabled_releases(
+    cfg: dict, selected: dict[str, Set[Release]], on: date
+) -> dict[str, Set[Release]]:
+    """For each package, the selected releases its disable list names, as of on.
+
+    Only the distributions that have selected releases are read.
+    """
+    result = {}
+    for name, pkg_cfg in cfg['packages'].items():
+        disable = pkg_cfg.get('disable', {}) if isinstance(pkg_cfg, dict) else {}
+        result[name] = release_list(
+            {dist_id: tokens for dist_id, tokens in disable.items() if selected.get(dist_id)}, on
+        )
+    return result
+
+
 def build_packages(packages, parallelism: int = None):
     with ThreadPoolExecutor(max_workers=parallelism) as executor:
         try:
@@ -1097,9 +1145,10 @@ def main():
 
         downloader = Downloader(verbose=args.verbose, cancellation_point=cancellation_point)
 
-        # The configuration's errors come before any work.
-        for dist_id in cfg['distribs']:
-            targets.target(dist_id)
+        # The configuration's errors, and the release data, come before any work.
+        patterns = {e for el in args.distributions or [] for e in el}
+        selected = configured_releases(cfg, patterns, on)
+        disabled = disabled_releases(cfg, selected, on)
 
         packages = set()
         repo_builders = []
@@ -1109,16 +1158,12 @@ def main():
             uid = distrib_cfg.get('gpg', {}).get('uid', None)
             gpg = GpgInfo(keyfile, keyid, args.passphrase, uid)
 
-            releases = release_list({dist_id: distrib_cfg.get('versions', {})}, on)
-            if args.distributions is not None and len(args.distributions) != 0:
-                releases = release_filter(releases, {e for el in args.distributions for e in el})
-
             dist_packages = set()
-            for dist_release in releases:
+            for dist_release in selected[dist_id]:
                 for name, pkg_cfg in cfg['packages'].items():
                     if not isinstance(pkg_cfg, dict):
                         pkg_cfg = {'value': pkg_cfg}
-                    if dist_release in release_list(pkg_cfg.get('disable', {}), on):
+                    if dist_release in disabled[name]:
                         continue
                     if targets.is_deb(dist_release.distribution):
                         dist_packages.add(
@@ -1172,6 +1217,9 @@ def main():
 
     except (targets.NotATarget, UnknownDistribution, SelectorError) as error:
         parser.error(str(error))
+    except SourceError as error:
+        print(f'{parser.prog}: error: {error}', file=sys.stderr)
+        sys.exit(1)
     except KeyboardInterrupt:
         if args.interactive:
             input('Press Enter to clean-up and continue...')

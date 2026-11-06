@@ -28,15 +28,24 @@ def status(release: Release, on: date) -> str:
     return 'supported' if release.is_supported(on) else 'unreleased'
 
 
-def selected(selectors: list[str], on: date) -> list[Release]:
-    """The releases the selectors name, by distribution then in time."""
+def selected(selectors: list[str], on: date) -> tuple[list[Release], list[SourceError]]:
+    """The releases the selectors name, by distribution then in time, and the sources that failed.
+
+    A source that cannot be read leaves out the distributions it serves, not the others.
+    """
     if not selectors:
         selectors = [d.id for d in distributions()]
     result: set[Release] = set()
+    failures: list[SourceError] = []
     for selector in selectors:
         dist_id, _, tokens = selector.partition(':')
-        result |= select(distribution(dist_id), tokens.split(',') if tokens else ['supported'], on)
-    return sorted(result, key=lambda r: (r.distribution.id, r.order))
+        try:
+            result |= select(
+                distribution(dist_id), tokens.split(',') if tokens else ['supported'], on
+            )
+        except SourceError as error:
+            failures.append(error)
+    return sorted(result, key=lambda r: (r.distribution.id, r.order)), failures
 
 
 def as_json(release: Release, on: date) -> dict[str, str | None]:
@@ -102,14 +111,15 @@ def list_releases(
     """List releases with their dates, suite and status."""
     day = on.date() if on else date.today()
     try:
-        releases = selected(selectors or [], day)
+        releases, failures = selected(selectors or [], day)
     except (UnknownDistribution, SelectorError) as error:
         typer.echo(f'distro-releases: {error}', err=True)
         raise typer.Exit(2) from error
-    except SourceError as error:
-        typer.echo(f'distro-releases: {error}', err=True)
-        raise typer.Exit(1) from error
     if as_json_:
         typer.echo(json.dumps([as_json(r, day) for r in releases], indent=2))
     else:
         typer.echo(table(releases, day))
+    for failure in failures:
+        typer.echo(f'distro-releases: {failure}', err=True)
+    if failures:
+        raise typer.Exit(1)

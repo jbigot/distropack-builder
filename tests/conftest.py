@@ -24,6 +24,7 @@ from types import ModuleType
 import httpx
 import pytest
 import respx
+import stamina
 import time_machine
 import yaml
 from syrupy.assertion import SnapshotAssertion
@@ -52,9 +53,15 @@ def recordings() -> dict[str, str]:
 
 @pytest.fixture
 def recorded_http(recordings: dict[str, str]) -> Iterator[respx.MockRouter]:
-    """Serve httpx requests from the recordings, failing on any other URL, with a fresh catalog."""
+    """Serve httpx requests from the recordings, failing on any other URL, with a fresh catalog.
+
+    Retries happen without waiting, as in distro-releases' own tests.
+    """
     catalog._fetch.cache_clear()
-    with respx.mock(assert_all_called=False, assert_all_mocked=True) as router:
+    with (
+        stamina.set_testing(True, attempts=5),
+        respx.mock(assert_all_called=False, assert_all_mocked=True) as router,
+    ):
         for url, name in recordings.items():
             router.get(url, name=url).mock(
                 return_value=httpx.Response(200, content=(RELEASE_DATA / name).read_bytes())
