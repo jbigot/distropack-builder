@@ -25,6 +25,7 @@ those lists only shrink.
 | `packaging` | `uv run pytest -m packaging` | git, uv and PyPI: it builds the packages from synthetic repositories and archives |
 | `golden` | `uv run pytest -m golden` | a Docker engine and the network, to pull the builder images: it compares the repositories built for the fixture project with the recorded golden master |
 | `e2e` | `uv run pytest -m e2e` | a Docker engine and the network, to pull the builder images: it builds the fixture project and installs from its repositories |
+| `docker` | `uv run pytest -m docker` | a container engine (Docker or Podman, rootful or rootless) and `docker.io/library/alpine`: it runs containers through the runner; CI runs it on rootful Docker, rootless Docker and rootless Podman |
 | `live` | `uv run pytest -m live` | the network: it reads the real release sources of distro-releases (the nightly `Live canary` workflow, which opens an issue labelled `live-canary` when it fails) |
 
 `.python-version` makes 3.13 the default interpreter, the one the golden master is recorded with;
@@ -32,12 +33,14 @@ those lists only shrink.
 
 Rootless Docker and rootless Podman work for `golden` and `e2e` as rootful Docker does.
 The golden master itself is recorded on a rootful engine, the one of GitHub's runners.
-The `docker` layer of the design comes in Phase 4.
+The orchestration tests (`tests/orchestration/`) replace the runner with `tests/fake_runner.py`'s
+`FakeRunner`, so that they check what the builders ask of the engine without running anything.
 
 The tests of `distro-releases` live in `packages/distro-releases/tests/`, with the release data they
 and the root `tests/` read, recorded under `data/` by `record.py` (run by hand, with the network). That
 directory is not a package: mypy checks it in a run of its own (the `mypy (distro-releases tests)`
-hook), where its `conftest.py` does not clash with `tests/conftest.py`. CI's unit job on 3.13 also
+hook), where its `conftest.py` does not clash with `tests/conftest.py`; `packages/distropack-builder/tests/`
+gets the same, with the `mypy (distropack-builder tests)` hook. CI's unit job on 3.13 also
 enforces a branch-coverage floor on `distro_releases`, which only rises.
 
 ## Versions

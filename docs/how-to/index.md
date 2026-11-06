@@ -6,10 +6,12 @@ key, build the images locally, and use distro-releases from Python.
 
 - [Build the images locally](build-images.md)
 - [Use distro-releases from Python](use-distro-releases.md)
+- [Run with rootless Docker or Podman](rootless.md)
 
 ```{toctree}
 :hidden:
 
 build-images
 use-distro-releases
+rootless
 ```
