@@ -22,8 +22,8 @@ named `<distribution>_builder`: `debian_builder`, `ubuntu_builder`, `fedora_buil
 ## The protocol version
 
 `<N>`, 1 today, is the version of what the runner relies on in an image: its entrypoint and its
-volumes. It is bumped whenever either changes incompatibly, so that a runner always asks for an
-image it can drive.
+volumes. It is bumped whenever either changes incompatibly, so that a runner can ask for an image
+it can drive. The runner itself still pulls the release tag, not yet the protocol tag.
 
 ## Availability
 
