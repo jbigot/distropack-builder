@@ -30,6 +30,14 @@ repos:
     types_or: [python, pyi, toml]
     pass_filenames: false
     require_serial: true
+  - id: mypy-distropack-builder-tests
+    name: mypy (distropack-builder tests)
+    # A run of their own, for the same reason.
+    entry: uv run --frozen mypy packages/distropack-builder/tests
+    language: system
+    types_or: [python, pyi, toml]
+    pass_filenames: false
+    require_serial: true
 - repo: https://github.com/astral-sh/uv-pre-commit
   rev: 0.13.7
   hooks:
