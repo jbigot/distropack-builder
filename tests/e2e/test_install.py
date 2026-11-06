@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import FIXTURE_RELEASES
+from support import FIXTURE_RELEASES
 
 IMAGES = {
     'debian': 'docker.io/library/debian:trixie',

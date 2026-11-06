@@ -6,7 +6,7 @@ from types import ModuleType
 
 import pytest
 
-from conftest import REPO_ROOT
+from support import REPO_ROOT
 
 RELEASE_LISTS = [
     {'debian': 'all'}, {'debian': ['supported']}, {'debian': ['bookworm', '+']},

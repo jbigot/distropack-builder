@@ -11,7 +11,7 @@ from types import ModuleType
 
 import pytest
 
-from conftest import DOCKER_SHIM_DIR
+from support import DOCKER_SHIM_DIR
 
 
 @pytest.fixture
