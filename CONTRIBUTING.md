@@ -23,8 +23,11 @@ those lists only shrink.
 |---|---|---|
 | unit | `uv run pytest` | nothing: no network, recorded release data, a fixed date |
 | `packaging` | `uv run pytest -m packaging` | git, uv and PyPI: it builds the packages from synthetic repositories and archives |
-| `golden` | `uv run pytest -m golden` | a Docker engine: it compares the repositories built for the fixture project with the recorded golden master |
-| `e2e` | `uv run pytest -m e2e` | a Docker engine: it builds the fixture project and installs from its repositories |
+| `golden` | `uv run pytest -m golden` | a Docker engine and the network, to pull the builder images: it compares the repositories built for the fixture project with the recorded golden master |
+| `e2e` | `uv run pytest -m e2e` | a Docker engine and the network, to pull the builder images: it builds the fixture project and installs from its repositories |
+
+`.python-version` makes 3.13 the default interpreter, the one the golden master is recorded with;
+`uv run --python 3.12 pytest` runs the unit tests on another one, as the CI matrix does.
 
 A rootless Docker engine works for `golden` and `e2e`: the tests then go through a docker shim.
 The golden master itself is recorded on a rootful engine, the one of GitHub's runners.
@@ -57,7 +60,7 @@ pinning it, and run `uv lock --upgrade` in the same change.
 The build requirements of the two packages (hatchling, hatch-vcs, setuptools-scm) are not in
 `uv.lock`: a fresh environment builds the packages with their latest releases. A release of one of
 them that breaks the build therefore fails `CI` on whatever commit comes next, not `Upgrade`: look
-there first when `CI` fails in `uv sync` on a commit that does not touch the packaging.
+there first when `CI` fails in its first `uv run` on a commit that does not touch the packaging.
 
 ## Documentation
 
