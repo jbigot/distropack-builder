@@ -71,6 +71,8 @@ class Row:
         release_date: the day of its release, `None` when not scheduled.
         eol_date: the first day of its end of life, `None` when not scheduled.
         cpe: the release's CPE, if its distribution has one.
+        suite: the archive's alias of the release when the source states it (Fedora's `rawhide`),
+            whatever the date; the aliases that move with time are the catalog's.
     """
 
     version: str | None
@@ -81,6 +83,7 @@ class Row:
     release_date: date | None
     eol_date: date | None
     cpe: str | None
+    suite: str | None = None
 
 
 @total_ordering
