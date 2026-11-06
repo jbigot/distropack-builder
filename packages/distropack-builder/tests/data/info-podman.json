@@ -1,0 +1,8 @@
+{
+  "SecurityOptions": [
+    "name=apparmor",
+    "name=seccomp,profile=default",
+    "name=rootless"
+  ],
+  "ServerVersion": "5.7.0"
+}
