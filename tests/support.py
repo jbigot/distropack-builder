@@ -9,6 +9,7 @@ DATA = REPO_ROOT / 'tests' / 'characterization' / 'data'
 MODULES = (
     'distro_releases.distinfo',
     'distropack_builder.downloader',
+    'distropack_builder.bake',
     'distropack_builder.cli',
     'build',
 )

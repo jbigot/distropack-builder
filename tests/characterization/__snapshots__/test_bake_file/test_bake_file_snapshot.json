@@ -1,0 +1,311 @@
+{
+  "group": {
+    "default": {
+      "targets": [
+        "almalinux_builder-10",
+        "almalinux_builder-8",
+        "almalinux_builder-9",
+        "deb_tools",
+        "debian_builder-forky",
+        "debian_builder-rc-buggy",
+        "debian_builder-sid",
+        "debian_builder-trixie",
+        "fedora_builder-43",
+        "fedora_builder-44",
+        "fedora_builder-45",
+        "fedora_builder-46",
+        "gpg2",
+        "rocky_builder-10",
+        "rocky_builder-8",
+        "rocky_builder-9",
+        "rpm_tools",
+        "ubuntu_builder-jammy",
+        "ubuntu_builder-noble",
+        "ubuntu_builder-resolute",
+        "ubuntu_builder-stonking",
+        "ubuntu_builder-tenacious"
+      ]
+    }
+  },
+  "target": {
+    "almalinux_builder-10": {
+      "args": {
+        "DIST_CODENAME": "None",
+        "DIST_ID": "almalinux",
+        "DIST_IMAGE": "almalinux",
+        "DIST_RELEASE": "10"
+      },
+      "context": "/images/rpm_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/almalinux_builder:10",
+        "ghcr.io/jbigot/distropack-builder/almalinux_builder:10-p1",
+        "ghcr.io/jbigot/distropack-builder/almalinux_builder:latest"
+      ]
+    },
+    "almalinux_builder-8": {
+      "args": {
+        "DIST_CODENAME": "None",
+        "DIST_ID": "almalinux",
+        "DIST_IMAGE": "almalinux",
+        "DIST_RELEASE": "8"
+      },
+      "context": "/images/rpm_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/almalinux_builder:8",
+        "ghcr.io/jbigot/distropack-builder/almalinux_builder:8-p1"
+      ]
+    },
+    "almalinux_builder-9": {
+      "args": {
+        "DIST_CODENAME": "None",
+        "DIST_ID": "almalinux",
+        "DIST_IMAGE": "almalinux",
+        "DIST_RELEASE": "9"
+      },
+      "context": "/images/rpm_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/almalinux_builder:9",
+        "ghcr.io/jbigot/distropack-builder/almalinux_builder:9-p1"
+      ]
+    },
+    "deb_tools": {
+      "context": "/images/deb_tools",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/deb_tools:latest",
+        "ghcr.io/jbigot/distropack-builder/deb_tools:p1"
+      ]
+    },
+    "debian_builder-forky": {
+      "args": {
+        "DIST_CODENAME": "forky",
+        "DIST_ID": "debian",
+        "DIST_IMAGE": "debian",
+        "DIST_RELEASE": "forky-slim"
+      },
+      "context": "/images/deb_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/debian_builder:forky",
+        "ghcr.io/jbigot/distropack-builder/debian_builder:forky-p1",
+        "ghcr.io/jbigot/distropack-builder/debian_builder:testing"
+      ]
+    },
+    "debian_builder-rc-buggy": {
+      "args": {
+        "DIST_CODENAME": "rc-buggy",
+        "DIST_ID": "debian",
+        "DIST_IMAGE": "debian",
+        "DIST_RELEASE": "rc-buggy"
+      },
+      "context": "/images/deb_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/debian_builder:rc-buggy",
+        "ghcr.io/jbigot/distropack-builder/debian_builder:rc-buggy-p1",
+        "ghcr.io/jbigot/distropack-builder/debian_builder:experimental"
+      ]
+    },
+    "debian_builder-sid": {
+      "args": {
+        "DIST_CODENAME": "sid",
+        "DIST_ID": "debian",
+        "DIST_IMAGE": "debian",
+        "DIST_RELEASE": "sid-slim"
+      },
+      "context": "/images/deb_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/debian_builder:sid",
+        "ghcr.io/jbigot/distropack-builder/debian_builder:sid-p1",
+        "ghcr.io/jbigot/distropack-builder/debian_builder:unstable"
+      ]
+    },
+    "debian_builder-trixie": {
+      "args": {
+        "DIST_CODENAME": "trixie",
+        "DIST_ID": "debian",
+        "DIST_IMAGE": "debian",
+        "DIST_RELEASE": "trixie-slim"
+      },
+      "context": "/images/deb_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/debian_builder:trixie",
+        "ghcr.io/jbigot/distropack-builder/debian_builder:trixie-p1",
+        "ghcr.io/jbigot/distropack-builder/debian_builder:stable",
+        "ghcr.io/jbigot/distropack-builder/debian_builder:latest"
+      ]
+    },
+    "fedora_builder-43": {
+      "args": {
+        "DIST_CODENAME": "None",
+        "DIST_ID": "fedora",
+        "DIST_IMAGE": "fedora",
+        "DIST_RELEASE": "43"
+      },
+      "context": "/images/rpm_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/fedora_builder:43",
+        "ghcr.io/jbigot/distropack-builder/fedora_builder:43-p1"
+      ]
+    },
+    "fedora_builder-44": {
+      "args": {
+        "DIST_CODENAME": "None",
+        "DIST_ID": "fedora",
+        "DIST_IMAGE": "fedora",
+        "DIST_RELEASE": "44"
+      },
+      "context": "/images/rpm_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/fedora_builder:44",
+        "ghcr.io/jbigot/distropack-builder/fedora_builder:44-p1"
+      ]
+    },
+    "fedora_builder-45": {
+      "args": {
+        "DIST_CODENAME": "None",
+        "DIST_ID": "fedora",
+        "DIST_IMAGE": "fedora",
+        "DIST_RELEASE": "45"
+      },
+      "context": "/images/rpm_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/fedora_builder:45",
+        "ghcr.io/jbigot/distropack-builder/fedora_builder:45-p1",
+        "ghcr.io/jbigot/distropack-builder/fedora_builder:latest"
+      ]
+    },
+    "fedora_builder-46": {
+      "args": {
+        "DIST_CODENAME": "None",
+        "DIST_ID": "fedora",
+        "DIST_IMAGE": "fedora",
+        "DIST_RELEASE": "46"
+      },
+      "context": "/images/rpm_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/fedora_builder:46",
+        "ghcr.io/jbigot/distropack-builder/fedora_builder:46-p1",
+        "ghcr.io/jbigot/distropack-builder/fedora_builder:rawhide"
+      ]
+    },
+    "gpg2": {
+      "context": "/images/gpg2",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/gpg2:latest",
+        "ghcr.io/jbigot/distropack-builder/gpg2:p1"
+      ]
+    },
+    "rocky_builder-10": {
+      "args": {
+        "DIST_CODENAME": "None",
+        "DIST_ID": "rocky",
+        "DIST_IMAGE": "rockylinux/rockylinux",
+        "DIST_RELEASE": "10"
+      },
+      "context": "/images/rpm_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/rocky_builder:10",
+        "ghcr.io/jbigot/distropack-builder/rocky_builder:10-p1",
+        "ghcr.io/jbigot/distropack-builder/rocky_builder:latest"
+      ]
+    },
+    "rocky_builder-8": {
+      "args": {
+        "DIST_CODENAME": "None",
+        "DIST_ID": "rocky",
+        "DIST_IMAGE": "rockylinux/rockylinux",
+        "DIST_RELEASE": "8"
+      },
+      "context": "/images/rpm_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/rocky_builder:8",
+        "ghcr.io/jbigot/distropack-builder/rocky_builder:8-p1"
+      ]
+    },
+    "rocky_builder-9": {
+      "args": {
+        "DIST_CODENAME": "None",
+        "DIST_ID": "rocky",
+        "DIST_IMAGE": "rockylinux/rockylinux",
+        "DIST_RELEASE": "9"
+      },
+      "context": "/images/rpm_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/rocky_builder:9",
+        "ghcr.io/jbigot/distropack-builder/rocky_builder:9-p1"
+      ]
+    },
+    "rpm_tools": {
+      "context": "/images/rpm_tools",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/rpm_tools:latest",
+        "ghcr.io/jbigot/distropack-builder/rpm_tools:p1"
+      ]
+    },
+    "ubuntu_builder-jammy": {
+      "args": {
+        "DIST_CODENAME": "jammy",
+        "DIST_ID": "ubuntu",
+        "DIST_IMAGE": "ubuntu",
+        "DIST_RELEASE": "jammy"
+      },
+      "context": "/images/deb_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:jammy",
+        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:jammy-p1"
+      ]
+    },
+    "ubuntu_builder-noble": {
+      "args": {
+        "DIST_CODENAME": "noble",
+        "DIST_ID": "ubuntu",
+        "DIST_IMAGE": "ubuntu",
+        "DIST_RELEASE": "noble"
+      },
+      "context": "/images/deb_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:noble",
+        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:noble-p1"
+      ]
+    },
+    "ubuntu_builder-resolute": {
+      "args": {
+        "DIST_CODENAME": "resolute",
+        "DIST_ID": "ubuntu",
+        "DIST_IMAGE": "ubuntu",
+        "DIST_RELEASE": "resolute"
+      },
+      "context": "/images/deb_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:resolute",
+        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:resolute-p1"
+      ]
+    },
+    "ubuntu_builder-stonking": {
+      "args": {
+        "DIST_CODENAME": "stonking",
+        "DIST_ID": "ubuntu",
+        "DIST_IMAGE": "ubuntu",
+        "DIST_RELEASE": "stonking"
+      },
+      "context": "/images/deb_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:stonking",
+        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:stonking-p1",
+        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:latest"
+      ]
+    },
+    "ubuntu_builder-tenacious": {
+      "args": {
+        "DIST_CODENAME": "tenacious",
+        "DIST_ID": "ubuntu",
+        "DIST_IMAGE": "ubuntu",
+        "DIST_RELEASE": "tenacious"
+      },
+      "context": "/images/deb_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:tenacious",
+        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:tenacious-p1",
+        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:devel"
+      ]
+    }
+  }
+}
