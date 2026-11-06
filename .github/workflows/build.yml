@@ -38,6 +38,7 @@ jobs:
         uv run --locked distropack-build images bake-file -o docker-bake.json 2> bake-file.log \
           || { cat bake-file.log; exit 1; }
         cat bake-file.log
+        # shellcheck disable=SC2016 # the backticks in single quotes are Markdown, for the summary
         {
           echo '### Images'
           jq -r '.group.default.targets[] | "- `\(.)`"' docker-bake.json
