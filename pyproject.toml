@@ -12,6 +12,7 @@ dev = [
     "pytest",
     "pytest-socket",
     "ruff",
+    "shellcheck-py",
     "syrupy",
     "time-machine",
     "types-PyYAML",
