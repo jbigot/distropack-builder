@@ -53,6 +53,19 @@ class Distribution:
     cpe_prefix: str | None = field(compare=False)
     source: Source = field(compare=False, repr=False)
 
+    def releases(self, on: date | None = None) -> tuple[Release, ...]:
+        """The releases of the distribution as of on, today by default, oldest first.
+
+        The source is fetched the first time, and kept for the rest of the process. A release
+        created after on does not exist yet; the suites are the ones of that day.
+
+        Raises:
+            SourceError: the source could not be read.
+        """
+        from distro_releases import catalog  # catalog builds on this module
+
+        return catalog.releases(self, on)
+
     def __str__(self) -> str:
         """The display name."""
         return self.name

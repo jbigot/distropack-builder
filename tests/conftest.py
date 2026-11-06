@@ -22,12 +22,15 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import ModuleType
 
+import httpx
 import pytest
+import respx
 import time_machine
 import yaml
 from syrupy.assertion import SnapshotAssertion
 from syrupy.extensions.json import JSONSnapshotExtension
 
+from distro_releases import catalog
 from support import (
     DOCKER_SHIM_DIR,
     FIXTURE_PASSPHRASE,
@@ -46,6 +49,19 @@ def recordings() -> dict[str, str]:
     """The URL -> recorded file mapping; a test may remove entries before loading a script."""
     urls: dict[str, str] = json.loads((RELEASE_DATA / 'urls.json').read_text())
     return urls
+
+
+@pytest.fixture
+def recorded_http(recordings: dict[str, str]) -> Iterator[respx.MockRouter]:
+    """Serve httpx requests from the recordings, failing on any other URL, with a fresh catalog."""
+    catalog._fetch.cache_clear()
+    with respx.mock(assert_all_called=False, assert_all_mocked=True) as router:
+        for url, name in recordings.items():
+            router.get(url, name=url).mock(
+                return_value=httpx.Response(200, content=(RELEASE_DATA / name).read_bytes())
+            )
+        yield router
+    catalog._fetch.cache_clear()
 
 
 @pytest.fixture

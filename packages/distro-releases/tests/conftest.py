@@ -9,6 +9,8 @@ import pytest
 import respx
 import stamina
 
+from distro_releases import catalog
+
 DATA = Path(__file__).parent / 'data'
 
 
@@ -29,3 +31,11 @@ def recorded() -> Iterator[respx.MockRouter]:
                 return_value=httpx.Response(200, content=(DATA / name).read_bytes())
             )
         yield router
+
+
+@pytest.fixture(autouse=True)
+def fresh_catalog() -> Iterator[None]:
+    """Each test fetches the release data again, as a new process would."""
+    catalog._fetch.cache_clear()
+    yield
+    catalog._fetch.cache_clear()
