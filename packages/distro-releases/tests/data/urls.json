@@ -3,5 +3,6 @@
   "https://debian.pages.debian.net/distro-info-data/debian.csv": "debian.csv",
   "https://debian.pages.debian.net/distro-info-data/ubuntu.csv": "ubuntu.csv",
   "https://endoflife.date/api/v1/products/almalinux": "endoflife-almalinux.json",
+  "https://endoflife.date/api/v1/products/rhel": "endoflife-rhel.json",
   "https://endoflife.date/api/v1/products/rocky-linux": "endoflife-rocky-linux.json"
 }

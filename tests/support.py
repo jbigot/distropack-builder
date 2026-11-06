@@ -5,6 +5,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA = REPO_ROOT / 'tests' / 'characterization' / 'data'
+# The recorded release data, shared with distro-releases' own tests.
+RELEASE_DATA = REPO_ROOT / 'packages' / 'distro-releases' / 'tests' / 'data'
 # The modules load_script reloads, so that distinfo fetches its data again at each test.
 MODULES = (
     'distro_releases.distinfo',

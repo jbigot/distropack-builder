@@ -22,6 +22,14 @@ repos:
     types_or: [python, pyi, toml]
     pass_filenames: false
     require_serial: true
+  - id: mypy-distro-releases-tests
+    name: mypy (distro-releases tests)
+    # A run of their own: their conftest.py would clash with tests/conftest.py as module `conftest`.
+    entry: uv run --frozen mypy packages/distro-releases/tests
+    language: system
+    types_or: [python, pyi, toml]
+    pass_filenames: false
+    require_serial: true
 - repo: https://github.com/astral-sh/uv-pre-commit
   rev: 0.13.7
   hooks:

@@ -29,13 +29,13 @@ from syrupy.assertion import SnapshotAssertion
 from syrupy.extensions.json import JSONSnapshotExtension
 
 from support import (
-    DATA,
     DOCKER_SHIM_DIR,
     FIXTURE_PASSPHRASE,
     FIXTURE_PROJECT,
     FIXTURE_RELEASES,
     FROZEN_DATE,
     MODULES,
+    RELEASE_DATA,
     REPO_ROOT,
     SCRIPT_MODULES,
 )
@@ -44,7 +44,7 @@ from support import (
 @pytest.fixture
 def recordings() -> dict[str, str]:
     """The URL -> recorded file mapping; a test may remove entries before loading a script."""
-    urls: dict[str, str] = json.loads((DATA / 'urls.json').read_text())
+    urls: dict[str, str] = json.loads((RELEASE_DATA / 'urls.json').read_text())
     return urls
 
 
@@ -55,7 +55,7 @@ def recorded_urlopen(monkeypatch: pytest.MonkeyPatch, recordings: dict[str, str]
     def urlopen(url: str, *args: object, **kwargs: object) -> object:
         if url not in recordings:
             raise KeyError(f'no recording for {url}')
-        return (DATA / recordings[url]).open('rb')
+        return (RELEASE_DATA / recordings[url]).open('rb')
 
     monkeypatch.setattr(urllib.request, 'urlopen', urlopen)
 
@@ -197,7 +197,7 @@ def pkgbuild_env() -> dict[str, str]:
         paths.append(os.environ['PYTHONPATH'])
     return os.environ | {
         'PYTHONPATH': os.pathsep.join(paths),
-        'DISTROPACK_TEST_RECORDINGS': str(DATA),
+        'DISTROPACK_TEST_RECORDINGS': str(RELEASE_DATA),
     }
 
 

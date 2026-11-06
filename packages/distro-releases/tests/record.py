@@ -29,7 +29,7 @@ def main() -> None:
     while page <= pages:
         pages = json.loads(fetch(BODHI + str(page), f'bodhi-releases-{page}.json', urls))['pages']
         page += 1
-    for product in ('almalinux', 'rocky-linux'):
+    for product in ('almalinux', 'rhel', 'rocky-linux'):
         fetch(
             f'https://endoflife.date/api/v1/products/{product}', f'endoflife-{product}.json', urls
         )

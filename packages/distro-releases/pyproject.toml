@@ -3,7 +3,7 @@ name = "distro-releases"
 dynamic = ["version"]
 description = "Release data of Linux distributions: which releases exist and which are supported"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["httpx", "stamina", "typer"]
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
