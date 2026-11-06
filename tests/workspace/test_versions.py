@@ -16,6 +16,21 @@ def test_version_ignores_the_other_family(repo: Path) -> None:
     assert version_of(repo, 'distropack-builder') == '9.0.0'
 
 
+def test_builder_version_ignores_the_other_family(repo: Path) -> None:
+    tag(repo, 'distropack-builder-v1.2.0', 'HEAD~1')
+    tag(repo, 'distro-releases-v9.0.0')  # nearer
+    assert version_of(repo, 'distropack-builder').startswith('1.2.1.dev1')
+    assert version_of(repo, 'distro-releases') == '9.0.0'
+
+
+def test_version_ignores_the_action_tags(repo: Path) -> None:
+    tag(repo, 'distro-releases-v1.2.0', 'HEAD~1')
+    tag(repo, 'distropack-builder-v3.4.0', 'HEAD~1')
+    tag(repo, 'v9.9.9')  # nearer, the GitHub Action's family
+    assert version_of(repo, 'distro-releases').startswith('1.2.1.dev1')
+    assert version_of(repo, 'distropack-builder').startswith('3.4.1.dev1')
+
+
 def test_version_without_tag(repo: Path) -> None:
     assert version_of(repo, 'distropack-builder').startswith('0.1.dev')
 
