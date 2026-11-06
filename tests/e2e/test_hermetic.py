@@ -1,4 +1,4 @@
-"""The subprocesses running master's scripts read the recorded release data, never the network."""
+"""The subprocesses running the builder read the recorded release data, never the network."""
 
 import subprocess
 import sys
@@ -18,8 +18,8 @@ def run_python(code: str, env: dict[str, str]) -> subprocess.CompletedProcess[st
 def test_subprocess_reads_recorded_releases(load_script: Callable[[str], ModuleType],
                                             pkgbuild_env: dict[str, str]) -> None:
     debian = next(load_script('distinfo.py').distributions(id='debian'))
-    result = run_python('import distinfo\n'
-                        'debian = next(distinfo.distributions(id="debian"))\n'
+    result = run_python('from distro_releases.distinfo import distributions\n'
+                        'debian = next(distributions(id="debian"))\n'
                         'print(",".join(str(r.codename) for r in debian.releases()))',
                         pkgbuild_env)
     assert result.returncode == 0, result.stderr

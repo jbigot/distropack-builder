@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import argparse
 import atexit
 import csv
@@ -25,8 +23,8 @@ from debian.changelog import Changelog, format_date
 from debian.deb822 import Deb822, _PkgRelationMixin
 import yaml
 
-from downloader import Downloader
-from distinfo import ReleaseInfo, distributions
+from distro_releases.distinfo import ReleaseInfo, distributions
+from distropack_builder.downloader import Downloader
 
 VERBOSE = None
 REPO = 'ghcr.io/jbigot/pkg_builder/'
@@ -936,6 +934,3 @@ def main():
             input("Press Enter to clean-up and continue...")
         raise
 
-
-if __name__ == '__main__':
-    main()

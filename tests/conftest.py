@@ -1,4 +1,8 @@
-"""Fixtures shared by every test layer of the characterization suite."""
+"""Fixtures shared by every test layer of the characterization suite.
+
+The suite runs the code moved into the packages, unchanged in behaviour, and compares it with what
+master's scripts gave when it was recorded.
+"""
 
 import gzip
 import io
@@ -14,6 +18,7 @@ from collections.abc import Callable, Iterator
 from datetime import date
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import importlib
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
@@ -32,8 +37,9 @@ from support import (
     FIXTURE_PROJECT,
     FIXTURE_RELEASES,
     FROZEN_DATE,
+    MODULES,
     REPO_ROOT,
-    SCRIPTS,
+    SCRIPT_MODULES,
 )
 
 
@@ -56,16 +62,20 @@ def recorded_urlopen(monkeypatch: pytest.MonkeyPatch, recordings: dict[str, str]
 @pytest.fixture
 def load_script(recorded_urlopen: None,
                 monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[str], ModuleType]]:
-    """Load one of the scripts at the repository root as a fresh module.
+    """Load a fresh copy of the module a script of master became, by the script's name.
 
-    The scripts and the modules they import are dropped from sys.modules first, so that distinfo
-    fetches its data again, from the recordings, at each test.
+    'distinfo.py' and 'pkgbuild' load the modules they were moved to; 'build', still a script at
+    the repository root, is loaded by path. The modules are dropped from sys.modules first, so that
+    distinfo fetches its data again, from the recordings, at each test. The syspath_prepend makes
+    monkeypatch restore sys.path afterwards, which build extends when it is loaded.
     """
     monkeypatch.syspath_prepend(str(REPO_ROOT))
-    for name in SCRIPTS:
+    for name in MODULES:
         monkeypatch.delitem(sys.modules, name, raising=False)
 
     def load(filename: str) -> ModuleType:
+        if filename in SCRIPT_MODULES:
+            return importlib.import_module(SCRIPT_MODULES[filename])
         name = Path(filename).stem
         loader = SourceFileLoader(name, str(REPO_ROOT / filename))
         spec = spec_from_loader(name, loader)
@@ -76,7 +86,7 @@ def load_script(recorded_urlopen: None,
         return module
 
     yield load
-    for name in SCRIPTS:
+    for name in MODULES:
         sys.modules.pop(name, None)
 
 
@@ -98,8 +108,8 @@ def snapshot(snapshot: SnapshotAssertion) -> SnapshotAssertion:
 def docker_engine() -> bool:
     """Whether the Docker engine is rootless; skips when no engine answers.
 
-    Master's pkgbuild fails on rootless engines (note 164): run_pkgbuild then goes through the
-    docker shim, which drops --user. The golden master itself is recorded on a rootful engine.
+    The builder, as master's pkgbuild, fails on rootless engines (note 164): run_pkgbuild then goes
+    through the docker shim, which drops --user. The golden master itself is recorded on a rootful engine.
     """
     try:
         info = subprocess.run(['docker', 'info', '--format', '{{json .SecurityOptions}}'],
@@ -175,12 +185,12 @@ def project(tmp_path: Path,
 
 @pytest.fixture(scope='session')
 def pkgbuild_env() -> dict[str, str]:
-    """The environment of the subprocesses running master's scripts.
+    """The environment of the subprocesses running the builder.
 
     tests/e2e/hermetic/sitecustomize.py serves them the recorded release data, so that the release
     list is the one of the characterization tests, whatever the date and the network.
     """
-    paths = [str(REPO_ROOT / 'tests' / 'e2e' / 'hermetic'), str(REPO_ROOT)]
+    paths = [str(REPO_ROOT / 'tests' / 'e2e' / 'hermetic')]
     if os.environ.get('PYTHONPATH'):
         paths.append(os.environ['PYTHONPATH'])
     return os.environ | {'PYTHONPATH': os.pathsep.join(paths),
@@ -190,17 +200,17 @@ def pkgbuild_env() -> dict[str, str]:
 @pytest.fixture
 def run_pkgbuild(pkgbuild_env: dict[str, str],
                  docker_engine: bool) -> Callable[[Path], subprocess.CompletedProcess[str]]:
-    """Run master's pkgbuild in a project directory, as pdidev/pkgs does, output merged."""
+    """Run the builder in a project directory, as pdidev/pkgs runs pkgbuild, output merged."""
     return partial(pkgbuild_run, pkgbuild_env, docker_engine)
 
 
 def pkgbuild_run(env: dict[str, str], rootless: bool,
                  project_dir: Path) -> subprocess.CompletedProcess[str]:
-    """Run master's pkgbuild in project_dir, through the docker shim on a rootless engine."""
+    """Run the builder in project_dir, through the docker shim on a rootless engine."""
     if rootless:
         env = env | {'PATH': os.pathsep.join([str(DOCKER_SHIM_DIR), env['PATH']])}
     return subprocess.run(
-        [sys.executable, str(REPO_ROOT / 'pkgbuild'), '-j', '3', '-p', FIXTURE_PASSPHRASE,
+        [sys.executable, '-m', 'distropack_builder', '-j', '3', '-p', FIXTURE_PASSPHRASE,
          'build.conf'],
         cwd=project_dir, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 

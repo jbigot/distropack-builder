@@ -3,6 +3,7 @@
 import sys
 from collections.abc import Callable
 from datetime import date
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -10,7 +11,8 @@ import pytest
 
 @pytest.mark.parametrize('argv', [[], ['--publish']], ids=['build', 'publish'])
 def test_docker_calls(load_script: Callable[[str], ModuleType], frozen: date,
-                      monkeypatch: pytest.MonkeyPatch, argv: list[str], snapshot: object) -> None:
+                      monkeypatch: pytest.MonkeyPatch, argv: list[str], snapshot: object,
+                      tmp_path: Path) -> None:
     build = load_script('build')
     calls: list[list[str]] = []
 
@@ -19,6 +21,7 @@ def test_docker_calls(load_script: Callable[[str], ModuleType], frozen: date,
         return SimpleNamespace(returncode=0)
     monkeypatch.setattr(build, 'run', run)
     monkeypatch.setattr(sys, 'argv', ['build', *argv])
+    monkeypatch.chdir(tmp_path)  # build changes into the images directory; restored afterwards
     build.main()
     assert by_image(calls) == snapshot
 

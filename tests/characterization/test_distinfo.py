@@ -1,4 +1,4 @@
-"""Characterize distinfo.py: the releases it builds from recorded data, at frozen dates."""
+"""Characterize distro_releases.distinfo: the releases it builds from recorded data, at frozen dates."""
 
 from collections.abc import Callable
 from datetime import date

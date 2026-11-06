@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
 
 import argparse
+import os
+import sys
+from pathlib import Path
 from subprocess import run
 
-from distinfo import distributions
+# build.yml runs this script on a bare interpreter: distro-releases is read from the checkout.
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT / 'packages' / 'distro-releases' / 'src'))
+
+from distro_releases.distinfo import distributions  # noqa: E402
+
+IMAGES = ROOT / 'packages' / 'distropack-builder' / 'src' / 'distropack_builder' / 'images'
 
 REPO = 'ghcr.io/jbigot/pkg_builder/'
 
@@ -15,6 +24,7 @@ def run_docker(*args):
 
 
 def main():
+    os.chdir(IMAGES)
     parser = argparse.ArgumentParser(
         description='Builds the required docker images.',
         allow_abbrev=False)

@@ -1,8 +1,8 @@
-"""Serve recorded release data to master's scripts when the tests run them as subprocesses.
+"""Serve recorded release data to the builder when the tests run it as a subprocess.
 
 Python imports this module at startup when its directory is on PYTHONPATH, before distinfo imports
 urlopen. Recorded URLs (DISTROPACK_TEST_RECORDINGS/urls.json) are served from their recording, the
-local test server (127.0.0.1) is reached for real, and any other URL fails, naming it: master's code
+local test server (127.0.0.1) is reached for real, and any other URL fails, naming it: the builder
 runs unchanged, with neither network nor date-dependent data.
 """
 

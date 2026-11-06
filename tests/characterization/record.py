@@ -1,7 +1,7 @@
-"""Record the release data distinfo.py fetches, for the characterization tests.
+"""Record the release data distro_releases.distinfo fetches, for the characterization tests.
 
 Run by hand, with the network: it is never collected by pytest. The URLs must stay byte-identical
-to the ones distinfo.py builds, since the recorded urlopen looks them up verbatim.
+to the ones distinfo builds, since the recorded urlopen looks them up verbatim.
 """
 
 import json

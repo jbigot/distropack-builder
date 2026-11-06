@@ -5,6 +5,9 @@ description = "Build deb and rpm packages and their signed repositories in conta
 requires-python = ">=3.12"
 dependencies = ["distro-releases", "filetype", "python-debian", "pyyaml"]
 
+[project.scripts]
+distropack-build = "distropack_builder.cli:main"
+
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"

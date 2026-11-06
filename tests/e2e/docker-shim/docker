@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A `docker` for the tests only: drops --user from `docker run`, then runs the real docker.
 
-Master's pkgbuild runs its tool containers with --user <uid>:<gid>, which under a rootless engine
+The builder, as master's pkgbuild, runs its tool containers with --user <uid>:<gid>, which under a rootless engine
 maps to a subordinate uid that cannot write the bind mounts (note 164). Without --user, container
 root is the invoking user there. The tests put this directory first on PATH under rootless engines
 only; Phase 4's runner makes the same choice itself, and this shim goes away with it.
