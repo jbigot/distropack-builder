@@ -21,9 +21,9 @@ def test_undeclared_tool_fails(
     assert shutil.which('cmake'), 'needs cmake on the host, to show that the build cannot see it'
     result = run_pkgbuild(project({dist: [rel]}, ['hello-undeclared']))
     assert result.returncode != 0
-    # make echoes the command whatever happens: only the error of the shell (rpm, "cmake: command not
-    # found") or of make running it directly (deb, "cmake: No such file or directory") proves cmake
-    # was missing
+    # make echoes the command whatever happens: only the error of the shell (rpm, "cmake: command
+    # not found") or of make running it directly (deb, "cmake: No such file or directory") proves
+    # cmake was missing
     assert re.search(
         r'cmake: (command not found|not found|No such file or directory)', result.stdout
     ), result.stdout

@@ -5,6 +5,7 @@ master's scripts gave when it was recorded.
 """
 
 import gzip
+import importlib
 import io
 import json
 import os
@@ -18,7 +19,6 @@ from collections.abc import Callable, Iterator
 from datetime import date
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-import importlib
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
@@ -112,7 +112,8 @@ def docker_engine() -> bool:
     """Whether the Docker engine is rootless; skips when no engine answers.
 
     The builder, as master's pkgbuild, fails on rootless engines (note 164): run_pkgbuild then goes
-    through the docker shim, which drops --user. The golden master itself is recorded on a rootful engine.
+    through the docker shim, which drops --user. The golden master itself is recorded on a rootful
+    engine.
     """
     try:
         info = subprocess.run(

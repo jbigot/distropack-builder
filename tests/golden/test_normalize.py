@@ -84,9 +84,8 @@ def rpm_tree(root: Path, *, sha: str = SHA_A, requires: str = 'hello-lib') -> Pa
             zstandard.ZstdCompressor().compress(content.encode())
         )
     (repodata / 'repomd.xml').write_text(
-        '<repomd xmlns="http://linux.duke.edu/metadata/repo"><revision>{}</revision>'.format(
-            1 if sha == SHA_A else 2
-        )
+        '<repomd xmlns="http://linux.duke.edu/metadata/repo">'
+        f'<revision>{1 if sha == SHA_A else 2}</revision>'
         + ''.join(
             f'<data type="{kind}"><location href="repodata/{sha}-{kind}.xml.zst"/></data>'
             for kind in ('primary', 'filelists')

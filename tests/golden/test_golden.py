@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from support import FIXTURE_RELEASES
 from normalize import normalize_repository
+from support import FIXTURE_RELEASES
 
 
 @pytest.mark.golden

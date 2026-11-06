@@ -48,10 +48,11 @@ NS = {
     'rpm': 'http://linux.duke.edu/metadata/rpm',
     'filelists': 'http://linux.duke.edu/metadata/filelists',
 }
+# Openers, not open files: the callers open them in a with statement.
 OPENERS: dict[str, Callable[[Path], IO[bytes]]] = {
-    '.gz': lambda p: gzip.open(p),
-    '.bz2': lambda p: bz2.open(p),
-    '.xz': lambda p: lzma.open(p),
+    '.gz': lambda p: gzip.open(p),  # noqa: SIM115
+    '.bz2': lambda p: bz2.open(p),  # noqa: SIM115
+    '.xz': lambda p: lzma.open(p),  # noqa: SIM115
     '.zst': lambda p: zstandard.open(p, 'rb'),
 }
 
