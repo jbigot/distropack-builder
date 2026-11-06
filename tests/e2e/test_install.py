@@ -18,14 +18,14 @@ IMAGES = {
     'fedora': 'registry.fedoraproject.org/fedora:44',
     'rocky': 'docker.io/rockylinux/rockylinux:10',
 }
-DEB_SCRIPT = '''set -e
+DEB_SCRIPT = """set -e
 printf '%s\\n' 'Types: deb' 'URIs: file:///repo' 'Suites: {release}' 'Components: main' \\
     'Signed-By: /repo/hello-archive-keyring.gpg' > /etc/apt/sources.list.d/hello.sources
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y hello-app
 cat /usr/share/hello-app/greeting
-'''
-RPM_SCRIPT = '''set -e
+"""
+RPM_SCRIPT = """set -e
 sed -e 's|^baseurl=.*|baseurl=file:///repo/{release}|' \\
     -e 's|^gpgkey=.*|gpgkey=file:///repo/hello.key|' \\
     /repo/{release}/hello.repo > /etc/yum.repos.d/hello.repo
@@ -33,7 +33,7 @@ grep -qx gpgcheck=1 /etc/yum.repos.d/hello.repo
 grep -qx repo_gpgcheck=1 /etc/yum.repos.d/hello.repo
 dnf install -y hello-app
 cat /usr/share/hello-app/greeting
-'''
+"""
 
 
 def install(dist: str, repository: Path) -> subprocess.CompletedProcess[str]:
@@ -41,10 +41,21 @@ def install(dist: str, repository: Path) -> subprocess.CompletedProcess[str]:
     release = FIXTURE_RELEASES[dist][0]
     script = (DEB_SCRIPT if dist in ('debian', 'ubuntu') else RPM_SCRIPT).format(release=release)
     return subprocess.run(
-        ['docker', 'run', '--rm',
-         '--mount', f'type=bind,source={repository},target=/repo,readonly',
-         IMAGES[dist], 'sh', '-c', script],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        [
+            'docker',
+            'run',
+            '--rm',
+            '--mount',
+            f'type=bind,source={repository},target=/repo,readonly',
+            IMAGES[dist],
+            'sh',
+            '-c',
+            script,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
 
 
 @pytest.mark.e2e

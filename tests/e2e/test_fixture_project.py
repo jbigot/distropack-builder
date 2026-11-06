@@ -28,5 +28,8 @@ def test_upstream_tarball_is_served(project: Project, tmp_path: Path) -> None:
     with urllib.request.urlopen(url) as response:
         (tmp_path / 'orig.tar.gz').write_bytes(response.read())
     with tarfile.open(tmp_path / 'orig.tar.gz') as tar:
-        assert sorted(tar.getnames()) == ['hello-lib-1.0', 'hello-lib-1.0/Makefile',
-                                          'hello-lib-1.0/hello.sh']
+        assert sorted(tar.getnames()) == [
+            'hello-lib-1.0',
+            'hello-lib-1.0/Makefile',
+            'hello-lib-1.0/hello.sh',
+        ]

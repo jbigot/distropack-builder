@@ -52,16 +52,19 @@ def recordings() -> dict[str, str]:
 @pytest.fixture
 def recorded_urlopen(monkeypatch: pytest.MonkeyPatch, recordings: dict[str, str]) -> None:
     """Serve urllib.request.urlopen from the recordings, failing on any other URL."""
+
     def urlopen(url: str, *args: object, **kwargs: object) -> object:
         if url not in recordings:
             raise KeyError(f'no recording for {url}')
         return (DATA / recordings[url]).open('rb')
+
     monkeypatch.setattr(urllib.request, 'urlopen', urlopen)
 
 
 @pytest.fixture
-def load_script(recorded_urlopen: None,
-                monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[str], ModuleType]]:
+def load_script(
+    recorded_urlopen: None, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[Callable[[str], ModuleType]]:
     """Load a fresh copy of the module a script of master became, by the script's name.
 
     'distinfo.py' and 'pkgbuild' load the modules they were moved to; 'build', still a script at
@@ -112,8 +115,12 @@ def docker_engine() -> bool:
     through the docker shim, which drops --user. The golden master itself is recorded on a rootful engine.
     """
     try:
-        info = subprocess.run(['docker', 'info', '--format', '{{json .SecurityOptions}}'],
-                              capture_output=True, text=True, check=True).stdout
+        info = subprocess.run(
+            ['docker', 'info', '--format', '{{json .SecurityOptions}}'],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
     except (OSError, subprocess.CalledProcessError):
         pytest.skip('no Docker engine answers')
     return 'name=rootless' in info
@@ -128,14 +135,17 @@ class QuietHandler(SimpleHTTPRequestHandler):
 
 def write_tarball(source: Path, target: Path) -> None:
     """A reproducible .tar.gz of source, whose single top-level directory is source's name."""
+
     def reset(info: tarfile.TarInfo) -> tarfile.TarInfo:
         info.mtime, info.uid, info.gid, info.uname, info.gname = 0, 0, 0, '', ''
         return info
+
     data = io.BytesIO()
     with tarfile.open(fileobj=data, mode='w') as tar:
         for path in [source, *sorted(source.rglob('*'))]:
-            tar.add(path, arcname=str(path.relative_to(source.parent)), recursive=False,
-                    filter=reset)
+            tar.add(
+                path, arcname=str(path.relative_to(source.parent)), recursive=False, filter=reset
+            )
     with gzip.GzipFile(target, 'wb', mtime=0) as gz:
         gz.write(data.getvalue())
 
@@ -155,32 +165,35 @@ def orig_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     server.server_close()
 
 
-def make_project(target: Path, orig_base: str, versions: dict[str, list[str]],
-                 packages: list[str]) -> Path:
+def make_project(
+    target: Path, orig_base: str, versions: dict[str, list[str]], packages: list[str]
+) -> Path:
     """Copy the fixture project to target, limited to some releases and packages.
 
     Every *.in file of the copy is rendered with @ORIG_BASE@ set to orig_base.
     """
-    project_dir = Path(shutil.copytree(FIXTURE_PROJECT, target,
-                                       ignore=shutil.ignore_patterns('upstream')))
+    project_dir = Path(
+        shutil.copytree(FIXTURE_PROJECT, target, ignore=shutil.ignore_patterns('upstream'))
+    )
     for template in project_dir.rglob('*.in'):
         template.with_suffix('').write_text(template.read_text().replace('@ORIG_BASE@', orig_base))
         template.unlink()
     conf_path = project_dir / 'build.conf'
     conf = yaml.safe_load(conf_path.read_text())
-    conf['distribs'] = {dist: conf['distribs'][dist] | {'versions': rels}
-                        for dist, rels in versions.items()}
+    conf['distribs'] = {
+        dist: conf['distribs'][dist] | {'versions': rels} for dist, rels in versions.items()
+    }
     conf['packages'] = {name: conf['packages'][name] for name in packages}
     conf_path.write_text(yaml.safe_dump(conf))
     return project_dir
 
 
 @pytest.fixture
-def project(tmp_path: Path,
-            orig_server: str) -> Callable[[dict[str, list[str]], list[str]], Path]:
+def project(tmp_path: Path, orig_server: str) -> Callable[[dict[str, list[str]], list[str]], Path]:
     """Copies of the fixture project limited to some releases and packages (see make_project)."""
-    return lambda versions, packages: make_project(tmp_path / 'project', orig_server, versions,
-                                                   packages)
+    return lambda versions, packages: make_project(
+        tmp_path / 'project', orig_server, versions, packages
+    )
 
 
 @pytest.fixture(scope='session')
@@ -193,37 +206,62 @@ def pkgbuild_env() -> dict[str, str]:
     paths = [str(REPO_ROOT / 'tests' / 'e2e' / 'hermetic')]
     if os.environ.get('PYTHONPATH'):
         paths.append(os.environ['PYTHONPATH'])
-    return os.environ | {'PYTHONPATH': os.pathsep.join(paths),
-                         'DISTROPACK_TEST_RECORDINGS': str(DATA)}
+    return os.environ | {
+        'PYTHONPATH': os.pathsep.join(paths),
+        'DISTROPACK_TEST_RECORDINGS': str(DATA),
+    }
 
 
 @pytest.fixture
-def run_pkgbuild(pkgbuild_env: dict[str, str],
-                 docker_engine: bool) -> Callable[[Path], subprocess.CompletedProcess[str]]:
+def run_pkgbuild(
+    pkgbuild_env: dict[str, str], docker_engine: bool
+) -> Callable[[Path], subprocess.CompletedProcess[str]]:
     """Run the builder in a project directory, as pdidev/pkgs runs pkgbuild, output merged."""
     return partial(pkgbuild_run, pkgbuild_env, docker_engine)
 
 
-def pkgbuild_run(env: dict[str, str], rootless: bool,
-                 project_dir: Path) -> subprocess.CompletedProcess[str]:
+def pkgbuild_run(
+    env: dict[str, str], rootless: bool, project_dir: Path
+) -> subprocess.CompletedProcess[str]:
     """Run the builder in project_dir, through the docker shim on a rootless engine."""
     if rootless:
         env = env | {'PATH': os.pathsep.join([str(DOCKER_SHIM_DIR), env['PATH']])}
     return subprocess.run(
-        [sys.executable, '-m', 'distropack_builder', '-j', '3', '-p', FIXTURE_PASSPHRASE,
-         'build.conf'],
-        cwd=project_dir, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        [
+            sys.executable,
+            '-m',
+            'distropack_builder',
+            '-j',
+            '3',
+            '-p',
+            FIXTURE_PASSPHRASE,
+            'build.conf',
+        ],
+        cwd=project_dir,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
 
 
 @pytest.fixture(scope='session')
-def fixture_build(tmp_path_factory: pytest.TempPathFactory, orig_server: str,
-                  pkgbuild_env: dict[str, str], docker_engine: bool) -> Path:
+def fixture_build(
+    tmp_path_factory: pytest.TempPathFactory,
+    orig_server: str,
+    pkgbuild_env: dict[str, str],
+    docker_engine: bool,
+) -> Path:
     """hello-lib and hello-app built once per session for FIXTURE_RELEASES; the project directory.
 
     Shared by the golden-master and install tests, so that one run builds the fixture once.
     """
-    project_dir = make_project(tmp_path_factory.mktemp('fixture-build') / 'project', orig_server,
-                               FIXTURE_RELEASES, ['hello-lib', 'hello-app'])
+    project_dir = make_project(
+        tmp_path_factory.mktemp('fixture-build') / 'project',
+        orig_server,
+        FIXTURE_RELEASES,
+        ['hello-lib', 'hello-app'],
+    )
     result = pkgbuild_run(pkgbuild_env, docker_engine, project_dir)
     assert result.returncode == 0, result.stdout
     return project_dir

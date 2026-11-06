@@ -34,34 +34,46 @@ def test_wheel_ships_the_images(tmp_path: Path) -> None:
 def installed(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """A fresh venv with both wheels installed, outside the workspace; its bin directory."""
     base = tmp_path_factory.mktemp('installed')
-    wheels = [build_wheel(REPO_ROOT, package, base / 'wheels')
-              for package in ('distro-releases', 'distropack-builder')]
+    wheels = [
+        build_wheel(REPO_ROOT, package, base / 'wheels')
+        for package in ('distro-releases', 'distropack-builder')
+    ]
     venv = base / 'venv'
     subprocess.run(['uv', 'venv', '-q', '--python', '3.13', str(venv)], check=True)
-    subprocess.run(['uv', 'pip', 'install', '-q', '--python', str(venv / 'bin' / 'python'),
-                    *map(str, wheels)], check=True)
+    subprocess.run(
+        ['uv', 'pip', 'install', '-q', '--python', str(venv / 'bin' / 'python'), *map(str, wheels)],
+        check=True,
+    )
     return venv / 'bin'
 
 
 def run(cmd: list[str], cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     """cmd's result, output merged, run with the recorded release data of pkgbuild_env."""
-    return subprocess.run(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT, text=True)
+    return subprocess.run(
+        cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+    )
 
 
-def test_console_script_from_wheel(installed: Path, tmp_path: Path,
-                                   pkgbuild_env: dict[str, str]) -> None:
-    for cmd in [[str(installed / 'distropack-build'), '--help'],
-                [str(installed / 'python'), '-m', 'distropack_builder', '--help']]:
+def test_console_script_from_wheel(
+    installed: Path, tmp_path: Path, pkgbuild_env: dict[str, str]
+) -> None:
+    for cmd in [
+        [str(installed / 'distropack-build'), '--help'],
+        [str(installed / 'python'), '-m', 'distropack_builder', '--help'],
+    ]:
         result = run(cmd, tmp_path, pkgbuild_env)
         assert result.returncode == 0, result.stdout
         assert '-D' in result.stdout and 'build.conf' in result.stdout
 
 
-def test_arguments_reach_the_configuration(installed: Path, tmp_path: Path,
-                                           pkgbuild_env: dict[str, str]) -> None:
-    result = run([str(installed / 'distropack-build'), '-D', 'debian', '-j', '3', 'nosuch.conf'],
-                 tmp_path, pkgbuild_env)
+def test_arguments_reach_the_configuration(
+    installed: Path, tmp_path: Path, pkgbuild_env: dict[str, str]
+) -> None:
+    result = run(
+        [str(installed / 'distropack-build'), '-D', 'debian', '-j', '3', 'nosuch.conf'],
+        tmp_path,
+        pkgbuild_env,
+    )
     assert result.returncode != 0
     assert 'nosuch.conf' in result.stdout
     assert 'ImportError' not in result.stdout and 'ModuleNotFoundError' not in result.stdout
@@ -70,7 +82,8 @@ def test_arguments_reach_the_configuration(installed: Path, tmp_path: Path,
 def test_build_script_on_a_bare_interpreter(tmp_path: Path, pkgbuild_env: dict[str, str]) -> None:
     venv = tmp_path / 'bare'
     subprocess.run(['uv', 'venv', '-q', '--python', '3.13', str(venv)], check=True)
-    result = run([str(venv / 'bin' / 'python'), str(REPO_ROOT / 'build'), '--help'], tmp_path,
-                 pkgbuild_env)
+    result = run(
+        [str(venv / 'bin' / 'python'), str(REPO_ROOT / 'build'), '--help'], tmp_path, pkgbuild_env
+    )
     assert result.returncode == 0, result.stdout
     assert '--publish' in result.stdout

@@ -39,8 +39,7 @@ def mount_spec(*fields):
 
 def urlnormalize(url):
     su = urlparse(url)
-    su = ParseResult(su.scheme, su.netloc, str(Path(su.path)),
-                     su.params, su.query, su.fragment)
+    su = ParseResult(su.scheme, su.netloc, str(Path(su.path)), su.params, su.query, su.fragment)
     return urlunparse(su)
 
 
@@ -72,15 +71,14 @@ def checked_run(cmd, cwd=None, return_stdout=False):
         err = STDOUT
         if VERBOSE:
             out = None
-            print("$ " + ' '.join([str(c) for c in cmd]))
+            print('$ ' + ' '.join([str(c) for c in cmd]))
         else:
             out = PIPE
         if return_stdout:
             err = out
             out = PIPE
         cancellation_point()
-        with Popen(cmd, cwd=cwd, stdout=out, stderr=err,
-                   encoding='UTF8') as process:
+        with Popen(cmd, cwd=cwd, stdout=out, stderr=err, encoding='UTF8') as process:
             try:
                 RUNNING_PROCESSES.add(process)
                 out, err = process.communicate()
@@ -101,7 +99,6 @@ def checked_run(cmd, cwd=None, return_stdout=False):
 
 
 class DockerBindMount:
-
     def __init__(self, target: Path | str, source: Path | str, ro: bool = False):
         self.source = Path(source)
         self.target = Path(target)
@@ -109,21 +106,32 @@ class DockerBindMount:
 
 
 class DockerContainer:
-
     _DOCKERCMD = ['docker', 'run', '--rm']
 
     def __init__(self, img_name):
         self._img_name = [REPO + img_name]
 
-    def __call__(self, *args, mounts: Iterable[DockerBindMount] = [], shm_size: str | None = None,
-                 workdir: Path | str | None = None, return_stdout: bool = False,
-                 user: str = str(geteuid()) + ':' + str(getegid()),
-                 env: Iterable[tuple[str, any]] = []):
+    def __call__(
+        self,
+        *args,
+        mounts: Iterable[DockerBindMount] = [],
+        shm_size: str | None = None,
+        workdir: Path | str | None = None,
+        return_stdout: bool = False,
+        user: str = str(geteuid()) + ':' + str(getegid()),
+        env: Iterable[tuple[str, any]] = [],
+    ):
         mountparam = []
         for m in mounts:
-            mountparam += ['--mount',
-                           mount_spec('type=bind', *(['ro'] if m.ro else []),
-                                      'target=' + str(m.target), 'source=' + str(m.source))]
+            mountparam += [
+                '--mount',
+                mount_spec(
+                    'type=bind',
+                    *(['ro'] if m.ro else []),
+                    'target=' + str(m.target),
+                    'source=' + str(m.source),
+                ),
+            ]
         workdirparam = []
         if workdir is not None:
             workdirparam = ['--workdir', str(Path(workdir))]
@@ -133,14 +141,21 @@ class DockerContainer:
         userparam = []
         if user is not None:
             userparam = ['--user', str(user)]
-        envparam = ['--env='+str(e[0])+'='+str(e[1]) for e in env]
-        return checked_run(DockerContainer._DOCKERCMD + userparam + mountparam + workdirparam
-                           + envparam + shmsizeparam + self._img_name + [*args],
-                           return_stdout=return_stdout)
+        envparam = ['--env=' + str(e[0]) + '=' + str(e[1]) for e in env]
+        return checked_run(
+            DockerContainer._DOCKERCMD
+            + userparam
+            + mountparam
+            + workdirparam
+            + envparam
+            + shmsizeparam
+            + self._img_name
+            + [*args],
+            return_stdout=return_stdout,
+        )
 
 
 class GpgInfo(DockerContainer):
-
     def __init__(self, keyfile, keyid=None, passphrase=None, uid=None):
         super().__init__('gpg2')
         self._keyid = keyid
@@ -159,9 +174,9 @@ class GpgInfo(DockerContainer):
         with (self._home_dir / 'passphrase').open('w') as passphrase:
             print(self._passphrase, end='', file=passphrase)
         with (self._home_dir / 'S.gpg-agent').open('w') as gpgagent_socket:
-            print("%Assuan%\nsocket=/tmp/S.gpg-agent", file=gpgagent_socket)
+            print('%Assuan%\nsocket=/tmp/S.gpg-agent', file=gpgagent_socket)
         with (self._home_dir / 'S.gpg-agent.ssh').open('w') as gpgagent_socketssh:
-            print("%Assuan%\nsocket=/tmp/S.gpg-agent.ssh", file=gpgagent_socketssh)
+            print('%Assuan%\nsocket=/tmp/S.gpg-agent.ssh', file=gpgagent_socketssh)
         with (self._home_dir / 'gpg-agent.conf').open('w') as gpgagent_conf:
             print('extra-socket /tmp/S.gpg-agent.extra', file=gpgagent_conf)
             print('browser-socket /tmp/S.gpg-agent.browser', file=gpgagent_conf)
@@ -172,13 +187,22 @@ class GpgInfo(DockerContainer):
             print('passphrase-file /gnupghome/passphrase', file=gpg_conf)
 
         # Import the provided key
-        self('--passphrase-file', '/gnupghome/passphrase', '--import', str(Path(keyfile).name),
-             mounts=[DockerBindMount('/data', Path(keyfile).parent)])
+        self(
+            '--passphrase-file',
+            '/gnupghome/passphrase',
+            '--import',
+            str(Path(keyfile).name),
+            mounts=[DockerBindMount('/data', Path(keyfile).parent)],
+        )
 
         # Parse the KEYID & UID from the imported key
-        data = self('--with-colons', '--with-fingerprint', '--fixed-list-mode',
-                    '--list-secret-keys',
-                    return_stdout=True)
+        data = self(
+            '--with-colons',
+            '--with-fingerprint',
+            '--fixed-list-mode',
+            '--list-secret-keys',
+            return_stdout=True,
+        )
         in_key = False
         for line in data.splitlines():
             res = line.split(':')
@@ -186,8 +210,13 @@ class GpgInfo(DockerContainer):
                 in_key = False
                 if self._keyid is None or res[4].upper()[-8:] == self._keyid[-8:]:
                     in_key = True
-            elif (res[0] == 'ssb' or res[0] == 'pub' or res[0] == 'crt' or res[0] == 'crs'
-                  or res[0] == 'sub'):
+            elif (
+                res[0] == 'ssb'
+                or res[0] == 'pub'
+                or res[0] == 'crt'
+                or res[0] == 'crs'
+                or res[0] == 'sub'
+            ):
                 in_key = False
             elif res[0] == 'fpr' and in_key:
                 self._keyid = res[9].upper()
@@ -197,17 +226,22 @@ class GpgInfo(DockerContainer):
 
         # Mark the key as trusted
         with (self._home_dir / 'gpg.conf').open('a') as gpg_conf:
-            print('trusted-key '+self._keyid, file=gpg_conf)
+            print('trusted-key ' + self._keyid, file=gpg_conf)
 
         # Remove the passphrase from the key
         self('--passphrase-file', '/gnupghome/passphrase', '--passwd', self._keyid)
 
         # Export the key to a gpg1-compatible keyring
-        self('--passphrase-file', '/gnupghome/passphrase', '--export', '--output',
-             '/gnupghome/keyring.pgp')
+        self(
+            '--passphrase-file',
+            '/gnupghome/passphrase',
+            '--export',
+            '--output',
+            '/gnupghome/keyring.pgp',
+        )
 
     def __call__(self, *args, mounts: Iterable[DockerBindMount] = [], **kwargs):
-        return super().__call__(*args, mounts=[self._mount_gnupghome]+mounts, **kwargs)
+        return super().__call__(*args, mounts=[self._mount_gnupghome] + mounts, **kwargs)
 
     def uid(self):
         """The UID of the key"""
@@ -227,75 +261,98 @@ class GpgInfo(DockerContainer):
 
 
 class DebTools(DockerContainer):
-
     def __init__(self, gpg: GpgInfo):
         super().__init__('deb_tools')
         self._gpg = gpg
 
-    def __call__(self, *args, gpgmount: bool = True, mounts: Iterable[DockerBindMount] = [],
-                 **kwargs):
+    def __call__(
+        self, *args, gpgmount: bool = True, mounts: Iterable[DockerBindMount] = [], **kwargs
+    ):
         return super().__call__(
             *args,
-            mounts=([DockerBindMount('/gnupghome', self._gpg.gnupghome())] if gpgmount
-                    else [])+mounts,
-            **kwargs)
+            mounts=([DockerBindMount('/gnupghome', self._gpg.gnupghome())] if gpgmount else [])
+            + mounts,
+            **kwargs,
+        )
 
     def dpkg_source_format(self, dir: Path):
-        return self('dpkg-source', '--print-format', '/data',
-                    mounts=[DockerBindMount('/data', dir)],
-                    return_stdout=True
-                    ).strip()
+        return self(
+            'dpkg-source',
+            '--print-format',
+            '/data',
+            mounts=[DockerBindMount('/data', dir)],
+            return_stdout=True,
+        ).strip()
 
     def debsign(self, pkg_src_dir: Path, key_id: str):
-        return self('debsign', '--no-conf', '-k', key_id, workdir=Path('/data') / pkg_src_dir.name,
-                    mounts=[DockerBindMount('/data', pkg_src_dir.parent)])
+        return self(
+            'debsign',
+            '--no-conf',
+            '-k',
+            key_id,
+            workdir=Path('/data') / pkg_src_dir.name,
+            mounts=[DockerBindMount('/data', pkg_src_dir.parent)],
+        )
 
-    def mk_build_deps(self, control_file: Path | str, outdir: Path | str,
-                      build_profiles: Iterable[str]):
+    def mk_build_deps(
+        self, control_file: Path | str, outdir: Path | str, build_profiles: Iterable[str]
+    ):
         build_profiles_params = []
         if build_profiles is not None and len(build_profiles) > 0:
             build_profiles_params = ['--build-profiles', ','.join(build_profiles)]
-        return self('mk-build-deps', *build_profiles_params,
-                    str(Path('/input')/Path(control_file).name), gpgmount=False,
-                    mounts=[DockerBindMount('/input', Path(control_file).parent),
-                            DockerBindMount('/data', outdir)])
+        return self(
+            'mk-build-deps',
+            *build_profiles_params,
+            str(Path('/input') / Path(control_file).name),
+            gpgmount=False,
+            mounts=[
+                DockerBindMount('/input', Path(control_file).parent),
+                DockerBindMount('/data', outdir),
+            ],
+        )
 
 
 class RpmTools(DockerContainer):
-
     def __init__(self, gpg: GpgInfo):
         super().__init__('rpm_tools')
         self._gpg = gpg
 
-    def __call__(self, *args, gpgmount: bool = True, mounts: Iterable[DockerBindMount] = [],
-                 **kwargs):
+    def __call__(
+        self, *args, gpgmount: bool = True, mounts: Iterable[DockerBindMount] = [], **kwargs
+    ):
         return super().__call__(
             *args,
-            mounts=([DockerBindMount('/gnupghome', self._gpg.gnupghome())] if gpgmount
-                    else [])+mounts,
-            **kwargs)
+            mounts=([DockerBindMount('/gnupghome', self._gpg.gnupghome())] if gpgmount else [])
+            + mounts,
+            **kwargs,
+        )
 
     def createrepo(self, directory):
-        self('createrepo_c', '.', shm_size='5g', mounts=[
-             DockerBindMount('/data', directory)])
+        self('createrepo_c', '.', shm_size='5g', mounts=[DockerBindMount('/data', directory)])
 
     def rpmspec(self, *args):
         spec_file = Path(args[-1])
         args = args[:-1]
-        return self('rpmspec', *args, str(spec_file.name),
-                    mounts=[DockerBindMount('/data', spec_file.parent, ro=True)],
-                    gpgmount=False, return_stdout=True)
+        return self(
+            'rpmspec',
+            *args,
+            str(spec_file.name),
+            mounts=[DockerBindMount('/data', spec_file.parent, ro=True)],
+            gpgmount=False,
+            return_stdout=True,
+        )
 
-    def rpmsign(self, *args, ):
+    def rpmsign(
+        self,
+        *args,
+    ):
         file = Path(args[-1])
         args = args[:-1]
-        self('rpmsign', *args, str(file.name),
-             mounts=[DockerBindMount('/data', file.parent)])
+        self('rpmsign', *args, str(file.name), mounts=[DockerBindMount('/data', file.parent)])
 
 
 class Control(Deb822, _PkgRelationMixin):
-    _relationship_fields = ['build-depends',
-                            'build-depends-indep', 'build-depends-arch']
+    _relationship_fields = ['build-depends', 'build-depends-indep', 'build-depends-arch']
 
     def __init__(self, *args, **kwargs):
         Deb822.__init__(self, *args, **kwargs)
@@ -303,8 +360,16 @@ class Control(Deb822, _PkgRelationMixin):
 
 
 class DebPackageBuilder:
-    def __init__(self, dist_release: ReleaseInfo, base_dir: Path, gpg: GpgInfo, name: str,
-                 downloader: Downloader, orig_url: str, parallelism: int):
+    def __init__(
+        self,
+        dist_release: ReleaseInfo,
+        base_dir: Path,
+        gpg: GpgInfo,
+        name: str,
+        downloader: Downloader,
+        orig_url: str,
+        parallelism: int,
+    ):
         self.dist_release = dist_release
         self._debian_dir = base_dir / name / 'debian'
         self._gpg = gpg
@@ -328,12 +393,14 @@ class DebPackageBuilder:
         deps_kind = ['build-depends', 'build-depends-indep', 'build-depends-arch']
         with (self._debian_dir / 'control').open() as raw_control:
             control_paragraphs = Deb822.iter_paragraphs(
-                raw_control, strict={'whitespace-separates-paragraphs': False})
+                raw_control, strict={'whitespace-separates-paragraphs': False}
+            )
             self.bin_provides = {pkg['Package'] for pkg in control_paragraphs if 'Package' in pkg}
         with (self._debian_dir / 'control').open() as raw_control:
             control = Control(raw_control)
-            self.bin_depends = {om['name'] for
-                                dl in deps_kind for am in control.relations[dl] for om in am}
+            self.bin_depends = {
+                om['name'] for dl in deps_kind for am in control.relations[dl] for om in am
+            }
 
     def ready(self):
         return all(map(DebPackageBuilder.finished, self._depends))
@@ -350,13 +417,23 @@ class DebPackageBuilder:
     def build(self, wk_dir):
         cancellation_point()
         try:
-            print("\033[34m[STARTED]\033[39m * building deb for " + self._name + ' on '
-                  + str(self.dist_release) + "...")
+            print(
+                '\033[34m[STARTED]\033[39m * building deb for '
+                + self._name
+                + ' on '
+                + str(self.dist_release)
+                + '...'
+            )
 
             if self._debian_dir is None:
                 self._finished = True
-                print("\033[36m[SKIPPED]\033[39m * building deb for " + self._name + ' on '
-                      + str(self.dist_release) + "!")
+                print(
+                    '\033[36m[SKIPPED]\033[39m * building deb for '
+                    + self._name
+                    + ' on '
+                    + str(self.dist_release)
+                    + '!'
+                )
                 return
 
             # Setup our directories
@@ -376,9 +453,12 @@ class DebPackageBuilder:
                 pkg_src_dir = pkg_dir / (changelog.package + '-' + changelog.upstream_version)
                 debian_dir = Path(copytree(self._debian_dir, pkg_src_dir / 'debian'))
             elif fmt == '3.0 (native)':
-                pkg_src_dir = Path(copytree(
-                    self._debian_dir.parent,
-                    pkg_dir / (changelog.package + '-' + changelog.upstream_version)))
+                pkg_src_dir = Path(
+                    copytree(
+                        self._debian_dir.parent,
+                        pkg_dir / (changelog.package + '-' + changelog.upstream_version),
+                    )
+                )
                 debian_dir = pkg_src_dir / 'debian'
             else:
                 raise Exception('Unsupported deb package format: ' + fmt)
@@ -388,44 +468,63 @@ class DebPackageBuilder:
             if self.dist_release.id is not None and self.dist_release.id != '':
                 version += '~bpo' + self.dist_release.id
             chlg_date = parsedate_to_datetime(changelog.date)
-            chlg_date = (datetime.now(tz=chlg_date.tzinfo) - chlg_date)
+            chlg_date = datetime.now(tz=chlg_date.tzinfo) - chlg_date
             version += '.pdidev.' + str(int(chlg_date.total_seconds()))
-            changelog.new_block(package=changelog.package, version=version,
-                                distributions=self.dist_release.codename, urgency=changelog.urgency,
-                                changes=['  * Rebuild for ' + str(self.dist_release)],
-                                author=self._gpg.uid(), date=format_date())
+            changelog.new_block(
+                package=changelog.package,
+                version=version,
+                distributions=self.dist_release.codename,
+                urgency=changelog.urgency,
+                changes=['  * Rebuild for ' + str(self.dist_release)],
+                author=self._gpg.uid(),
+                date=format_date(),
+            )
             with (debian_dir / 'changelog').open('w') as raw_changelog:
                 changelog.write_to_open_file(raw_changelog)
 
             # Download the orig file
             if fmt == '3.0 (quilt)':
                 self._orig_url = self._orig_url.format(
-                    upstream_version=changelog.upstream_version, package=changelog.package)
-                orig_file_noext = (changelog.package + '_' + changelog.upstream_version
-                                   + '.orig.tar.')
+                    upstream_version=changelog.upstream_version, package=changelog.package
+                )
+                orig_file_noext = (
+                    changelog.package + '_' + changelog.upstream_version + '.orig.tar.'
+                )
                 self._downloader.download(self._orig_url, pkg_dir / orig_file_noext)
-                orig_file = (orig_file_noext
-                             + filetype.guess(str(pkg_dir / orig_file_noext)).extension)
+                orig_file = (
+                    orig_file_noext + filetype.guess(str(pkg_dir / orig_file_noext)).extension
+                )
                 (pkg_dir / orig_file_noext).rename(pkg_dir / orig_file)
 
             # Generate the dependencies .deb
             deps_dir = wk_dir / 'deps'
             deps_dir.mkdir()
-            self._deb_tools.mk_build_deps(debian_dir / 'control', deps_dir,
-                                          [self.dist_release.distrib.id,
-                                           self.dist_release.codename])
+            self._deb_tools.mk_build_deps(
+                debian_dir / 'control',
+                deps_dir,
+                [self.dist_release.distrib.id, self.dist_release.codename],
+            )
 
             # Build a repo with all dependencies
             localrepo = wk_dir / 'repo'
             DebRepoBuilder(localrepo, self._gpg).build(self.__dep_packages())
 
             # Build the package in docker
-            DockerContainer(self.dist_release.distrib.id+'_builder:'+self.dist_release.codename)(
-                '-j'+str(self._parallelism), '-sa',
-                '-P'+self.dist_release.distrib.id+','+self.dist_release.codename,
-                mounts=[DockerBindMount('/src', pkg_dir), DockerBindMount('/deps', deps_dir),
-                        DockerBindMount('/localrepo', localrepo)],
-                shm_size='5g', user=None, env=[('DH_VERBOSE', 1)])
+            DockerContainer(
+                self.dist_release.distrib.id + '_builder:' + self.dist_release.codename
+            )(
+                '-j' + str(self._parallelism),
+                '-sa',
+                '-P' + self.dist_release.distrib.id + ',' + self.dist_release.codename,
+                mounts=[
+                    DockerBindMount('/src', pkg_dir),
+                    DockerBindMount('/deps', deps_dir),
+                    DockerBindMount('/localrepo', localrepo),
+                ],
+                shm_size='5g',
+                user=None,
+                env=[('DH_VERBOSE', 1)],
+            )
 
             rmtree(localrepo)
             rmtree(deps_dir)
@@ -440,21 +539,44 @@ class DebPackageBuilder:
             rmtree(pkg_dir)
 
             self._finished = True
-            print("\033[32m[SUCCESS]\033[39m * building deb for " +
-                  self._name + ' on ' + str(self.dist_release) + "!")
+            print(
+                '\033[32m[SUCCESS]\033[39m * building deb for '
+                + self._name
+                + ' on '
+                + str(self.dist_release)
+                + '!'
+            )
         except CancellationException:
-            print("\033[33m[CANCEL]\033[39m  * building deb for " +
-                  self._name + ' on ' + str(self.dist_release) + "!")
+            print(
+                '\033[33m[CANCEL]\033[39m  * building deb for '
+                + self._name
+                + ' on '
+                + str(self.dist_release)
+                + '!'
+            )
             raise
         except BaseException as e:
-            print("\033[31m[FAILURE]\033[39m * building deb for " +
-                  self._name + ' on ' + str(self.dist_release) + "! " + str(e))
+            print(
+                '\033[31m[FAILURE]\033[39m * building deb for '
+                + self._name
+                + ' on '
+                + str(self.dist_release)
+                + '! '
+                + str(e)
+            )
             raise
 
 
 class DebRepoBuilder:
-    def __init__(self, output_dir: Path, gpg: GpgInfo, url: str = None, name: str = None,
-                 description: str = None, readme_tpl: Path = None):
+    def __init__(
+        self,
+        output_dir: Path,
+        gpg: GpgInfo,
+        url: str = None,
+        name: str = None,
+        description: str = None,
+        readme_tpl: Path = None,
+    ):
         self._output_dir = output_dir
         self._gpg = gpg
         self._url = url
@@ -472,28 +594,39 @@ class DebRepoBuilder:
             return
 
         distribs = set()
-        install = ""
+        install = ''
         with TemporaryDirectory(prefix='PKGBAPTLY.') as tmp_dir:
             tmp_dir = Path(tmp_dir)
 
             with (tmp_dir / 'aptly.conf').open('w') as aptly_conf:
-                json.dump({
-                    'architectures': ["amd64", "source"],
-                    'rootDir': "/aptlyroot",
-                    'FileSystemPublishEndpoints': {'default': {
-                        'rootDir': "/aptlyout",
-                        'linkMethod': "copy",
-                    }},
-                }, aptly_conf)
+                json.dump(
+                    {
+                        'architectures': ['amd64', 'source'],
+                        'rootDir': '/aptlyroot',
+                        'FileSystemPublishEndpoints': {
+                            'default': {
+                                'rootDir': '/aptlyout',
+                                'linkMethod': 'copy',
+                            }
+                        },
+                    },
+                    aptly_conf,
+                )
 
             self._output_dir.mkdir(parents=True, exist_ok=True)
 
             def aptly(*args, data=None):
-                self._deb_tools('aptly', '-config=/aptlyroot/aptly.conf', *args, shm_size='5g',
-                                mounts=[DockerBindMount('/aptlyroot', tmp_dir),
-                                        DockerBindMount('/aptlyout', self._output_dir)] + (
-                                            [DockerBindMount('/data', data)] if data is not None
-                                            else []))
+                self._deb_tools(
+                    'aptly',
+                    '-config=/aptlyroot/aptly.conf',
+                    *args,
+                    shm_size='5g',
+                    mounts=[
+                        DockerBindMount('/aptlyroot', tmp_dir),
+                        DockerBindMount('/aptlyout', self._output_dir),
+                    ]
+                    + ([DockerBindMount('/data', data)] if data is not None else []),
+                )
 
             repos = set()
             for pkg in pkgs:
@@ -502,22 +635,34 @@ class DebRepoBuilder:
                 if pkg.dist_release not in repos:
                     repos.add(pkg.dist_release)
                     aptly('repo', 'create', pkg.dist_release.uid())
-                aptly('repo', 'include',
-                      '-keyring=/gnupghome/keyring.pgp',
-                      '-no-remove-files', '-repo=' + pkg.dist_release.uid(), '/data',
-                      data=pkg.outdir)
+                aptly(
+                    'repo',
+                    'include',
+                    '-keyring=/gnupghome/keyring.pgp',
+                    '-no-remove-files',
+                    '-repo=' + pkg.dist_release.uid(),
+                    '/data',
+                    data=pkg.outdir,
+                )
             repos = sorted(repos, key=str)
             for dist_release in repos:
                 distribs.add(str(dist_release.distrib))
                 if self._readme_tpl is not None:
-                    with open(self._readme_tpl / ('INSTALL.' + str(dist_release.distrib.id)
-                                                  + '.tpl.html')) as template_file:
+                    with open(
+                        self._readme_tpl / ('INSTALL.' + str(dist_release.distrib.id) + '.tpl.html')
+                    ) as template_file:
                         install += Template(template_file.read()).substitute(
                             dist_release=str(dist_release),
                             codename=str(dist_release.codename),
-                            baseurl=str(self._url))
-                publish_repo = (['publish', 'repo', '-batch', '-force-overwrite',
-                                 '-gpg-key='+self._gpg.keyid8()])
+                            baseurl=str(self._url),
+                        )
+                publish_repo = [
+                    'publish',
+                    'repo',
+                    '-batch',
+                    '-force-overwrite',
+                    '-gpg-key=' + self._gpg.keyid8(),
+                ]
                 if self._url is not None:
                     publish_repo += ['-label=' + self._description, '-origin=' + self._name]
 
@@ -528,23 +673,43 @@ class DebRepoBuilder:
                     names.append('-suite=' + dist_release.suite)
                 for distribution in [dist_release.codename, dist_release.suite]:
                     if distribution is not None:
-                        aptly(*publish_repo, *names, '-distribution=' + distribution,
-                              dist_release.uid(), 'filesystem:default:')
+                        aptly(
+                            *publish_repo,
+                            *names,
+                            '-distribution=' + distribution,
+                            dist_release.uid(),
+                            'filesystem:default:',
+                        )
 
         if self._url is not None:
             (self._output_dir / (self._name + '-archive-keyring.gpg')).unlink(missing_ok=True)
-            self._gpg('--export', '--output', str(self._name + '-archive-keyring.gpg'),
-                      mounts=[DockerBindMount('/data', self._output_dir)])
+            self._gpg(
+                '--export',
+                '--output',
+                str(self._name + '-archive-keyring.gpg'),
+                mounts=[DockerBindMount('/data', self._output_dir)],
+            )
         if self._readme_tpl is not None:
             with open(self._output_dir / 'index.html', mode='w') as readme_file:
                 with open(self._readme_tpl / 'README.tpl.html') as template_file:
-                    readme_file.write(Template(template_file.read()).substitute(
-                        distribs=" ".join(list(distribs)), install=install))
+                    readme_file.write(
+                        Template(template_file.read()).substitute(
+                            distribs=' '.join(list(distribs)), install=install
+                        )
+                    )
 
 
 class RpmPackageBuilder:
-    def __init__(self, dist_release: ReleaseInfo, base_dir: Path, gpg: GpgInfo, name: str,
-                 downloader: Downloader, orig_url: str, parallelism: int):
+    def __init__(
+        self,
+        dist_release: ReleaseInfo,
+        base_dir: Path,
+        gpg: GpgInfo,
+        name: str,
+        downloader: Downloader,
+        orig_url: str,
+        parallelism: int,
+    ):
         self.dist_release = dist_release
         self._spec = base_dir / name / (name + '.spec')
         self._gpg = gpg
@@ -564,12 +729,14 @@ class RpmPackageBuilder:
             self._spec = None
             return
 
-        self.bin_depends = {re.sub(r'[\( ].*', '', dep) for dep in
-                            self._rpm_tools.rpmspec('--buildrequires', '-q', self._spec)
-                            .splitlines()}
-        self.bin_provides = {re.sub(r'[\( ].*', '', dep) for dep in
-                             self._rpm_tools.rpmspec('--provides', '-q', self._spec)
-                             .splitlines()}
+        self.bin_depends = {
+            re.sub(r'[\( ].*', '', dep)
+            for dep in self._rpm_tools.rpmspec('--buildrequires', '-q', self._spec).splitlines()
+        }
+        self.bin_provides = {
+            re.sub(r'[\( ].*', '', dep)
+            for dep in self._rpm_tools.rpmspec('--provides', '-q', self._spec).splitlines()
+        }
 
     def ready(self):
         return all(map(RpmPackageBuilder.finished, self._depends))
@@ -578,24 +745,32 @@ class RpmPackageBuilder:
         return self._finished
 
     def incomings(self):
-        return {e for el in self._depends for e in el.incomings()} | set([
-            self])
+        return {e for el in self._depends for e in el.incomings()} | set([self])
 
     def build(self, wk_dir):
         cancellation_point()
         try:
-            print("\033[34m[STARTED]\033[39m * building rpm for " +
-                  self._name + ' on ' + str(self.dist_release) + "...")
+            print(
+                '\033[34m[STARTED]\033[39m * building rpm for '
+                + self._name
+                + ' on '
+                + str(self.dist_release)
+                + '...'
+            )
 
             if self._spec is None:
                 self._finished = True
-                print("\033[36m[SKIPPED]\033[39m * building rpm for " +
-                      self._name + ' on ' + str(self.dist_release) + "!")
+                print(
+                    '\033[36m[SKIPPED]\033[39m * building rpm for '
+                    + self._name
+                    + ' on '
+                    + str(self.dist_release)
+                    + '!'
+                )
                 return
 
             # Setup our directories
-            wk_dir = wk_dir / (self._name + '.' +
-                               self.dist_release.uid() + '.rpm-build')
+            wk_dir = wk_dir / (self._name + '.' + self.dist_release.uid() + '.rpm-build')
             wk_dir.mkdir()
             self.outdir = wk_dir / 'output'
             self.outdir.mkdir()
@@ -608,10 +783,15 @@ class RpmPackageBuilder:
             RpmRepoBuilder(localrepo, self._gpg).build(self.incomings())
 
             all_urls = self._rpm_tools.rpmspec('-P', self._spec).splitlines()
-            all_urls = [url for url in all_urls if re.match(
-                r'^\s*source[0-9]*\s*:', url, re.IGNORECASE) is not None]
-            all_urls = [re.sub(r'^\s*source[0-9]*\s*:\s*',
-                               '', url, count=1, flags=re.IGNORECASE) for url in all_urls]
+            all_urls = [
+                url
+                for url in all_urls
+                if re.match(r'^\s*source[0-9]*\s*:', url, re.IGNORECASE) is not None
+            ]
+            all_urls = [
+                re.sub(r'^\s*source[0-9]*\s*:\s*', '', url, count=1, flags=re.IGNORECASE)
+                for url in all_urls
+            ]
             for orig_url in all_urls:
                 query = parse_qsl(urlparse(orig_url).query)
                 if len(query) > 0:
@@ -620,36 +800,63 @@ class RpmPackageBuilder:
                     orig_file = Path(urlparse(orig_url).path).name
                 self._downloader.download(orig_url, pkg_dir / orig_file)
 
-            DockerContainer(self.dist_release.distrib.id+'_builder:'+self.dist_release.id)(
-                mounts=[DockerBindMount('/src', pkg_dir, ro=True),
-                        DockerBindMount('/output', self.outdir),
-                        DockerBindMount('/localrepo', localrepo / self.dist_release.id, ro=True)],
-                shm_size='5g', user=None)
+            DockerContainer(self.dist_release.distrib.id + '_builder:' + self.dist_release.id)(
+                mounts=[
+                    DockerBindMount('/src', pkg_dir, ro=True),
+                    DockerBindMount('/output', self.outdir),
+                    DockerBindMount('/localrepo', localrepo / self.dist_release.id, ro=True),
+                ],
+                shm_size='5g',
+                user=None,
+            )
             rmtree(localrepo)
 
             # Sign the generated packages
             for file in self.outdir.iterdir():
                 if file.suffix == '.rpm':
-                    self._rpm_tools.rpmsign('--define=%_gpg_name '+self._gpg.uid(),
-                                            '--resign', file)
+                    self._rpm_tools.rpmsign(
+                        '--define=%_gpg_name ' + self._gpg.uid(), '--resign', file
+                    )
             rmtree(pkg_dir)
 
-            print("\033[32m[SUCCESS]\033[39m * building rpm for " +
-                  self._name + ' on ' + str(self.dist_release) + "!")
+            print(
+                '\033[32m[SUCCESS]\033[39m * building rpm for '
+                + self._name
+                + ' on '
+                + str(self.dist_release)
+                + '!'
+            )
             self._finished = True
         except CancellationException:
-            print("\033[33m[CANCEL]\033[39m  * building rpm for " +
-                  self._name + ' on ' + str(self.dist_release) + "!")
+            print(
+                '\033[33m[CANCEL]\033[39m  * building rpm for '
+                + self._name
+                + ' on '
+                + str(self.dist_release)
+                + '!'
+            )
             raise
         except BaseException:
-            print("\033[31m[FAILURE]\033[39m * building rpm for " +
-                  self._name + ' on ' + str(self.dist_release) + "!")
+            print(
+                '\033[31m[FAILURE]\033[39m * building rpm for '
+                + self._name
+                + ' on '
+                + str(self.dist_release)
+                + '!'
+            )
             raise
 
 
 class RpmRepoBuilder:
-    def __init__(self, output_dir: Path, gpg: GpgInfo, url: str = None, name: str = None,
-                 description: str = None, readme_tpl: Path = None):
+    def __init__(
+        self,
+        output_dir: Path,
+        gpg: GpgInfo,
+        url: str = None,
+        name: str = None,
+        description: str = None,
+        readme_tpl: Path = None,
+    ):
         self._output_dir = output_dir
         self._gpg = gpg
         self._url = url
@@ -657,14 +864,12 @@ class RpmRepoBuilder:
         if url is not None:
             # a trailing slash, so that urljoin appends to the URL rather than replace its end
             self._url = urlnormalize(self._url) + '/'
-            self._name = name if name is not None else str(
-                Path(urlparse(str(self._url)).path).name)
+            self._name = name if name is not None else str(Path(urlparse(str(self._url)).path).name)
             self._description = description if description is not None else self._name
         self._readme_tpl = readme_tpl
 
     def build(self, pkgs: Iterable[RpmPackageBuilder]):
-        pkgs = list(
-            filter(lambda p: 'fedora' in p.dist_release.distrib.id_like, pkgs))
+        pkgs = list(filter(lambda p: 'fedora' in p.dist_release.distrib.id_like, pkgs))
         if len(pkgs) == 0:
             return
 
@@ -687,10 +892,15 @@ class RpmRepoBuilder:
 
         if self._url is not None:
             (self._output_dir / (self._name + '.key')).unlink(missing_ok=True)
-            self._gpg('--export', '--armor', '--output', Path('/data') / (self._name + '.key'),
-                      mounts=[DockerBindMount('/data', self._output_dir)])
+            self._gpg(
+                '--export',
+                '--armor',
+                '--output',
+                Path('/data') / (self._name + '.key'),
+                mounts=[DockerBindMount('/data', self._output_dir)],
+            )
 
-        install = ""
+        install = ''
         distribs = set()
         releases_set = sorted(releases_set, key=str)
         for dist_release in releases_set:
@@ -700,36 +910,42 @@ class RpmRepoBuilder:
 
             self._rpm_tools.createrepo(release_dir)
             (release_dir / 'repodata' / 'repomd.xml.asc').unlink(missing_ok=True)
-            self._gpg('-b', '-a', 'repodata/repomd.xml',
-                      mounts=[DockerBindMount('/data', release_dir)])
+            self._gpg(
+                '-b', '-a', 'repodata/repomd.xml', mounts=[DockerBindMount('/data', release_dir)]
+            )
             if self._url is not None:
                 baseurl = urljoin(self._url, dist_release.id)
                 repo_data = ConfigParser()
                 repo_data.add_section(self._name)
-                repo_data.set(self._name, 'name',
-                              self._description + ' (' + str(dist_release) + ')')
+                repo_data.set(
+                    self._name, 'name', self._description + ' (' + str(dist_release) + ')'
+                )
                 repo_data.set(self._name, 'type', 'rpm-md')
                 repo_data.set(self._name, 'baseurl', baseurl)
                 repo_data.set(self._name, 'gpgcheck', '1')
                 repo_data.set(self._name, 'repo_gpgcheck', '1')
-                repo_data.set(self._name, 'gpgkey', urljoin(
-                    self._url, self._name + '.key'))
+                repo_data.set(self._name, 'gpgkey', urljoin(self._url, self._name + '.key'))
                 repo_data.set(self._name, 'enabled', '1')
                 with (release_dir / (self._name + '.repo')).open('w') as repo_file:
                     repo_data.write(repo_file, space_around_delimiters=False)
                 if self._readme_tpl is not None:
-                    with open(self._readme_tpl / ('INSTALL.' + str(dist_release.distrib.id)
-                                                  + '.tpl.html')) as template_file:
-                        install += Template(
-                            template_file.read()).substitute(
-                            dist_release=str(dist_release), codename=str(
-                                dist_release.codename), baseurl=str(baseurl))
+                    with open(
+                        self._readme_tpl / ('INSTALL.' + str(dist_release.distrib.id) + '.tpl.html')
+                    ) as template_file:
+                        install += Template(template_file.read()).substitute(
+                            dist_release=str(dist_release),
+                            codename=str(dist_release.codename),
+                            baseurl=str(baseurl),
+                        )
 
         if self._readme_tpl is not None:
             with open(self._output_dir / 'README.html', mode='w') as readme_file:
                 with open(self._readme_tpl / 'README.tpl.html') as template_file:
-                    readme_file.write(Template(template_file.read()).substitute(
-                        distribs=" ".join(list(distribs)), install=install))
+                    readme_file.write(
+                        Template(template_file.read()).substitute(
+                            distribs=' '.join(list(distribs)), install=install
+                        )
+                    )
 
 
 def order_packages(pkglst):
@@ -737,8 +953,11 @@ def order_packages(pkglst):
     # package s on release r
     providers = {(bpkg, pkg.dist_release): pkg for pkg in pkglst for bpkg in pkg.bin_provides}
     for pkg in pkglst:
-        pkg._depends = {providers[(b, pkg.dist_release)] for b in pkg.bin_depends if (
-            b, pkg.dist_release) in providers}
+        pkg._depends = {
+            providers[(b, pkg.dist_release)]
+            for b in pkg.bin_depends
+            if (b, pkg.dist_release) in providers
+        }
 
 
 def release_list(cfg: dict) -> Set[ReleaseInfo]:
@@ -771,8 +990,7 @@ def release_list(cfg: dict) -> Set[ReleaseInfo]:
     return releases
 
 
-def release_filter(releases: Iterable[ReleaseInfo],
-                   dist_filter: Iterable[str]) -> Set[ReleaseInfo]:
+def release_filter(releases: Iterable[ReleaseInfo], dist_filter: Iterable[str]) -> Set[ReleaseInfo]:
     result = set()
     for one_filter in dist_filter:
         for release in releases:
@@ -802,14 +1020,12 @@ def build_packages(packages, parallelism: int = None):
             in_progress = set()
             waiting = set(packages)
             while (len(waiting) + len(in_progress)) > 0:
-                for pkg_cfg in {
-                        pkg_cfg for pkg_cfg in waiting if pkg_cfg.ready()}:
+                for pkg_cfg in {pkg_cfg for pkg_cfg in waiting if pkg_cfg.ready()}:
                     waiting.remove(pkg_cfg)
                     in_progress.add(executor.submit(pkg_cfg.build, tmp_dir))
                 if len(in_progress) == 0:
                     raise Exception('Invalid scheduling: no task ready')
-                done, in_progress = wait(
-                    in_progress, return_when=FIRST_COMPLETED)
+                done, in_progress = wait(in_progress, return_when=FIRST_COMPLETED)
                 for done_pkg in done:
                     done_pkg.result()
         except BaseException:
@@ -821,20 +1037,38 @@ def build_packages(packages, parallelism: int = None):
 def main():
     base_dir = Path.cwd().absolute()
 
-    parser = argparse.ArgumentParser(description='Builds deb & RPM repositories.',
-                                     allow_abbrev=False)
-    parser.add_argument('-p', '--passphrase', action='store',
-                        help='The passphrase for the GPG release key')
-    parser.add_argument('-v', '--verbose', action='store_true',
-                        help='Wether to run in verbose mode')
-    parser.add_argument('-i', '--interactive', action='store_true',
-                        help='Wether to run in interactive mode')
-    parser.add_argument('-D', '--distributions', action='append', nargs='+',
-                        help='The distributions to build')
-    parser.add_argument('-j', '--jobs', action='store', nargs='?', type=int, default=None,
-                        help='Number of jobs to run in parallel')
-    parser.add_argument('build_conf', action='store', metavar='build.conf', nargs='?',
-                        default='build.conf', help='Build configuration file')
+    parser = argparse.ArgumentParser(
+        description='Builds deb & RPM repositories.', allow_abbrev=False
+    )
+    parser.add_argument(
+        '-p', '--passphrase', action='store', help='The passphrase for the GPG release key'
+    )
+    parser.add_argument(
+        '-v', '--verbose', action='store_true', help='Wether to run in verbose mode'
+    )
+    parser.add_argument(
+        '-i', '--interactive', action='store_true', help='Wether to run in interactive mode'
+    )
+    parser.add_argument(
+        '-D', '--distributions', action='append', nargs='+', help='The distributions to build'
+    )
+    parser.add_argument(
+        '-j',
+        '--jobs',
+        action='store',
+        nargs='?',
+        type=int,
+        default=None,
+        help='Number of jobs to run in parallel',
+    )
+    parser.add_argument(
+        'build_conf',
+        action='store',
+        metavar='build.conf',
+        nargs='?',
+        default='build.conf',
+        help='Build configuration file',
+    )
     args = parser.parse_args()
 
     global VERBOSE
@@ -848,30 +1082,26 @@ def main():
         with (base_dir / args.build_conf).open('r') as cfg_file:
             cfg = yaml.safe_load(cfg_file)
 
-        downloader = Downloader(verbose=args.verbose,
-                                cancellation_point=cancellation_point)
+        downloader = Downloader(verbose=args.verbose, cancellation_point=cancellation_point)
 
         packages = set()
         repo_builders = []
         for dist_id, distrib_cfg in cfg['distribs'].items():
-            keyfile = base_dir / \
-                distrib_cfg.get('gpg', {}).get('file', 'key.gpg')
+            keyfile = base_dir / distrib_cfg.get('gpg', {}).get('file', 'key.gpg')
             keyid = distrib_cfg.get('gpg', {}).get('id', None)
             uid = distrib_cfg.get('gpg', {}).get('uid', None)
             gpg = GpgInfo(keyfile, keyid, args.passphrase, uid)
 
             releases = release_list({dist_id: distrib_cfg.get('versions', {})})
             if args.distributions is not None and len(args.distributions) != 0:
-                releases = release_filter(
-                    releases, {e for el in args.distributions for e in el})
+                releases = release_filter(releases, {e for el in args.distributions for e in el})
 
             dist_packages = set()
             for dist_release in releases:
                 for name, pkg_cfg in cfg['packages'].items():
                     if not isinstance(pkg_cfg, dict):
                         pkg_cfg = {'value': pkg_cfg}
-                    if dist_release in release_list(
-                            pkg_cfg.get('disable', {})):
+                    if dist_release in release_list(pkg_cfg.get('disable', {})):
                         continue
                     if 'debian' in dist_release.distrib.id_like:
                         dist_packages.add(
@@ -882,7 +1112,9 @@ def main():
                                 name,
                                 downloader,
                                 pkg_cfg.get('orig', None),
-                                args.jobs))
+                                args.jobs,
+                            )
+                        )
                     if 'fedora' in dist_release.distrib.id_like:
                         dist_packages.add(
                             RpmPackageBuilder(
@@ -892,21 +1124,29 @@ def main():
                                 name,
                                 downloader,
                                 pkg_cfg.get('orig', None),
-                                args.jobs))
+                                args.jobs,
+                            )
+                        )
 
-            output_path = base_dir / \
-                distrib_cfg.get('repository', {}).get('path', 'repositories')
+            output_path = base_dir / distrib_cfg.get('repository', {}).get('path', 'repositories')
             url = distrib_cfg.get('repository', {}).get('url')
             name = distrib_cfg.get('repository', {}).get('name')
             description = distrib_cfg.get('repository', {}).get('description')
             if 'debian' in next(distributions(id=dist_id)).id_like:
                 repo_builder = DebRepoBuilder(
-                    output_path, gpg, url, name, description, base_dir / 'README.tpl')
+                    output_path, gpg, url, name, description, base_dir / 'README.tpl'
+                )
             elif 'fedora' in next(distributions(id=dist_id)).id_like:
                 repo_builder = RpmRepoBuilder(
-                    output_path, gpg, url, name, description, base_dir / 'README.tpl')
+                    output_path, gpg, url, name, description, base_dir / 'README.tpl'
+                )
 
-            repo_builders.append((repo_builder, dist_packages, ))
+            repo_builders.append(
+                (
+                    repo_builder,
+                    dist_packages,
+                )
+            )
             packages.update(dist_packages)
 
         build_packages(packages, parallelism=args.jobs)
@@ -915,22 +1155,24 @@ def main():
 
     except KeyboardInterrupt:
         if args.interactive:
-            input("Press Enter to clean-up and continue...")
+            input('Press Enter to clean-up and continue...')
         raise
     except CalledProcessError as err:
-        print("\033[31m[ERROR]\033[39m   * Error while running subprocess:\n$ " +
-              ' '.join([str(ce) for ce in err.cmd]), file=stderr)
+        print(
+            '\033[31m[ERROR]\033[39m   * Error while running subprocess:\n$ '
+            + ' '.join([str(ce) for ce in err.cmd]),
+            file=stderr,
+        )
         if err.stdout is not None:
             print(err.stdout)
         if err.stderr is not None:
             print(err.stderr, file=stderr)
         print(file=stderr)
         if args.interactive:
-            input("Press Enter to clean-up and quit...")
+            input('Press Enter to clean-up and quit...')
         raise
     except Exception as err:
-        print("\033[31m[ERROR]\033[39m   * " + str(err))
+        print('\033[31m[ERROR]\033[39m   * ' + str(err))
         if args.interactive:
-            input("Press Enter to clean-up and continue...")
+            input('Press Enter to clean-up and continue...')
         raise
-

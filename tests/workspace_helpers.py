@@ -18,8 +18,13 @@ GIT_IDENTITY = ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid']
 
 def git(repo: Path, *args: str) -> str:
     """Run git in repo with a neutral configuration; its standard output."""
-    return subprocess.run(['git', *GIT_IDENTITY, '-C', str(repo), *args], env=os.environ | GIT_ENV,
-                          check=True, capture_output=True, text=True).stdout
+    return subprocess.run(
+        ['git', *GIT_IDENTITY, '-C', str(repo), *args],
+        env=os.environ | GIT_ENV,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
 
 
 def synthetic_repo(dest: Path) -> Path:
@@ -28,6 +33,7 @@ def synthetic_repo(dest: Path) -> Path:
     The copy covers the tracked and untracked files git does not ignore, uncommitted changes
     included, minus the tracked files deleted without `git rm`.
     """
+
     def names(*args: str) -> set[str]:
         return set(git(REPO_ROOT, 'ls-files', '-z', *args).split('\0')) - {''}
 
@@ -52,13 +58,23 @@ def git_archive(repo: Path, dest: Path) -> Path:
     An enclosing work tree would give its own tags to the version (design §9), so dest must lie
     outside any.
     """
-    probe = subprocess.run(['git', '-C', str(dest.parent), 'rev-parse', '--show-toplevel'],
-                           env=os.environ | GIT_ENV, capture_output=True, text=True)
+    probe = subprocess.run(
+        ['git', '-C', str(dest.parent), 'rev-parse', '--show-toplevel'],
+        env=os.environ | GIT_ENV,
+        capture_output=True,
+        text=True,
+    )
     if probe.returncode == 0:
-        raise RuntimeError(f'{dest} is inside the git work tree {probe.stdout.strip()}: an archive '
-                           'extracted there takes its version from that repository')
-    archive = subprocess.run(['git', '-C', str(repo), 'archive', '--format=tar', 'HEAD'],
-                             env=os.environ | GIT_ENV, check=True, capture_output=True).stdout
+        raise RuntimeError(
+            f'{dest} is inside the git work tree {probe.stdout.strip()}: an archive '
+            'extracted there takes its version from that repository'
+        )
+    archive = subprocess.run(
+        ['git', '-C', str(repo), 'archive', '--format=tar', 'HEAD'],
+        env=os.environ | GIT_ENV,
+        check=True,
+        capture_output=True,
+    ).stdout
     dest.mkdir(parents=True)
     with tempfile.TemporaryFile() as data:
         data.write(archive)
@@ -71,8 +87,12 @@ def git_archive(repo: Path, dest: Path) -> Path:
 def build_wheel(tree: Path, package: str, out: Path) -> Path:
     """Build the wheel of the workspace member package from tree into out; the wheel's path."""
     env = {k: v for k, v in os.environ.items() if not k.startswith('SETUPTOOLS_SCM_')}
-    subprocess.run(['uv', 'build', '-q', '--wheel', '--package', package, '--out-dir', str(out)],
-                   cwd=tree, env=env | GIT_ENV, check=True)
+    subprocess.run(
+        ['uv', 'build', '-q', '--wheel', '--package', package, '--out-dir', str(out)],
+        cwd=tree,
+        env=env | GIT_ENV,
+        check=True,
+    )
     (wheel,) = out.glob(f'{package.replace("-", "_")}-*.whl')
     return wheel
 

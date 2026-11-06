@@ -9,8 +9,7 @@ from pathlib import Path
 from urllib.request import urlopen
 
 DATA = Path(__file__).parent / 'data'
-BODHI = ('https://bodhi.fedoraproject.org/releases/?exclude_archived=False'
-         '&rows_per_page=100&page=')
+BODHI = 'https://bodhi.fedoraproject.org/releases/?exclude_archived=False&rows_per_page=100&page='
 
 
 def fetch(url: str, name: str, urls: dict[str, str]) -> bytes:
@@ -31,8 +30,9 @@ def main() -> None:
         pages = json.loads(fetch(BODHI + str(page), f'bodhi-releases-{page}.json', urls))['pages']
         page += 1
     for product in ('almalinux', 'rocky-linux'):
-        fetch(f'https://endoflife.date/api/v1/products/{product}', f'endoflife-{product}.json',
-              urls)
+        fetch(
+            f'https://endoflife.date/api/v1/products/{product}', f'endoflife-{product}.json', urls
+        )
     (DATA / 'urls.json').write_text(json.dumps(urls, indent=2, sort_keys=True) + '\n')
 
 

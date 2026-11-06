@@ -17,7 +17,8 @@ from normalize import normalize_repository
 @pytest.mark.golden
 def test_repository_set(fixture_build: Path) -> None:
     assert sorted(d.name for d in (fixture_build / 'repositories').iterdir()) == sorted(
-        FIXTURE_RELEASES)
+        FIXTURE_RELEASES
+    )
 
 
 @pytest.mark.golden

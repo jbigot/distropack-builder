@@ -22,7 +22,7 @@ class Downloader:
     def _fetch(self, url):
         temp_path = self._download_dir / sha256(bytes(url, 'UTF8')).hexdigest()
         if self._verbose:
-            print("Downloading " + url + " ...")
+            print('Downloading ' + url + ' ...')
         for timeout in [1, 2, 3, 5, 7]:
             self._cancellation_point()
             try:
@@ -34,7 +34,7 @@ class Downloader:
                 if timeout == 7 or (isinstance(err, HTTPError) and err.code < 500):
                     raise URLError('while downloading ' + url + ': ' + str(err))
         if self._verbose:
-            print("Downloading " + url + " done!")
+            print('Downloading ' + url + ' done!')
         return temp_path
 
     def download(self, url, path):
@@ -51,7 +51,7 @@ class Downloader:
             except BaseException as err:
                 result.set_exception(err)
         elif self._verbose:
-            print("Downloading " + url + " : in cache!")
+            print('Downloading ' + url + ' : in cache!')
         while True:
             try:
                 downloaded = result.result(timeout=0.1)

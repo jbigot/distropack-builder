@@ -10,15 +10,21 @@ import pytest
 
 
 @pytest.mark.parametrize('argv', [[], ['--publish']], ids=['build', 'publish'])
-def test_docker_calls(load_script: Callable[[str], ModuleType], frozen: date,
-                      monkeypatch: pytest.MonkeyPatch, argv: list[str], snapshot: object,
-                      tmp_path: Path) -> None:
+def test_docker_calls(
+    load_script: Callable[[str], ModuleType],
+    frozen: date,
+    monkeypatch: pytest.MonkeyPatch,
+    argv: list[str],
+    snapshot: object,
+    tmp_path: Path,
+) -> None:
     build = load_script('build')
     calls: list[list[str]] = []
 
     def run(cmd: list[str]) -> SimpleNamespace:
         calls.append(cmd)
         return SimpleNamespace(returncode=0)
+
     monkeypatch.setattr(build, 'run', run)
     monkeypatch.setattr(sys, 'argv', ['build', *argv])
     monkeypatch.chdir(tmp_path)  # build changes into the images directory; restored afterwards
