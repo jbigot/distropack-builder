@@ -91,20 +91,45 @@ def test_unavailable_base_image_is_left_out(
     assert 'UNAVAILABLE ubuntu:tenacious for ubuntu_builder-tenacious' in capsys.readouterr().err
 
 
-@pytest.mark.parametrize(('returncode', 'exists'), [(0, True), (1, False)])
+@pytest.mark.parametrize(
+    ('returncode', 'stderr', 'exists'),
+    [
+        (0, '', True),
+        (1, 'ERROR: docker.io/library/debian:trixie-slim: not found', False),
+        (1, 'ERROR: ghcr.io/x/y:z: manifest unknown', False),
+    ],
+)
 def test_registry_has(
-    bake: ModuleType, monkeypatch: pytest.MonkeyPatch, returncode: int, exists: bool
+    bake: ModuleType, monkeypatch: pytest.MonkeyPatch, returncode: int, stderr: str, exists: bool
 ) -> None:
     commands: list[list[str]] = []
 
     def run(cmd: list[str], **kwargs: Any) -> SimpleNamespace:
         commands.append(cmd)
         assert kwargs.get('capture_output') is True
-        return SimpleNamespace(returncode=returncode)
+        return SimpleNamespace(returncode=returncode, stderr=stderr)
 
     monkeypatch.setattr(subprocess, 'run', run)
     assert bake.registry_has('debian:trixie-slim') is exists
     assert commands == [['docker', 'buildx', 'imagetools', 'inspect', 'debian:trixie-slim']]
+
+
+@pytest.mark.parametrize(
+    'stderr',
+    [
+        'ERROR: failed to do request: Head "https://registry-1.docker.io/v2/": i/o timeout',
+        'ERROR: unexpected status from HEAD request: 429 Too Many Requests',
+    ],
+)
+def test_registry_probe_failure_is_an_error(
+    bake: ModuleType, monkeypatch: pytest.MonkeyPatch, stderr: str
+) -> None:
+    """A probe that fails for another reason than a missing image does not read as missing."""
+    monkeypatch.setattr(
+        subprocess, 'run', lambda cmd, **kwargs: SimpleNamespace(returncode=1, stderr=stderr)
+    )
+    with pytest.raises(RuntimeError, match='debian:trixie-slim'):
+        bake.registry_has('debian:trixie-slim')
 
 
 def test_runner_pulls_baked_images(

@@ -7,6 +7,7 @@ version covers what the runner relies on in an image, its entrypoint and its vol
 when they change, so that a runner asks for an image it can drive.
 """
 
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -16,14 +17,31 @@ from typing import Any, Final
 REGISTRY: Final = 'ghcr.io/jbigot/distropack-builder/'
 PROTOCOL: Final = 1
 TOOLS: Final = ('rpm_tools', 'deb_tools', 'gpg2')
+# What `imagetools inspect` reports for a missing image: `not found` from Docker Hub, `manifest
+# unknown` from registries that use the distribution specification's error code.
+MISSING_IMAGE: Final = re.compile(r'not found|manifest unknown', re.IGNORECASE)
 
 
 def registry_has(image: str) -> bool:
-    """Whether the registry publishes image (a reference such as `debian:trixie-slim`)."""
+    """Whether the registry publishes image (a reference such as `debian:trixie-slim`).
+
+    Raises:
+        RuntimeError: the registry could not tell, for another reason than a missing image (a
+            network error, a rate limit): reading that as a missing image would silently drop
+            the release from the images.
+        subprocess.TimeoutExpired: the registry did not answer within a minute.
+    """
     result = subprocess.run(
-        ['docker', 'buildx', 'imagetools', 'inspect', image], capture_output=True
+        ['docker', 'buildx', 'imagetools', 'inspect', image],
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
-    return result.returncode == 0
+    if result.returncode == 0:
+        return True
+    if MISSING_IMAGE.search(result.stderr):
+        return False
+    raise RuntimeError(f'cannot probe {image}: {result.stderr.strip()}')
 
 
 def bake_definition(images_dir: Path, base_image_exists: Callable[[str], bool]) -> dict[str, Any]:
