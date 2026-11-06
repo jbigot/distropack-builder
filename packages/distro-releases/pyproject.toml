@@ -1,0 +1,18 @@
+[project]
+name = "distro-releases"
+dynamic = ["version"]
+description = "Release data of Linux distributions: which releases exist and which are supported"
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+tag-pattern = '^(?:distro-releases-v)?(?P<version>\d.*)$'
+
+[tool.hatch.version.raw-options]
+search_parent_directories = true
+git_describe_command = "git describe --dirty --tags --long --match 'distro-releases-v*'"

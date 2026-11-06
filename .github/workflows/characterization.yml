@@ -5,11 +5,15 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-env:
-  PYTEST: uv run --no-project --python 3.13 --with-requirements tests/requirements.txt pytest
 jobs:
   unit:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    env:
+      PYTEST: uv run --python ${{ matrix.python }} pytest
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with: { persist-credentials: false }
@@ -18,6 +22,8 @@ jobs:
   golden:
     # master's pkgbuild needs a rootful engine (note 164): the runner's Docker is one
     runs-on: ubuntu-24.04
+    env:
+      PYTEST: uv run --python 3.13 pytest
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with: { persist-credentials: false }

@@ -1,8 +1,0 @@
-filetype
-pytest
-pytest-socket
-python-debian
-pyyaml
-syrupy
-time-machine
-zstandard

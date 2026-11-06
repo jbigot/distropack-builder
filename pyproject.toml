@@ -1,0 +1,37 @@
+# The uv workspace of distro-releases and distropack-builder; not a package itself.
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[dependency-groups]
+dev = [
+    "distro-releases",
+    "distropack-builder",
+    "mypy",
+    "pre-commit",
+    "pytest",
+    "pytest-socket",
+    "ruff",
+    "syrupy",
+    "time-machine",
+    "types-PyYAML",
+    "zstandard",
+]
+
+[tool.uv.sources]
+distro-releases = { workspace = true }
+distropack-builder = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "packages"]
+pythonpath = ["tests", "tests/golden"]
+markers = [
+    "golden: compares the repositories built for the fixture project with master's (needs a rootful Docker engine)",
+    "e2e: builds the fixture project in containers (needs a rootful Docker engine)",
+    "packaging: builds the packages from synthetic repositories and archives (needs git, uv and PyPI, for the build requirements and the wheels' dependencies)",
+]
+addopts = "--import-mode=importlib -m 'not golden and not e2e and not packaging' --disable-socket --allow-hosts=127.0.0.1"
+
+[tool.ruff]
+
+[tool.mypy]
