@@ -1,6 +1,6 @@
 # distropack-builder
 
-Tools to build deb and rpm packages &amp; repositories.
+Tools to build deb and rpm packages & repositories.
 
 This repository is a uv workspace of two packages:
 
