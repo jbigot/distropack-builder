@@ -18,7 +18,9 @@ tag-pattern = '^(?:distropack-builder-v)?(?P<version>\d.*)$'
 
 [tool.hatch.version.raw-options]
 search_parent_directories = true
-git_describe_command = "git describe --dirty --tags --long --match 'distropack-builder-v*'"
+
+[tool.hatch.version.raw-options.scm.git]
+describe_command = "git describe --dirty --tags --long --match 'distropack-builder-v*'"
 
 [tool.uv.sources]
 distro-releases = { workspace = true }

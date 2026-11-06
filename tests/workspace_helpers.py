@@ -86,11 +86,17 @@ def git_archive(repo: Path, dest: Path) -> Path:
 
 def build_wheel(tree: Path, package: str, out: Path) -> Path:
     """Build the wheel of the workspace member package from tree into out; the wheel's path."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith('SETUPTOOLS_SCM_')}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(('SETUPTOOLS_SCM_', 'VCS_VERSIONING_'))
+    }
+    # A configuration field setuptools-scm deprecates fails the build, before a release drops it.
+    deprecated = 'error:Configuration field'
     subprocess.run(
         ['uv', 'build', '-q', '--wheel', '--package', package, '--out-dir', str(out)],
         cwd=tree,
-        env=env | GIT_ENV,
+        env=env | GIT_ENV | {'PYTHONWARNINGS': deprecated},
         check=True,
     )
     (wheel,) = out.glob(f'{package.replace("-", "_")}-*.whl')
