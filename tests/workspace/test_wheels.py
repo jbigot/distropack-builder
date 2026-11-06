@@ -75,9 +75,9 @@ def test_arguments_reach_the_configuration(
         tmp_path,
         pkgbuild_env,
     )
-    assert result.returncode != 0
-    assert 'nosuch.conf' in result.stdout
-    assert 'ImportError' not in result.stdout and 'ModuleNotFoundError' not in result.stdout
+    assert result.returncode == 1, result.stdout
+    assert 'unrecognized arguments' not in result.stdout
+    assert f"No such file or directory: '{tmp_path / 'nosuch.conf'}'" in result.stdout
 
 
 def test_build_script_on_a_bare_interpreter(tmp_path: Path, pkgbuild_env: dict[str, str]) -> None:
