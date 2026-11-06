@@ -1,6 +1,5 @@
 """The bake definition of the images, and its equivalence with the docker calls build made."""
 
-import importlib
 import json
 import subprocess
 from collections.abc import Callable
@@ -11,16 +10,11 @@ from typing import Any
 
 import pytest
 
-from support import REPO_ROOT
+from support import DATA
 
-RECORDED_CALLS = (
-    REPO_ROOT
-    / 'tests'
-    / 'characterization'
-    / '__snapshots__'
-    / 'test_build_script'
-    / 'test_docker_calls[publish].json'
-)
+# The docker calls of `build --publish` (Phase 0), cut into one block per image, each starting
+# with its build.
+RECORDED_CALLS = DATA / 'build-calls.json'
 
 # The image description: its context directory, its tags and its build arguments.
 Image = tuple[str, frozenset[str], dict[str, str]]
@@ -29,8 +23,7 @@ Image = tuple[str, frozenset[str], dict[str, str]]
 @pytest.fixture
 def bake(load_script: Callable[[str], ModuleType], frozen: date) -> ModuleType:
     """distropack_builder.bake, reading the recorded release data at the frozen date."""
-    load_script('distinfo.py')
-    return importlib.import_module('distropack_builder.bake')
+    return load_script('build')
 
 
 def everything_exists(image: str) -> bool:

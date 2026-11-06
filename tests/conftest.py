@@ -19,8 +19,6 @@ from collections.abc import Callable, Iterator
 from datetime import date
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from importlib.machinery import SourceFileLoader
-from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
 from types import ModuleType
 
@@ -68,26 +66,15 @@ def load_script(
 ) -> Iterator[Callable[[str], ModuleType]]:
     """Load a fresh copy of the module a script of master became, by the script's name.
 
-    'distinfo.py' and 'pkgbuild' load the modules they were moved to; 'build', still a script at
-    the repository root, is loaded by path. The modules are dropped from sys.modules first, so that
-    distinfo fetches its data again, from the recordings, at each test. The syspath_prepend makes
-    monkeypatch restore sys.path afterwards, which build extends when it is loaded.
+    'distinfo.py', 'pkgbuild' and 'build' load the modules they became (SCRIPT_MODULES). The
+    modules are dropped from sys.modules first, so that distinfo fetches its data again, from the
+    recordings, at each test.
     """
-    monkeypatch.syspath_prepend(str(REPO_ROOT))
     for name in MODULES:
         monkeypatch.delitem(sys.modules, name, raising=False)
 
     def load(filename: str) -> ModuleType:
-        if filename in SCRIPT_MODULES:
-            return importlib.import_module(SCRIPT_MODULES[filename])
-        name = Path(filename).stem
-        loader = SourceFileLoader(name, str(REPO_ROOT / filename))
-        spec = spec_from_loader(name, loader)
-        assert spec is not None
-        module = module_from_spec(spec)
-        sys.modules[name] = module
-        loader.exec_module(module)
-        return module
+        return importlib.import_module(SCRIPT_MODULES[filename])
 
     yield load
     for name in MODULES:

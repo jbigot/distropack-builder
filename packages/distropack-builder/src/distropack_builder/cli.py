@@ -6,6 +6,7 @@ from configparser import ConfigParser
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 import filetype
+import importlib.resources
 from io import StringIO
 import json
 from os import cpu_count, getegid, geteuid, link
@@ -13,6 +14,7 @@ from pathlib import Path
 import re
 from shutil import copy2, copytree, rmtree
 from subprocess import Popen, CalledProcessError, PIPE, STDOUT
+import sys
 from sys import stderr
 from string import Template
 from tempfile import mkdtemp, TemporaryDirectory
@@ -1034,6 +1036,18 @@ def build_packages(packages, parallelism: int = None):
             raise
 
 
+def write_bake_file(output):
+    """Write the bake definition of the installed images to output, or to stdout."""
+    from distropack_builder import bake
+
+    images_dir = Path(str(importlib.resources.files('distropack_builder') / 'images'))
+    definition = json.dumps(bake.bake_definition(images_dir, bake.registry_has), indent=2) + '\n'
+    if output is None:
+        sys.stdout.write(definition)
+    else:
+        Path(output).write_text(definition)
+
+
 def main():
     base_dir = Path.cwd().absolute()
 
@@ -1049,7 +1063,16 @@ def main():
     images = commands.add_parser(
         'images', description='Works with the Docker images.', allow_abbrev=False
     )
-    images.add_subparsers(dest='images_command', required=True)
+    image_commands = images.add_subparsers(dest='images_command', required=True)
+    bake_file = image_commands.add_parser(
+        'bake-file',
+        description='Writes the Docker bake definition of the images, leaving out the releases'
+        ' whose base image the registry does not publish.',
+        allow_abbrev=False,
+    )
+    bake_file.add_argument(
+        '-o', '--output', metavar='FILE', help='Where to write the definition (default: stdout)'
+    )
     run.add_argument(
         '-p', '--passphrase', action='store', help='The passphrase for the GPG release key'
     )
@@ -1078,6 +1101,10 @@ def main():
         help='Build configuration file',
     )
     args = parser.parse_args()
+
+    if args.command == 'images':
+        write_bake_file(args.output)
+        return
 
     global VERBOSE
     VERBOSE = args.verbose

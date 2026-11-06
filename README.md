@@ -14,4 +14,4 @@ Run the builder from a project directory holding a `build.conf`:
 uv run --project <path to this repository> distropack-build run build.conf
 ```
 
-`python -m distropack_builder` is equivalent. `./build` builds the Docker images.
+`python -m distropack_builder` is equivalent. `distropack-build images bake-file` writes the Docker bake definition of the images.

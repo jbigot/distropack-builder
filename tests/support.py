@@ -11,10 +11,13 @@ MODULES = (
     'distropack_builder.downloader',
     'distropack_builder.bake',
     'distropack_builder.cli',
-    'build',
 )
 # The names the tests pass to load_script, from before the move, and the modules they load.
-SCRIPT_MODULES = {'distinfo.py': 'distro_releases.distinfo', 'pkgbuild': 'distropack_builder.cli'}
+SCRIPT_MODULES = {
+    'build': 'distropack_builder.bake',
+    'distinfo.py': 'distro_releases.distinfo',
+    'pkgbuild': 'distropack_builder.cli',
+}
 FROZEN_DATE = date(2026, 11, 5)
 FIXTURE_PROJECT = REPO_ROOT / 'tests' / 'e2e' / 'project'
 FIXTURE_PASSPHRASE = 'test-passphrase'

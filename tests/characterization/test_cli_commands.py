@@ -1,7 +1,9 @@
 """The sub-commands of distropack-build: run, which builds, and images."""
 
+import json
 import sys
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 from types import ModuleType
 
@@ -51,3 +53,19 @@ def test_build_conf_alone_is_no_longer_a_command(main: Callable[..., None]) -> N
     with pytest.raises(SystemExit) as exit:
         main('build.conf')
     assert exit.value.code == 2
+
+
+def test_bake_file_command(
+    main: Callable[..., None],
+    load_script: Callable[[str], ModuleType],
+    frozen: date,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    bake = load_script('build')
+    monkeypatch.setattr(bake, 'registry_has', lambda image: True)
+    main('images', 'bake-file', '-o', str(tmp_path / 'b.json'))
+    definition = json.loads((tmp_path / 'b.json').read_text())
+    assert len(definition['target']) == 22
+    for target in definition['target'].values():
+        assert (Path(target['context']) / 'Dockerfile').is_file()

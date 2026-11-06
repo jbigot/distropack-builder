@@ -46,9 +46,10 @@ repository's tags.
 
 ## Images and publication
 
-`./build` builds the Docker images. It is transitional, and goes when the images move to a bake
-file. Nothing is published from this repository (packages, tags, images or documentation) before
-the initial release.
+`distropack-build images bake-file` writes the Docker bake definition of the images, which the
+`Docker images` workflow builds, one job per image. Only its runs on `main` push them, to
+`ghcr.io/jbigot/distropack-builder/`; nothing else is published from this repository (packages,
+tags or documentation) before the initial release.
 
 ## Dependencies
 

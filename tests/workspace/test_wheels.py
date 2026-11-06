@@ -81,13 +81,3 @@ def test_arguments_reach_the_configuration(
     assert result.returncode == 1, result.stdout
     assert 'unrecognized arguments' not in result.stdout
     assert f"No such file or directory: '{tmp_path / 'nosuch.conf'}'" in result.stdout
-
-
-def test_build_script_on_a_bare_interpreter(tmp_path: Path, pkgbuild_env: dict[str, str]) -> None:
-    venv = tmp_path / 'bare'
-    subprocess.run(['uv', 'venv', '-q', '--python', '3.13', str(venv)], check=True)
-    result = run(
-        [str(venv / 'bin' / 'python'), str(REPO_ROOT / 'build'), '--help'], tmp_path, pkgbuild_env
-    )
-    assert result.returncode == 0, result.stdout
-    assert '--publish' in result.stdout
