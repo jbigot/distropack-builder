@@ -74,8 +74,10 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    # Per ref: a job queued in a group cancels the one pending there, so a branch run must not share
+    # main's, whose jobs publish.
     concurrency:
-      group: images-${{ matrix.target }}
+      group: images-${{ github.ref }}-${{ matrix.target }}
       cancel-in-progress: false
     env:
       TARGET: ${{ matrix.target }}
