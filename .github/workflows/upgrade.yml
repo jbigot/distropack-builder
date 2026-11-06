@@ -1,0 +1,22 @@
+# Runs the checks on the latest releases of every dependency and hook, without committing anything:
+# a failure here is an upgrade that breaks the code, fixed in the code, not by a pin.
+name: Upgrade
+on:
+  schedule:
+  - cron: '17 4 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  upgrade:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with: { persist-credentials: false }
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+    - run: uv lock --upgrade
+    - run: uv run pre-commit autoupdate
+    - run: git diff --stat
+    - run: uv run pre-commit run --all-files --show-diff-on-failure
+    - run: uv run --python 3.13 pytest
+    - run: uv run mypy

@@ -1,25 +1,36 @@
-name: Docker images CI
+# Builds the images, without publishing them: nothing is published from this repository before
+# Phase 2, which brings publication back under ghcr.io/jbigot/distropack-builder/*.
+name: Docker images
 on:
   push:
-    branches:
-    - master
+    paths: &paths
+    - packages/distropack-builder/src/distropack_builder/images/**
+    - build
+    - .github/workflows/build.yml
   pull_request:
-  schedule:
-    - cron:  '0 2 * * *' # nightly build at 2AM
+    paths: *paths
+  workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - name: Checkout
-      uses: actions/checkout@v6
-    - name: Set up Python
-      uses: actions/setup-python@v6
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with: { persist-credentials: false }
+    - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with: { python-version: "3.13" }
-    - name: Build docker images
+    - name: Build the images
+      shell: bash
+      run: ./build | tee build.log
+    - name: Check that every image built
+      # build exits 0 when an image fails: it prints SKIPPED instead of DONE.
+      shell: bash
       run: |
-        echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-        ./build
-    - name: Publish docker images
-      if: ${{ github.event_name == 'push' || github.event_name == 'schedule' }}
-      run: |
-        ./build --publish
+        built=$(grep -c '===> docker build ' build.log || true)
+        done=$(grep -c '===> DONE ' build.log || true)
+        echo "$built images built, $done done"
+        if grep -q '===> SKIPPED ' build.log || [ "$built" -eq 0 ] || [ "$built" -ne "$done" ]; then
+          echo "::error::an image failed to build: see SKIPPED in the log of the previous step"
+          exit 1
+        fi
