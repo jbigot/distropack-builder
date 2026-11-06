@@ -85,8 +85,8 @@ def list_releases(
     selectors: Annotated[
         list[str] | None,
         typer.Argument(
-            help='`<distribution>` for its supported releases, or `<distribution>:<tokens>` with '
-            "build.conf's release tokens, comma-separated (`debian:bookworm,+`, `debian:all`). "
+            help='DISTRIBUTION for its supported releases, or DISTRIBUTION:TOKENS with the '
+            'release tokens of build.conf, comma-separated (debian:bookworm,+ or debian:all). '
             'None: the supported releases of every distribution.',
             show_default=False,
         ),

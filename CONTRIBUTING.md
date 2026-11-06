@@ -25,13 +25,20 @@ those lists only shrink.
 | `packaging` | `uv run pytest -m packaging` | git, uv and PyPI: it builds the packages from synthetic repositories and archives |
 | `golden` | `uv run pytest -m golden` | a Docker engine and the network, to pull the builder images: it compares the repositories built for the fixture project with the recorded golden master |
 | `e2e` | `uv run pytest -m e2e` | a Docker engine and the network, to pull the builder images: it builds the fixture project and installs from its repositories |
+| `live` | `uv run pytest -m live` | the network: it reads the real release sources of distro-releases (the nightly `Live canary` workflow, which opens an issue labelled `live-canary` when it fails) |
 
 `.python-version` makes 3.13 the default interpreter, the one the golden master is recorded with;
 `uv run --python 3.12 pytest` runs the unit tests on another one, as the CI matrix does.
 
 A rootless Docker engine works for `golden` and `e2e`: the tests then go through a docker shim.
 The golden master itself is recorded on a rootful engine, the one of GitHub's runners.
-The `docker` and `live` layers of the design come in later phases (4 and 9).
+The `docker` layer of the design comes in Phase 4.
+
+The tests of `distro-releases` live in `packages/distro-releases/tests/`, with the release data they
+and the root `tests/` read, recorded under `data/` by `record.py` (run by hand, with the network). That
+directory is not a package: mypy checks it in a run of its own (the `mypy (distro-releases tests)`
+hook), where its `conftest.py` does not clash with `tests/conftest.py`. CI's unit job on 3.13 also
+enforces a branch-coverage floor on `distro_releases`, which only rises.
 
 ## Versions
 

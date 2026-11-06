@@ -40,7 +40,7 @@ class Distribution:
     Attributes:
         id: the distribution's identifier in this library, its os-release `ID`.
         name: its display name, os-release's `NAME`.
-        os_release_ids: the os-release `ID`s of the systems it covers.
+        os_release_ids: the os-release `ID` values of the systems it covers.
         id_like: its os-release `ID_LIKE`, which does not contain the distribution itself.
         cpe_prefix: the CPE of the distribution, to which a release appends its version.
         source: where its releases come from.
