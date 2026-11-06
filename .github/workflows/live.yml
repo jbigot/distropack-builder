@@ -1,0 +1,44 @@
+# The live canary: reads the real release sources of distro-releases every night, and reports a
+# failure in an issue labelled live-canary (opened, or commented on while one is open). Nothing
+# depends on it: a source changing its format must not block any other work.
+name: Live canary
+on:
+  schedule:
+  - cron: '30 2 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  UV_LOCKED: 1
+jobs:
+  live:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with: { persist-credentials: false }
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+    - run: uv run --python 3.13 pytest -m live -rs -v
+  report:
+    needs: live
+    if: failure()
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+    steps:
+    - name: Open or update the issue
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        gh label create live-canary --force --color d93f0b \
+          --description 'The nightly check of the release sources fails'
+        number=$(gh issue list --label live-canary --state open --json number --jq '.[0].number')
+        if [ -n "$number" ]; then
+          gh issue comment "$number" --body "Still failing: $RUN_URL"
+        else
+          gh issue create --label live-canary \
+            --title 'The live canary of the release sources fails' \
+            --body "A release source of distro-releases no longer answers or parses as expected: $RUN_URL"
+        fi

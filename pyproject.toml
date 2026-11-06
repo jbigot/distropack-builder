@@ -33,8 +33,9 @@ markers = [
     "golden: compares the repositories built for the fixture project with master's (needs a rootful Docker engine)",
     "e2e: builds the fixture project in containers (needs a rootful Docker engine)",
     "packaging: builds the packages from synthetic repositories and archives (needs git, uv and PyPI, for the build requirements and the wheels' dependencies)",
+    "live: reads the real release sources of distro-releases (needs the network; nightly, non-blocking)",
 ]
-addopts = "--import-mode=importlib -m 'not golden and not e2e and not packaging' --disable-socket --allow-hosts=127.0.0.1"
+addopts = "--import-mode=importlib -m 'not golden and not e2e and not packaging and not live' --disable-socket --allow-hosts=127.0.0.1"
 
 [tool.ruff]
 line-length = 100
