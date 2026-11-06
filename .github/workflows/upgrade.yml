@@ -19,3 +19,4 @@ jobs:
     - run: git diff --stat
     - run: uv run pre-commit run --all-files --show-diff-on-failure
     - run: uv run --python 3.13 pytest
+    - run: uv run --group docs sphinx-build -W --keep-going -n -b html docs "$RUNNER_TEMP/html"
