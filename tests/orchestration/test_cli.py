@@ -188,6 +188,12 @@ def test_releases_list(
             '-D fedra names no distribution of build.conf',
             id='unknown-pattern',
         ),
+        pytest.param(
+            'distribs: {debian: {versions: [trixie]}}\npackages: {}\n',
+            ['-D', 'debian:bookworm'],
+            '-D debian:bookworm names no release build.conf selects',
+            id='unselected-release',
+        ),
     ],
 )
 @pytest.mark.parametrize('command', [['run'], ['releases', 'list']], ids=['run', 'releases'])
@@ -217,3 +223,21 @@ def test_missing_build_conf(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     result = invoke('run')
     assert result.exit_code == 2
     assert 'build.conf' in result.stderr
+
+
+def test_nothing_to_build(
+    recorded_http: respx.MockRouter, frozen: date, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run that selects no release says so, and touches no engine."""
+    monkeypatch.chdir(tmp_path)
+    write_conf(tmp_path, 'distribs: {debian: {versions: [trixie, available]}}\npackages: {}\n')
+    manifest = 'https://ghcr.io/v2/jbigot/distropack-builder/debian_builder/manifests/trixie-p2'
+    recorded_http.head(manifest).respond(404)
+
+    def no_engine(host: str | None) -> Any:
+        raise AssertionError('connected to an engine')
+
+    app = cli.make_app(runner=FakeRunner(), connect=no_engine)
+    result = CliRunner().invoke(app, ['run'], env={'COLUMNS': '200'})
+    assert result.exit_code == 0, result.output
+    assert result.stderr == 'distropack-build: nothing to build: build.conf selects no release\n'

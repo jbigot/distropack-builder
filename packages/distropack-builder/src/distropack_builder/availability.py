@@ -92,8 +92,11 @@ def _token(client: httpx.Client, challenge: str) -> str:
     realm = values.pop('realm')
     response = client.get(realm, params=values)
     response.raise_for_status()
-    body = response.json()
-    token = body.get('token') or body.get('access_token')
+    try:
+        body = response.json()
+    except ValueError:
+        raise _Unsupported(f'{realm} did not answer JSON') from None
+    token = body.get('token') or body.get('access_token') if isinstance(body, dict) else None
     if not isinstance(token, str):
         raise _Unsupported(f'{realm} gave no token')
     return token

@@ -40,7 +40,9 @@ it; each line can be passed to `run -D`.
 
 `distropack-build run -D debian:trixie -D fedora` builds for the releases these patterns name,
 among those of `build.conf`: a distribution's id or name, alone or followed by `:` and a codename,
-a version or a suite. A pattern that names no distribution of `build.conf` is an error.
+a version or a suite. A pattern that names no distribution of `build.conf`, or a release its
+`versions` do not select, is an error. A run that selects no release at all, every one of them
+left out by `available` say, says so and does nothing.
 
 ## Drop a release
 

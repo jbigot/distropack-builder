@@ -182,6 +182,9 @@ def make_app(
         # work; then the engine, before any container.
         loaded, selected = _selection(build_conf, patterns, on)
         readme.check(readme.project_dir(loaded.root))
+        if not any(selected.values()):
+            typer.echo(f'{PROG}: nothing to build: {build_conf} selects no release', err=True)
+            return False
         disabled = disabled_releases(loaded, selected, on)
         try:
             engine = connect(docker_host)

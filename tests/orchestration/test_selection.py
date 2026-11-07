@@ -75,6 +75,27 @@ def test_unknown_pattern(recorded_http: respx.MockRouter, frozen: date, pattern:
         configured_releases(build_config(debian=('trixie',)), (pattern,), frozen, never)
 
 
+@pytest.mark.parametrize('pattern', ['debian:bookwrm', 'debian:bookworm'])
+def test_pattern_naming_no_selected_release(
+    recorded_http: respx.MockRouter, frozen: date, pattern: str
+) -> None:
+    """A release build.conf does not select, misspelt or not, is an error, not an empty run."""
+    with pytest.raises(SelectorError, match=f'-D {pattern} names no release build.conf selects'):
+        configured_releases(
+            build_config(debian=('trixie',)), ('debian:trixie', pattern), frozen, never
+        )
+
+
+def test_pattern_release_filtered_as_unavailable(
+    recorded_http: respx.MockRouter, frozen: date
+) -> None:
+    """A release the pattern names but available leaves out is no error: its image is late."""
+    selected = configured_releases(
+        build_config(debian=('trixie', 'available')), ('debian:trixie',), frozen, lambda r: False
+    )
+    assert uids(selected) == {'debian': []}
+
+
 def test_pattern_by_name(recorded_http: respx.MockRouter, frozen: date) -> None:
     selected = configured_releases(
         build_config(debian=('trixie',)), ('Debian GNU/Linux',), frozen, never

@@ -90,3 +90,12 @@ def test_token_refused(registry: respx.MockRouter) -> None:
 
     with httpx.Client() as client, pytest.raises(AvailabilityError, match='403'):
         image_available(IMAGE, client)
+
+
+def test_token_not_json(registry: respx.MockRouter) -> None:
+    """A realm that answers a page, as a captive portal does, is an error, not a traceback."""
+    registry['token'].return_value = httpx.Response(200, text='<html>sign in</html>')
+    registry.head(MANIFEST).respond(401, headers={'www-authenticate': CHALLENGE})
+
+    with httpx.Client() as client, pytest.raises(AvailabilityError, match='JSON'):
+        image_available(IMAGE, client)
