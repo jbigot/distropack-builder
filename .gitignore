@@ -1,2 +1,4 @@
 # Written by Python wherever a module is imported from.
 __pycache__/
+# Written by docs/conf.py, from the configuration models, at each documentation build.
+docs/reference/_generated/

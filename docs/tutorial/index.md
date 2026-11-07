@@ -1,5 +1,11 @@
 # Tutorial
 
-This section will package a first project from scratch: write its `build.conf`, create a signing
-key, build it locally with `distropack-build`, install it from the resulting repository, and then
-do the same in CI with the GitHub Action.
+[Package a first project](first-project.md): write its packaging and `build.conf`, create a
+signing key, build it with `distropack-build`, and install from the resulting repositories. Doing
+the same in CI, with the GitHub Action, is to come.
+
+```{toctree}
+:hidden:
+
+first-project
+```

@@ -21,7 +21,13 @@ dev = [
     "types-docker",
     "zstandard",
 ]
-docs = ["furo", "myst-parser", "sphinx", "sphinxcontrib-typer"]
+docs = [
+    "furo",
+    "myst-parser",
+    "sphinx",
+    "sphinx-jsonschema",
+    "sphinxcontrib-typer",
+]
 
 [tool.uv.sources]
 distro-releases = { workspace = true }

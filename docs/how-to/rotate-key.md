@@ -4,7 +4,9 @@ Users trust a repository through the public key they installed: a new key must r
 packages signed with it do.
 
 1. Generate the new key, passphrase-protected, with a user id naming the repository, for example
-   with `sq key generate` or `gpg --quick-generate-key`, and export its secret part to a file.
+   with `sq key generate` or `gpg --quick-generate-key`, and export its secret part to a file. A
+   passphrase-protected ed25519 key exported by GnuPG 2.3 or later cannot be unlocked by the
+   builder: with gpg, make an RSA key.
 2. For deb, publish its public part first: a new version of the archive keyring package holding
    both keys (apt accepts a `Signed-By` file with several keys), so that users have the new key
    before anything is signed with it.

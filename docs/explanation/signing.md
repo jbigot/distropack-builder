@@ -2,7 +2,9 @@
 
 A run signs with one key per distribution, the `gpg` section of `build.conf` names it: the key
 file (`key.gpg` by default), and optionally which key of that file (`id`, the end of its
-fingerprint) and which of its user ids (`uid`). The passphrase comes from `--passphrase`.
+fingerprint) and which of its user ids (`uid`). The passphrase comes from the file
+`--passphrase-file` names, or from the `DISTROPACK_GPG_PASSPHRASE` environment variable, never from
+the command line.
 
 ## In the builder's own process
 
