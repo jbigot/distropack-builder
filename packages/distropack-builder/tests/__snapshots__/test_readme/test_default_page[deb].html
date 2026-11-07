@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hello test: Debian GNU/Linux packages</title>
+</head>
+<body>
+<h1>Hello test: Debian GNU/Linux packages</h1>
+<p>This repository holds the Debian GNU/Linux packages of Hello test, signed
+with <a href="https://repo.example.org/debian/hello-archive-keyring.gpg">its key</a>.</p>
+<h2>Installation</h2>
+<h3>On Debian GNU/Linux 12 (Bookworm)</h3>
+<pre><code>sudo curl -fsSL -o /usr/share/keyrings/hello-archive-keyring.gpg https://repo.example.org/debian/hello-archive-keyring.gpg
+sudo tee /etc/apt/sources.list.d/hello.sources &lt;&lt;'EOF'
+Types: deb
+URIs: https://repo.example.org/debian
+Suites: bookworm
+Components: main
+Signed-By: /usr/share/keyrings/hello-archive-keyring.gpg
+EOF
+sudo apt update</code></pre>
+<h3>On Debian GNU/Linux unstable (Sid)</h3>
+<pre><code>sudo curl -fsSL -o /usr/share/keyrings/hello-archive-keyring.gpg https://repo.example.org/debian/hello-archive-keyring.gpg
+sudo tee /etc/apt/sources.list.d/hello.sources &lt;&lt;'EOF'
+Types: deb
+URIs: https://repo.example.org/debian
+Suites: sid
+Components: main
+Signed-By: /usr/share/keyrings/hello-archive-keyring.gpg
+EOF
+sudo apt update</code></pre>
+
+</body>
+</html>

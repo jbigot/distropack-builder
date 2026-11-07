@@ -35,6 +35,12 @@ def test_wheel_ships_the_images(tmp_path: Path) -> None:
     }
 
 
+def test_wheel_ships_the_templates(tmp_path: Path) -> None:
+    wheel = build_wheel(REPO_ROOT, 'distropack-builder', tmp_path)
+    with zipfile.ZipFile(wheel) as archive:
+        assert 'distropack_builder/templates/README.html.j2' in archive.namelist()
+
+
 @pytest.fixture(scope='module')
 def installed(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """A fresh venv with both wheels installed, outside the workspace; its bin directory."""
@@ -82,9 +88,8 @@ def test_arguments_reach_the_configuration(
         tmp_path,
         pkgbuild_env,
     )
-    assert result.returncode == 1, result.stdout
-    assert 'unrecognized arguments' not in result.stdout
-    assert f"No such file or directory: '{tmp_path / 'nosuch.conf'}'" in result.stdout
+    assert result.returncode == 2, result.stdout
+    assert result.stdout == 'distropack-build: error: nosuch.conf: No such file or directory\n'
 
 
 def test_distro_releases_script_from_wheel(

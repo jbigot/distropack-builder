@@ -22,7 +22,7 @@ import typer
 from rich.console import Console
 
 from distro_releases import Release, SelectorError, SourceError, UnknownDistribution
-from distropack_builder import bake, config, targets
+from distropack_builder import bake, config, readme, targets
 from distropack_builder.availability import AvailabilityError, image_available
 from distropack_builder.builders import builder_image, run_builds
 from distropack_builder.config import BuildConfig, ConfigError, Distrib
@@ -52,6 +52,7 @@ _USAGE_ERRORS = (
     PassphraseError,
     RemoteEndpoint,
     SelectorError,
+    readme.TemplateError,
     UnknownDistribution,
     targets.NotATarget,
 )
@@ -180,6 +181,7 @@ def make_app(
         # The configuration's errors, the release data and the images available come before any
         # work; then the engine, before any container.
         loaded, selected = _selection(build_conf, patterns, on)
+        readme.check(readme.project_dir(loaded.root))
         disabled = disabled_releases(loaded, selected, on)
         try:
             engine = connect(docker_host)

@@ -6,13 +6,13 @@ import logging
 from os import link
 from pathlib import Path
 from shutil import copy2, copytree, rmtree
-from string import Template
 from tempfile import TemporaryDirectory
 from typing import Iterable
 from urllib.parse import ParseResult, urljoin, urlparse, urlunparse
 
 from debian.changelog import Changelog, format_date
 from debian.deb822 import Deb822, _PkgRelationMixin
+import jinja2
 
 from distro_releases import (
     Release,
@@ -31,7 +31,7 @@ from distropack_builder.downloads import (
 from distropack_builder.graph import closure, dependencies
 from distropack_builder.publication import published
 from distropack_builder.report import Reporter, build_logger
-from distropack_builder import repodata, rpmquery
+from distropack_builder import readme, repodata, rpmquery
 from distropack_builder.rpmquery import SpecFailed, SpecInfo
 from distropack_builder.scheduler import Succeeded, schedule
 from distropack_builder.signing import Signer
@@ -358,7 +358,7 @@ class DebRepoBuilder:
         url: str = None,
         name: str = None,
         description: str = None,
-        readme_tpl: Path = None,
+        pages: jinja2.Environment | None = None,
         logger: logging.Logger | None = None,
         sign: bool = True,
     ):
@@ -370,7 +370,7 @@ class DebRepoBuilder:
             self._url = urlnormalize(self._url)
             self._name = name if name is not None else Path(str(urlparse(self._url).path)).name
             self._description = description if description is not None else self._name
-        self._readme_tpl = readme_tpl
+        self._pages = pages
         self._aptly = Aptly(context, logger)
         self._sign = sign
 
@@ -428,33 +428,15 @@ class DebRepoBuilder:
 
         if not published:
             return failures
-        listed = set(published) | {r for r in set(kept) | failures.keys() if self.has_repository(r)}
-        distribs = set()
-        install = ''
-        for dist_release in sorted(listed, key=str):
-            distribs.add(str(dist_release.distribution))
-            if self._readme_tpl is not None:
-                with open(
-                    self._readme_tpl
-                    / ('INSTALL.' + str(dist_release.distribution.id) + '.tpl.html')
-                ) as template_file:
-                    install += Template(template_file.read()).substitute(
-                        dist_release=str(dist_release),
-                        codename=str(dist_release.codename),
-                        baseurl=str(self._url),
-                    )
-
         if self._url is not None:
             keyring = self._output_dir / (self._name + '-archive-keyring.gpg')
             keyring.write_bytes(self._gpg.public_key(armored=False))
-        if self._readme_tpl is not None:
-            with open(self._output_dir / 'index.html', mode='w') as readme_file:
-                with open(self._readme_tpl / 'README.tpl.html') as template_file:
-                    readme_file.write(
-                        Template(template_file.read()).substitute(
-                            distribs=' '.join(list(distribs)), install=install
-                        )
-                    )
+            listed = set(published) | {
+                r for r in set(kept) | failures.keys() if self.has_repository(r)
+            }
+            if self._pages is not None:
+                page = readme.Page.of('deb', self._url, self._name, self._description, listed)
+                (self._output_dir / 'index.html').write_text(readme.render(self._pages, page))
         return failures
 
     def _publish(self, aptly, dist_release: Release, pkgs):
@@ -570,7 +552,7 @@ class RpmRepoBuilder:
         url: str = None,
         name: str = None,
         description: str = None,
-        readme_tpl: Path = None,
+        pages: jinja2.Environment | None = None,
         logger: logging.Logger | None = None,
         sign: bool = True,
     ):
@@ -584,7 +566,7 @@ class RpmRepoBuilder:
             self._url = urlnormalize(self._url) + '/'
             self._name = name if name is not None else str(Path(urlparse(str(self._url)).path).name)
             self._description = description if description is not None else self._name
-        self._readme_tpl = readme_tpl
+        self._pages = pages
 
     def has_repository(self, dist_release: Release) -> bool:
         """Whether the output directory has a repository of dist_release already."""
@@ -633,31 +615,12 @@ class RpmRepoBuilder:
             (self._output_dir / (self._name + '.key')).write_bytes(
                 self._gpg.public_key(armored=True)
             )
-
-        listed = set(published) | {r for r in set(kept) | failures.keys() if self.has_repository(r)}
-        install = ''
-        distribs = set()
-        for dist_release in sorted(listed, key=str):
-            distribs.add(str(dist_release.distribution))
-            if self._url is not None and self._readme_tpl is not None:
-                with open(
-                    self._readme_tpl
-                    / ('INSTALL.' + str(dist_release.distribution.id) + '.tpl.html')
-                ) as template_file:
-                    install += Template(template_file.read()).substitute(
-                        dist_release=str(dist_release),
-                        codename=str(dist_release.codename),
-                        baseurl=str(urljoin(self._url, dist_release.version)),
-                    )
-
-        if self._readme_tpl is not None:
-            with open(self._output_dir / 'README.html', mode='w') as readme_file:
-                with open(self._readme_tpl / 'README.tpl.html') as template_file:
-                    readme_file.write(
-                        Template(template_file.read()).substitute(
-                            distribs=' '.join(list(distribs)), install=install
-                        )
-                    )
+            listed = set(published) | {
+                r for r in set(kept) | failures.keys() if self.has_repository(r)
+            }
+            if self._pages is not None:
+                page = readme.Page.of('rpm', self._url, self._name, self._description, listed)
+                (self._output_dir / 'index.html').write_text(readme.render(self._pages, page))
         return failures
 
     def _publish(self, dist_release: Release):
@@ -692,6 +655,7 @@ def run_builds(
     builders = []
     repo_builders = []
     root = config.root
+    pages = readme.environment(readme.project_dir(root))
     for dist_id, distrib in config.distribs.items():
         gpg = signer_for(distrib)
 
@@ -734,7 +698,7 @@ def run_builds(
             repository.url,
             repository.name,
             repository.description,
-            root / 'README.tpl',
+            pages,
         )
         repo_builders.append(((dist_id, repo_builder), dist_builders))
         builders += dist_builders

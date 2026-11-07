@@ -1,0 +1,5 @@
+<h1>Hello test repositories</h1>
+<p>Distribution: {{ page.distribution_name }}</p>
+{% for release in page.releases -%}
+<h2>{{ page.distribution_id }}: {{ release.label }}</h2><p>codename {{ release.codename }}, at {{ release.url }}</p>
+{% endfor -%}

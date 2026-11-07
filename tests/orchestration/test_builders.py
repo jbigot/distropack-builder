@@ -588,3 +588,48 @@ def test_failed_publication_keeps_previous_metadata(
     repodata = tmp_path / 'project' / 'repositories' / 'fedora' / '43' / 'repodata'
     assert sorted(p.name for p in repodata.iterdir()) == ['repomd.xml']
     assert (repodata / 'repomd.xml').read_text() == 'previous run\n'
+
+
+def test_rpm_repository_page_is_index(run_main: Callable[..., int], tmp_path: Path) -> None:
+    """The rpm repository's page is index.html, as the deb one's: no README.html any more."""
+    runner = FakeRunner(rpm_builds())
+    assert run_main(runner, {'fedora': ['44']}, ['hello-undeclared']) == 0
+    fedora = tmp_path / 'project' / 'repositories' / 'fedora'
+    assert 'codename None, at http://repo.example.invalid/fedora/44' in (
+        (fedora / 'index.html').read_text()
+    )
+    assert not (fedora / 'README.html').exists()
+
+
+def test_no_url_no_page(run_main: Callable[..., int], tmp_path: Path) -> None:
+    def without_url(project: Path) -> None:
+        conf = project / 'build.conf'
+        conf.write_text(conf.read_text().replace('url: http://repo.example.invalid/debian', ''))
+
+    runner = FakeRunner(tools_respond)
+    assert run_main(runner, {'debian': ['trixie']}, ['hello-undeclared'], prepare=without_url) == 0
+    debian = tmp_path / 'project' / 'repositories' / 'debian'
+    assert (debian / 'dists' / 'trixie' / 'InRelease').is_file()
+    assert not (debian / 'index.html').exists()
+
+
+@pytest.mark.parametrize(
+    ('text', 'expected'),
+    [('{{ page.url }\n', 'line 1'), ('{{ page.nosuch }}\n', 'nosuch')],
+    ids=['syntax', 'undefined'],
+)
+def test_broken_template_fails_before_builds(
+    run_main: Callable[..., int],
+    runner: FakeRunner,
+    capsys: pytest.CaptureFixture[str],
+    text: str,
+    expected: str,
+) -> None:
+    def broken(project: Path) -> None:
+        (project / 'README.tpl' / 'README.html.j2').write_text(text)
+
+    assert run_main(runner, {'debian': ['trixie']}, ['hello-undeclared'], prepare=broken) == 2
+    (line,) = capsys.readouterr().err.splitlines()
+    assert line.startswith('distropack-build: error: ')
+    assert 'README.tpl/README.html.j2' in line and expected in line
+    assert runner.calls == []

@@ -230,7 +230,7 @@
     "pool/main/h/hello-lib/hello-lib_1.0-1~bpo13.pdidev.N.dsc": "VALIDSIG B1C5D1374F33A60728C275E347F88E74A1846964"
   },
   "text": {
-    "index.html": "<h1>Hello test repositories</h1>\n<p>Distributions: Debian GNU/Linux</p>\n<h2>debian: Debian GNU/Linux 13 (Trixie)</h2><p>codename trixie, at http://repo.example.invalid/debian</p>\n\n"
+    "index.html": "<h1>Hello test repositories</h1>\n<p>Distribution: Debian GNU/Linux</p>\n<h2>debian: Debian GNU/Linux 13 (Trixie)</h2><p>codename trixie, at http://repo.example.invalid/debian</p>\n"
   },
   "tree": [
     "dists/stable/Contents-amd64.gz",

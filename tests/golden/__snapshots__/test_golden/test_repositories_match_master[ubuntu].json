@@ -127,7 +127,7 @@
     "pool/main/h/hello-lib/hello-lib_1.0-1~bpo24.04.pdidev.N.dsc": "VALIDSIG B1C5D1374F33A60728C275E347F88E74A1846964"
   },
   "text": {
-    "index.html": "<h1>Hello test repositories</h1>\n<p>Distributions: Ubuntu</p>\n<h2>ubuntu: Ubuntu 24.04 LTS (Noble Numbat)</h2><p>codename noble, at http://repo.example.invalid/ubuntu</p>\n\n"
+    "index.html": "<h1>Hello test repositories</h1>\n<p>Distribution: Ubuntu</p>\n<h2>ubuntu: Ubuntu 24.04 LTS (Noble Numbat)</h2><p>codename noble, at http://repo.example.invalid/ubuntu</p>\n"
   },
   "tree": [
     "dists/noble/Contents-amd64.gz",
