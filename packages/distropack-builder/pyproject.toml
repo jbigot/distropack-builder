@@ -9,6 +9,7 @@ dependencies = [
     "docker",
     "filetype",
     "httpx",
+    "pydantic>=2.14.3",
     "pysequoia",
     "python-debian",
     "pyyaml",

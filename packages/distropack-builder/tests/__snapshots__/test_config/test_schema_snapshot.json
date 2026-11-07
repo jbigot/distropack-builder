@@ -1,0 +1,229 @@
+{
+  "$defs": {
+    "Distrib": {
+      "additionalProperties": false,
+      "description": "A distribution to build for, keyed by its id (``debian``, ``fedora``).",
+      "properties": {
+        "gpg": {
+          "$ref": "#/$defs/Gpg",
+          "default": {
+            "file": "key.gpg",
+            "id": null,
+            "uid": null
+          },
+          "description": "The key that signs its packages and repository."
+        },
+        "repository": {
+          "$ref": "#/$defs/Repository",
+          "default": {
+            "description": null,
+            "name": null,
+            "path": "repositories",
+            "url": null
+          },
+          "description": "The repository its packages are published in."
+        },
+        "versions": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              },
+              "type": "array"
+            }
+          ],
+          "default": [
+            "supported"
+          ],
+          "description": "The releases to build for: codenames, versions, ``supported``, ``testing``, ``sid``,\n``all``, and ``available``, which keeps only those whose builder image is published.",
+          "title": "Versions"
+        }
+      },
+      "title": "Distrib",
+      "type": "object"
+    },
+    "Gpg": {
+      "additionalProperties": false,
+      "description": "The OpenPGP key that signs a distribution's packages and repository.",
+      "properties": {
+        "file": {
+          "default": "key.gpg",
+          "description": "The file holding the secret key, relative to build.conf's directory.",
+          "format": "path",
+          "title": "File",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The fingerprint or key ID of the key to use, when the file holds several.",
+          "title": "Id"
+        },
+        "uid": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The user ID of the key to use, in the changelog entries (default: the key's first one).",
+          "title": "Uid"
+        }
+      },
+      "title": "Gpg",
+      "type": "object"
+    },
+    "Package": {
+      "additionalProperties": false,
+      "description": "A package to build, keyed by the name of its directory.\n\nThe directory holds ``debian/`` for the Debian family, ``<name>.spec`` for the Fedora family,\nor both.",
+      "properties": {
+        "disable": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ]
+                },
+                "type": "array"
+              }
+            ]
+          },
+          "description": "The releases, per distribution id, not to build this package for (release tokens).",
+          "title": "Disable",
+          "type": "object"
+        },
+        "orig": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The URL of the upstream tarball of a 3.0 (quilt) deb source package, where\n``{upstream_version}`` and ``{package}`` are replaced from debian/changelog; rpm builds use\nthe spec's own Source: lines.",
+          "title": "Orig"
+        }
+      },
+      "title": "Package",
+      "type": "object"
+    },
+    "Repository": {
+      "additionalProperties": false,
+      "description": "The repository the packages of a distribution are published in.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The repository's label, in its Release file and its .repo file (default: its name).",
+          "title": "Description"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The repository's short name, in the keyring and .repo file names (default: the URL's last\npath component).",
+          "title": "Name"
+        },
+        "path": {
+          "default": "repositories",
+          "description": "Where the repository is written, relative to build.conf's directory.",
+          "format": "path",
+          "title": "Path",
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The URL the repository is served from; without it, no installation page is written.",
+          "title": "Url"
+        }
+      },
+      "title": "Repository",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "build.conf.",
+  "properties": {
+    "distribs": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Distrib"
+      },
+      "description": "The distributions to build for, keyed by id.",
+      "title": "Distribs",
+      "type": "object"
+    },
+    "packages": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Package"
+      },
+      "description": "The packages to build, keyed by the name of their directory, beside build.conf.",
+      "title": "Packages",
+      "type": "object"
+    }
+  },
+  "required": [
+    "distribs",
+    "packages"
+  ],
+  "title": "build.conf",
+  "type": "object"
+}
