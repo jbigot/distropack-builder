@@ -41,7 +41,9 @@ until Ubuntu ships it, use rootless Docker on that release.
 Both engines map the users of a container onto the ranges `/etc/subuid` and `/etc/subgid` give the
 invoking user. Most distributions create them with the user; `usermod --add-subuids` and
 `--add-subgids` add one otherwise. The builder's own containers run as container root, which maps
-to the invoking user, but the package managers inside the builders switch to other users.
+to the invoking user, but the package managers inside the builders switch to other users, and the
+builders build as their own unprivileged `builder` user, whose files are in the images themselves:
+a subordinate range is required, an engine mapping the invoking user alone cannot even unpack them.
 
 ## SELinux
 

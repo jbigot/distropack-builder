@@ -27,9 +27,24 @@ import createrepo_c  # noqa: E402  (librpm reads its configuration once, when lo
 
 
 def write(directory: Path) -> None:
-    """The metadata of the rpms under directory, in directory/repodata, as `createrepo_c .`."""
-    shutil.rmtree(directory / 'repodata', ignore_errors=True)  # the previous run's, if any
-    rpms = sorted(directory.rglob('*.rpm'))
-    with createrepo_c.RepositoryWriter(str(directory), num_packages=len(rpms)) as writer:
-        for rpm in rpms:
-            writer.add_pkg_from_file(str(rpm))
+    """The metadata of the rpms under directory, in directory/repodata, as `createrepo_c .`.
+
+    The writer writes in place: the previous metadata are set aside meanwhile, and put back when
+    writing fails, so that a release whose publication fails keeps its last published metadata.
+    """
+    repodata = directory / 'repodata'
+    previous = directory / '.repodata.previous'
+    shutil.rmtree(previous, ignore_errors=True)
+    if repodata.exists():
+        repodata.rename(previous)
+    try:
+        rpms = sorted(directory.rglob('*.rpm'))
+        with createrepo_c.RepositoryWriter(str(directory), num_packages=len(rpms)) as writer:
+            for rpm in rpms:
+                writer.add_pkg_from_file(str(rpm))
+    except BaseException:
+        shutil.rmtree(repodata, ignore_errors=True)
+        if previous.exists():
+            previous.rename(repodata)
+        raise
+    shutil.rmtree(previous, ignore_errors=True)

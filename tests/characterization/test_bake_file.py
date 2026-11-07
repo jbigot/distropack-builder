@@ -176,4 +176,4 @@ def test_runner_asks_protocol_tags(
     (f44,) = (r for r in distribution('fedora').releases() if r.version == '44')
     assert cli.builder_image(trixie) == f'debian_builder:trixie-p{bake.PROTOCOL}'
     assert cli.builder_image(f44) == f'fedora_builder:44-p{bake.PROTOCOL}'
-    assert bake.tool_image('gpg2') == f'gpg2:p{bake.PROTOCOL}'
+    assert bake.tool_image('aptly') == f'aptly:p{bake.PROTOCOL}'

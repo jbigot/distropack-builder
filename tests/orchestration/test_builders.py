@@ -549,3 +549,33 @@ def test_no_gpg_tool_images(run_main: Callable[..., int]) -> None:
     images = {c.image.rsplit('/', 1)[1].split(':')[0] for c in runner.calls}
     assert not images & {'gpg2', 'rpm_tools', 'deb_tools'}
     assert {'rpm_sign', 'aptly'} <= images
+
+
+def test_wrong_passphrase_is_a_message(
+    run_main: Callable[..., int], runner: FakeRunner, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A passphrase that does not unlock the key exits 1 with one line, before any container."""
+    status = run_main(runner, {'debian': ['trixie']}, ['hello-undeclared'], '-p', 'wrong')
+    assert status == 1
+    err = capsys.readouterr().err
+    assert 'error: the passphrase does not unlock' in err and 'key.gpg' in err
+    assert 'Traceback' not in err
+    assert runner.calls == []
+
+
+def test_failed_publication_keeps_previous_metadata(
+    run_main: Callable[..., int], tmp_path: Path
+) -> None:
+    """A release whose new metadata cannot be written keeps the ones of its last publication."""
+
+    def previous_run(project: Path) -> None:
+        repodata = project / 'repositories' / 'fedora' / '43' / 'repodata'
+        repodata.mkdir(parents=True)
+        (repodata / 'repomd.xml').write_text('previous run\n')
+
+    runner = FakeRunner(rpm_builds(junk_on='43'))
+    status = run_main(runner, {'fedora': ['43']}, ['hello-undeclared'], prepare=previous_run)
+    assert status == 1
+    repodata = tmp_path / 'project' / 'repositories' / 'fedora' / '43' / 'repodata'
+    assert sorted(p.name for p in repodata.iterdir()) == ['repomd.xml']
+    assert (repodata / 'repomd.xml').read_text() == 'previous run\n'

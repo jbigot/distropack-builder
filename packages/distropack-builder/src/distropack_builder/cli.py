@@ -46,7 +46,7 @@ from distropack_builder.report import Reporter, build_logger, github_mode
 from distropack_builder import repodata, rpmquery
 from distropack_builder.rpmquery import SpecFailed, SpecInfo
 from distropack_builder.scheduler import Succeeded, schedule
-from distropack_builder.signing import Signer
+from distropack_builder.signing import Signer, SigningKeyError
 from distropack_builder.versions import deb_version
 
 
@@ -879,7 +879,7 @@ def _run(args, parser, base_dir, runner, connect):
 
     except (targets.NotATarget, UnknownDistribution, SelectorError) as error:
         parser.error(str(error))
-    except SourceError as error:
+    except (SourceError, SigningKeyError) as error:
         print(f'{parser.prog}: error: {error}', file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt:

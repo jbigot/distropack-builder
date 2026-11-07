@@ -23,8 +23,8 @@ those lists only shrink.
 |---|---|---|
 | unit | `uv run pytest` | nothing: no network, recorded release data, a fixed date |
 | `packaging` | `uv run pytest -m packaging` | git, uv and PyPI: it builds the packages from synthetic repositories and archives |
-| `golden` | `uv run pytest -m golden` | a Docker engine and the network, to pull the builder images: it compares the repositories built for the fixture project with the recorded golden master |
-| `e2e` | `uv run pytest -m e2e` | a Docker engine and the network, to pull the builder images: it builds the fixture project and installs from its repositories |
+| `golden` | `uv run pytest -m golden` | a Docker engine and the images the checkout bakes (below): it compares the repositories built for the fixture project with the recorded golden master |
+| `e2e` | `uv run pytest -m e2e` | a Docker engine and the images the checkout bakes (below): it builds the fixture project and installs from its repositories |
 | `docker` | `uv run pytest -m docker` | a container engine (Docker or Podman, rootful or rootless) and `docker.io/library/alpine`: it runs containers through the runner; CI runs it on rootful Docker, rootless Docker and rootless Podman |
 | `live` | `uv run pytest -m live` | the network: it reads the real release sources of distro-releases (the nightly `Live canary` workflow, which opens an issue labelled `live-canary` when it fails) |
 
