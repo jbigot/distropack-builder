@@ -19,6 +19,7 @@ from distro_releases import Release, distribution
 from distropack_builder.bake import PROTOCOL
 from distropack_builder.context import BuildContext
 from distropack_builder.docker import Cancellation, Cancelled, ContainerFailed, RunResult
+from distropack_builder.rpmquery import SpecInfo
 from distropack_builder.scheduler import Interrupted, schedule
 from distropack_builder.signing import Signer
 from fake_runner import Call, FakeRunner, StopBuild, tools_respond
@@ -36,7 +37,7 @@ def release(dist: str, name: str, on: date) -> Release:
 
 def respond(call: Call) -> RunResult | None:
     """Stop at the builder's container; other tools succeed silently."""
-    if '_builder:' in call.image:
+    if call.is_build:
         raise StopBuild()
     return None
 
@@ -66,7 +67,8 @@ def builder(cli: ModuleType, context: BuildContext, rel: Release) -> Any:
             context, rel, FIXTURE_PROJECT, Signer.load(key, FIXTURE_PASSPHRASE), 'hello-app'
         )
     gpg = cli.GpgInfo(context, key, 'ABCDEF0123456789', FIXTURE_PASSPHRASE, 'Test <t@t>')
-    return cli.RpmPackageBuilder(context, rel, FIXTURE_PROJECT, gpg, 'hello-app')
+    spec = SpecInfo(frozenset({'hello-lib'}), frozenset({'hello-app'}), ())
+    return cli.RpmPackageBuilder(context, rel, FIXTURE_PROJECT, gpg, 'hello-app', spec=spec)
 
 
 def build(cli: ModuleType, context: BuildContext, rel: Release) -> None:
@@ -75,7 +77,7 @@ def build(cli: ModuleType, context: BuildContext, rel: Release) -> None:
 
 
 def builder_call(runner: FakeRunner) -> Call:
-    (call,) = (c for c in runner.calls if '_builder:' in c.image)
+    (call,) = (c for c in runner.calls if c.is_build)
     return call
 
 
@@ -151,7 +153,7 @@ def test_cancelled_builder_is_interrupted(
     """A builder whose container is cancelled is interrupted, not failed."""
 
     def cancelled(call: Call) -> RunResult | None:
-        if '_builder:' in call.image:
+        if call.is_build:
             raise Cancelled()
         return None
 
@@ -265,7 +267,7 @@ def test_work_directory_removed(
     monkeypatch.setattr(tempfile, 'tempdir', str(temp))
 
     def fail(call: Call) -> RunResult | None:
-        if '_builder:' in call.image:
+        if call.is_build:
             raise ContainerFailed(2, [call.image])
         return tools_respond(call)
 
@@ -279,7 +281,7 @@ def rpm_builds(fail_on: tuple[str, str] | None = None) -> Callable[[Call], RunRe
     """Builders that write an rpm, but for fail_on, a (package, image tag) pair."""
 
     def respond(call: Call) -> RunResult | None:
-        if '_builder:' in call.image:
+        if call.is_build:
             tag = call.image.rpartition(':')[2].removesuffix(f'-p{PROTOCOL}')
             output = call.targets['/output'].source
             package = output.parent.name.split('.')[0]
@@ -362,7 +364,7 @@ def test_sigterm_cancels(
     cancellations: list[Cancellation] = []
 
     def respond(call: Call) -> RunResult | None:
-        if '_builder:' in call.image:
+        if call.is_build:
             signal.raise_signal(signal.SIGTERM)
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
@@ -458,3 +460,40 @@ def test_local_repository_unsigned(run_main: Callable[..., int]) -> None:
     (files,) = seen
     assert 'Release' in files
     assert 'Release.gpg' not in files and 'InRelease' not in files
+
+
+def test_one_query_per_rpm_release(run_main: Callable[..., int]) -> None:
+    """Every spec of a release is queried in one container of its builder image; none for deb."""
+    runner = FakeRunner(tools_respond)
+    packages = ['hello-undeclared', 'hello-needs-root']
+    assert run_main(runner, {'fedora': ['43', '44'], 'debian': ['trixie']}, packages) == 0
+    queries = [c for c in runner.calls if '_builder:' in c.image and not c.is_build]
+    assert sorted(c.image.rsplit('/', 1)[1] for c in queries) == [
+        f'fedora_builder:43-p{PROTOCOL}',
+        f'fedora_builder:44-p{PROTOCOL}',
+    ]
+    for call in queries:
+        assert call.as_root
+        specs = {t: m for t, m in call.targets.items() if t.startswith('/specs/')}
+        assert sorted(specs) == ['/specs/hello-needs-root.spec', '/specs/hello-undeclared.spec']
+        assert all(m.read_only for m in specs.values())
+    assert not [c for c in runner.calls if 'rpmspec' in c.args]
+
+
+def test_failed_query_fails_its_package_only(
+    run_main: Callable[..., int], capsys: pytest.CaptureFixture[str]
+) -> None:
+    def respond(call: Call) -> RunResult | None:
+        result = tools_respond(call)
+        if '_builder:' in call.image and not call.is_build:
+            broken = call.targets['/out'].source / 'hello-needs-root'
+            (broken / 'status').write_text('1\n')
+            (broken / 'errors').write_text('error: line 3: Unknown tag: Bogus\n')
+        return result
+
+    runner = FakeRunner(respond)
+    packages = ['hello-undeclared', 'hello-needs-root']
+    assert run_main(runner, {'fedora': ['44']}, packages) == 1
+    assert [c for c in runner.calls if c.build_of('hello-undeclared')]
+    assert not [c for c in runner.calls if c.build_of('hello-needs-root')]
+    assert 'Unknown tag: Bogus' in capsys.readouterr().out

@@ -7,6 +7,29 @@ then
 	export LD_PRELOAD="/usr/lib64/nosync/nosync.so"
 fi
 
+# query: what each spec under /specs says, as this release's rpm reads it (rpmquery.py)
+if [ "$1" = query ]
+then
+	for spec in /specs/*.spec
+	do
+		out="/out/$(basename "${spec}" .spec)"
+		mkdir -p "${out}"
+		status=0
+		rpmspec -q --buildrequires "${spec}" > "${out}/buildrequires" 2> "${out}/errors" || status=$?
+		if [ "${status}" = 0 ]
+		then
+			rpmspec -q --provides "${spec}" > "${out}/provides" 2>> "${out}/errors" || status=$?
+		fi
+		if [ "${status}" = 0 ]
+		then
+			rpmspec -P "${spec}" > "${out}/parsed" 2>> "${out}/errors" || status=$?
+		fi
+		echo "${status}" > "${out}/status"
+	done
+	chown -R "$(stat -c '%u:%g' /out)" /out
+	exit 0
+fi
+
 if [ -d /localrepo/repodata ]
 then
 cat<<EOF > /tmp/localrepo.repo

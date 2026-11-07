@@ -4,6 +4,7 @@ import logging
 import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from distropack_builder.docker import Cancellation, Mount, RunResult
@@ -28,11 +29,14 @@ class Call:
         """The mounts, by path in the container."""
         return {m.target: m for m in self.mounts}
 
+    @property
+    def is_build(self) -> bool:
+        """Whether this is a builder container building, not answering spec queries."""
+        return '_builder:' in self.image and self.args[:1] != ('query',)
+
     def build_of(self, package: str) -> bool:
         """Whether this is the builder container of package's build."""
-        return '_builder:' in self.image and self.targets['/src'].source.parent.name.startswith(
-            f'{package}.'
-        )
+        return self.is_build and self.targets['/src'].source.parent.name.startswith(f'{package}.')
 
 
 @dataclass
@@ -73,15 +77,22 @@ FIXTURE_KEY_LISTING = (
 )
 
 
-def _spec_query(call: Call) -> str:
-    """What rpmspec says of the spec the call mounts, for the queries the builder makes."""
-    spec = (call.targets['/data'].source / call.args[-1]).read_text()
-    if '--buildrequires' in call.args:
-        return '\n'.join(re.findall(r'^BuildRequires:\s*(\S+)', spec, re.M)) + '\n'
-    if '--provides' in call.args:
+def answer_queries(call: Call) -> None:
+    """Write what rpmspec says of each spec the query container mounts, as its entrypoint does."""
+    out = call.targets['/out'].source
+    for target, mount in call.targets.items():
+        if not target.startswith('/specs/'):
+            continue
+        spec = mount.source.read_text()
+        answers = out / Path(target).stem
+        answers.mkdir()
+        requires = re.findall(r'^BuildRequires:\s*(\S+)', spec, re.M)
+        (answers / 'buildrequires').write_text(''.join(f'{r}\n' for r in requires))
         (name,) = re.findall(r'^Name:\s*(\S+)', spec, re.M)
-        return f'{name} = 1.0-1\n'
-    return spec  # -P: the spec, its macros expanded
+        (answers / 'provides').write_text(f'{name} = 1.0-1\n')
+        (answers / 'parsed').write_text(spec)  # the spec, its macros expanded
+        (answers / 'errors').write_text('')
+        (answers / 'status').write_text('0\n')
 
 
 def tools_respond(call: Call) -> RunResult | None:
@@ -97,7 +108,6 @@ def tools_respond(call: Call) -> RunResult | None:
         release.write_text(f'Origin: hello \nCodename: {distribution}\n')
     if '--list-secret-keys' in call.args:
         return RunResult(0, FIXTURE_KEY_LISTING, FIXTURE_KEY_LISTING)
-    if call.args[:1] == ('rpmspec',):
-        out = _spec_query(call)
-        return RunResult(0, out, out)
+    if '_builder:' in call.image and call.args[:1] == ('query',):
+        answer_queries(call)
     return None

@@ -9,7 +9,6 @@ import logging
 import os
 from os import cpu_count, link
 from pathlib import Path
-import re
 from shutil import copy2, copytree, rmtree
 import signal
 from subprocess import CalledProcessError
@@ -44,6 +43,8 @@ from distropack_builder.downloads import DownloadFailed, fetch_all, orig_name, s
 from distropack_builder.graph import closure, dependencies
 from distropack_builder.publication import published
 from distropack_builder.report import Reporter, build_logger, github_mode
+from distropack_builder import rpmquery
+from distropack_builder.rpmquery import SpecFailed, SpecInfo
 from distropack_builder.scheduler import Succeeded, schedule
 from distropack_builder.signing import Signer
 from distropack_builder.versions import deb_version
@@ -247,18 +248,6 @@ class RpmTools(DockerContainer):
 
     def createrepo(self, directory):
         self('createrepo_c', '.', shm_size='5g', mounts=[DockerBindMount('/data', directory)])
-
-    def rpmspec(self, *args):
-        spec_file = Path(args[-1])
-        args = args[:-1]
-        return self(
-            'rpmspec',
-            *args,
-            str(spec_file.name),
-            mounts=[DockerBindMount('/data', spec_file.parent, ro=True)],
-            gpgmount=False,
-            return_stdout=True,
-        )
 
     def rpmsign(
         self,
@@ -635,30 +624,23 @@ class RpmPackageBuilder(PackageBuilder):
         gpg: GpgInfo,
         name: str,
         orig_url: str | None = None,
+        *,
+        spec: SpecInfo | SpecFailed,
     ):
         # orig: is a deb setting: the spec's Source: lines name the rpm's sources
         super().__init__(context, dist_release, base_dir, gpg, name)
-        self._spec = base_dir / name / (name + '.spec')
+        self._spec = self.spec_file(base_dir, name)
         self._rpm_tools = RpmTools(context, gpg, self.logger)
+        self._spec_info = spec
+        self._sources = []
+        if isinstance(spec, SpecInfo):
+            self.bin_depends = set(spec.buildrequires)
+            self.bin_provides = set(spec.provides)
+            self._sources = list(spec.sources)
 
-        self.bin_depends = {
-            re.sub(r'[\( ].*', '', dep)
-            for dep in self._rpm_tools.rpmspec('--buildrequires', '-q', self._spec).splitlines()
-        }
-        self.bin_provides = {
-            re.sub(r'[\( ].*', '', dep)
-            for dep in self._rpm_tools.rpmspec('--provides', '-q', self._spec).splitlines()
-        }
-        all_urls = self._rpm_tools.rpmspec('-P', self._spec).splitlines()
-        all_urls = [
-            url
-            for url in all_urls
-            if re.match(r'^\s*source[0-9]*\s*:', url, re.IGNORECASE) is not None
-        ]
-        self._sources = [
-            re.sub(r'^\s*source[0-9]*\s*:\s*', '', url, count=1, flags=re.IGNORECASE)
-            for url in all_urls
-        ]
+    @staticmethod
+    def spec_file(base_dir: Path, name: str) -> Path:
+        return base_dir / name / (name + '.spec')
 
     @classmethod
     def applies(cls, base_dir: Path, name: str) -> bool:
@@ -668,6 +650,8 @@ class RpmPackageBuilder(PackageBuilder):
         return list(self._sources)
 
     def _build(self, wk_dir: Path, deps, files):
+        if isinstance(self._spec_info, SpecFailed):
+            raise Exception(self._spec_info.message)
         pkg_dir = wk_dir / 'pkg'
         pkg_dir.mkdir()
         spec = pkg_dir / self._spec.name
@@ -1059,13 +1043,34 @@ def run_builds(context: BuildContext, reporter: Reporter, cfg, base_dir, selecte
         dist_builders = []
         family = DebPackageBuilder if targets.is_deb(targets.target(dist_id)) else RpmPackageBuilder
         for dist_release in sorted(selected[dist_id], key=lambda release: release.uid):
-            for name, pkg_cfg in cfg['packages'].items():
+            names = [
+                name
+                for name in cfg['packages']
+                if dist_release not in disabled[name] and family.applies(base_dir, name)
+            ]
+            specs = {}
+            if family is RpmPackageBuilder:
+                # every spec of the release, read by the release's own rpm, in one container
+                specs = rpmquery.query(
+                    context,
+                    REGISTRY + builder_image(dist_release),
+                    {name: RpmPackageBuilder.spec_file(base_dir, name) for name in names},
+                )
+            for name in names:
+                pkg_cfg = cfg['packages'][name]
                 if not isinstance(pkg_cfg, dict):
                     pkg_cfg = {'value': pkg_cfg}
-                if dist_release in disabled[name] or not family.applies(base_dir, name):
-                    continue
+                extra = {'spec': specs[name]} if name in specs else {}
                 dist_builders.append(
-                    family(context, dist_release, base_dir, gpg, name, pkg_cfg.get('orig', None))
+                    family(
+                        context,
+                        dist_release,
+                        base_dir,
+                        gpg,
+                        name,
+                        pkg_cfg.get('orig', None),
+                        **extra,
+                    )
                 )
 
         output_path = base_dir / distrib_cfg.get('repository', {}).get('path', 'repositories')
