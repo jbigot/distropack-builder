@@ -3,7 +3,16 @@ name = "distropack-builder"
 dynamic = ["version"]
 description = "Build deb and rpm packages and their signed repositories in containers"
 requires-python = ">=3.12"
-dependencies = ["distro-releases", "docker", "filetype", "python-debian", "pyyaml"]
+dependencies = [
+    "distro-releases",
+    "docker",
+    "filetype",
+    "httpx",
+    "python-debian",
+    "pyyaml",
+    "rich",
+    "stamina",
+]
 
 [project.scripts]
 distropack-build = "distropack_builder.cli:main"

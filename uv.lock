@@ -468,8 +468,11 @@ dependencies = [
     { name = "distro-releases" },
     { name = "docker" },
     { name = "filetype" },
+    { name = "httpx" },
     { name = "python-debian" },
     { name = "pyyaml" },
+    { name = "rich" },
+    { name = "stamina" },
 ]
 
 [package.metadata]
@@ -477,8 +480,11 @@ requires-dist = [
     { name = "distro-releases", editable = "packages/distro-releases" },
     { name = "docker" },
     { name = "filetype" },
+    { name = "httpx" },
     { name = "python-debian" },
     { name = "pyyaml" },
+    { name = "rich" },
+    { name = "stamina" },
 ]
 
 [[package]]

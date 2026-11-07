@@ -134,17 +134,17 @@ def _create(engine: Engine, image: str, cancellation: Cancellation, **options: A
         return engine.client.containers.create(image, **options)
 
 
-def _stream(container: Container) -> str:
-    """The container's output, logged line by line as it comes."""
+def _stream(container: Container, logger: logging.Logger) -> str:
+    """The container's output, logged to logger line by line as it comes."""
     output = bytearray()
     pending = b''
     for chunk in container.logs(stream=True, follow=True):
         output += chunk
         *lines, pending = (pending + chunk).split(b'\n')
         for line in lines:
-            LOGGER.debug('%s', line.decode(errors='replace'))
+            logger.debug('%s', line.decode(errors='replace'))
     if pending:
-        LOGGER.debug('%s', pending.decode(errors='replace'))
+        logger.debug('%s', pending.decode(errors='replace'))
     return output.decode(errors='replace')
 
 
@@ -160,6 +160,7 @@ def run(
     as_root: bool = False,
     check: bool = True,
     cancellation: Cancellation | None = None,
+    logger: logging.Logger | None = None,
 ) -> RunResult:
     """Run image with args in a new container, and remove it.
 
@@ -175,6 +176,8 @@ def run(
             owner of its mounts itself (the builders); otherwise the engine decides the user.
         check: whether a non-zero status raises.
         cancellation: what cancels this run, among others.
+        logger: where the container's output goes, line by line, at the debug level; the
+            module's LOGGER by default.
 
     Raises:
         ContainerFailed: check is set and the container exited with a non-zero status.
@@ -206,7 +209,7 @@ def run(
             container.start()
             if cancellation.cancelled:  # cancel came between tracking and start
                 _kill(container)
-            output = _stream(container)
+            output = _stream(container, logger or LOGGER)
             status: int = container.wait()['StatusCode']
             if cancellation.cancelled:
                 raise Cancelled()

@@ -64,6 +64,15 @@ def test_output_streamed(engine: Engine, caplog: pytest.LogCaptureFixture) -> No
     assert 'one' in messages and 'two' in messages
 
 
+def test_container_output_to_the_given_logger(
+    engine: Engine, caplog: pytest.LogCaptureFixture
+) -> None:
+    logger = logging.getLogger('distropack_builder.test.given')
+    with caplog.at_level(logging.DEBUG, logger='distropack_builder'):
+        run(engine, ALPINE, ['sh', '-c', 'echo one; echo two'], logger=logger)
+    assert [r.getMessage() for r in caplog.records if r.name == logger.name] == ['one', 'two']
+
+
 def test_mount_written_belongs_to_invoker(engine: Engine, tmp_path: Path) -> None:
     run(engine, ALPINE, ['touch', '/data/file'], mounts=[Mount('/data', tmp_path)])
     written = tmp_path / 'file'
