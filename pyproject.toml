@@ -59,7 +59,6 @@ convention = "google"
 # The ratchet: the code moved unchanged from master ignores exactly the rules it breaks today. The
 # lists only shrink, as later phases rewrite the modules.
 "packages/distropack-builder/src/distropack_builder/cli.py" = ["D100", "D101", "D102", "D103", "D107", "D403", "D415", "I001", "SIM102", "SIM117", "SIM910", "UP006", "UP035"]
-"packages/distropack-builder/src/distropack_builder/downloader.py" = ["B904", "D100", "D101", "D102", "D107", "I001"]
 
 [tool.mypy]
 strict = true
@@ -72,7 +71,6 @@ explicit_package_bases = true  # tests/conftest.py and tests/workspace/conftest.
 [[tool.mypy.overrides]]
 module = [
     "distropack_builder.cli",
-    "distropack_builder.downloader",
 ]
 ignore_errors = true
 

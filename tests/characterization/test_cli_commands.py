@@ -175,10 +175,3 @@ def test_docker_host_option(
         main(*args)
     assert exit.value.code == 2
     assert 'tcp://x:2375 is not a local engine' in capsys.readouterr().err
-
-
-def test_cancellation_reaches_the_runner(load_script: Callable[[str], ModuleType]) -> None:
-    cli = load_script('pkgbuild')
-    assert not cli.CANCELLATION.cancelled
-    cli.cancellation_request()
-    assert cli.CANCELLATION.cancelled

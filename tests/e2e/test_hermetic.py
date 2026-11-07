@@ -36,14 +36,6 @@ def test_subprocess_refuses_unrecorded_http(pkgbuild_env: dict[str, str]) -> Non
     assert 'https://example.invalid/x' in result.stderr
 
 
-def test_subprocess_refuses_unrecorded_urls(pkgbuild_env: dict[str, str]) -> None:
-    result = run_python(
-        'import urllib.request\nurllib.request.urlopen("https://example.invalid/x")', pkgbuild_env
-    )
-    assert result.returncode != 0
-    assert 'no recording for https://example.invalid/x' in result.stderr
-
-
 def test_subprocess_reaches_the_local_server(
     project: Project, pkgbuild_env: dict[str, str]
 ) -> None:
@@ -52,7 +44,7 @@ def test_subprocess_reaches_the_local_server(
     )
     url = conf['packages']['hello-lib']['orig'].format(upstream_version='1.0', package='hello-lib')
     result = run_python(
-        f'import urllib.request, sys\nprint(len(urllib.request.urlopen({url!r}).read()))',
+        f'import httpx\nprint(len(httpx.get({url!r}).raise_for_status().content))',
         pkgbuild_env,
     )
     assert result.returncode == 0, result.stderr

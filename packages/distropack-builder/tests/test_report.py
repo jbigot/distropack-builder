@@ -37,7 +37,7 @@ def test_groups_do_not_interleave() -> None:
     assert lines.count('::endgroup::') == 2
     groups = re.findall(r'^::group::(.*)\n((?:(?!::).*\n)*)::endgroup::$', out.getvalue(), re.M)
     assert [g[0] for g in groups] == [
-        f'failed: boom app on {FORKY}',
+        f'failed app on {FORKY}: boom',
         f'built lib on {TRIXIE}',
     ]
     assert groups[0][1].splitlines() == ['app line 0', 'app line 1', 'app line 2']
@@ -90,9 +90,11 @@ def test_summary_table(tmp_path: Path) -> None:
     assert f'| lib | {TRIXIE} | failed: boom |' in rows
     assert f'| app | {TRIXIE} | skipped: lib failed |' in rows
     # the console summary lists the builds that did not succeed, and only those
-    tail = out.getvalue()
-    assert f'lib on {TRIXIE}' in tail and f'app on {TRIXIE}' in tail
-    assert f'lib on {FORKY}' not in tail
+    assert out.getvalue().splitlines() == [
+        '2 of 3 builds did not succeed:',
+        f'  skipped app on {TRIXIE}: lib failed',
+        f'  failed lib on {TRIXIE}: boom',
+    ]
 
 
 def test_failure_output_shown() -> None:
@@ -105,7 +107,7 @@ def test_failure_output_shown() -> None:
         reporter.finished('lib', TRIXIE, Failed(RuntimeError('boom')))
         reporter.finished('app', FORKY, Succeeded())
     lines = out.getvalue().splitlines()
-    assert lines[lines.index(f'failed: boom lib on {TRIXIE}') + 1].strip() == 'lib output'
+    assert lines[lines.index(f'failed lib on {TRIXIE}: boom') + 1].strip() == 'lib output'
     assert f'built app on {FORKY}' in lines
     assert 'app output' not in out.getvalue()
 
@@ -123,8 +125,21 @@ def test_verbose_streams_with_prefix() -> None:
 
 def test_no_live_display_off_terminal() -> None:
     con, out = console()
-    with Reporter(con, verbose=False, github=False, total=2) as reporter:
+    with Reporter(con, verbose=False, github=False) as reporter:
+        reporter.expect(2)
         reporter.started('lib', TRIXIE)
         reporter.finished('lib', TRIXIE, Succeeded())
         reporter.finished('app', TRIXIE, Skipped('lib'))
     assert '\x1b' not in out.getvalue()
+
+
+def test_progress_on_a_terminal() -> None:
+    out = StringIO()
+    con = Console(file=out, force_terminal=True, width=100)
+    with Reporter(con, verbose=False, github=False) as reporter:
+        reporter.expect(2)
+        reporter.started('lib', TRIXIE)
+        reporter.finished('lib', TRIXIE, Succeeded())
+        reporter.finished('app', TRIXIE, Skipped('lib'))
+    text = re.sub(r'\x1b\[[0-9;?]*[A-Za-z]', '', out.getvalue())
+    assert 'built lib' in text and 'skipped app' in text

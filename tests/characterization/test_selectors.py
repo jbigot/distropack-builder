@@ -5,7 +5,7 @@ from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 from types import ModuleType
-from typing import cast
+from typing import Any, cast
 
 import pytest
 import respx
@@ -18,6 +18,10 @@ from distro_releases import (
     matches,
     select,
 )
+from distropack_builder.context import BuildContext
+from distropack_builder.docker import Cancellation
+from distropack_builder.graph import dependencies
+from fake_runner import FakeRunner
 from support import FROZEN_DATE, REPO_ROOT
 
 RELEASE_LISTS = [
@@ -101,18 +105,19 @@ def test_release_filter(
     assert sorted(r.uid for r in pkgbuild.release_filter(releases, [flt])) == snapshot
 
 
-def test_deb_build_order(load_script: Callable[[str], ModuleType], frozen: date) -> None:
+def test_deb_build_order(
+    load_script: Callable[[str], ModuleType], frozen: date, tmp_path: Path
+) -> None:
     pkgbuild = load_script('pkgbuild')
     (trixie,) = (r for r in distribution('debian').releases() if r.codename == 'trixie')
+    context = BuildContext(cast(Any, None), FakeRunner(), Cancellation(), tmp_path, 1)
     lib, app = (
         pkgbuild.DebPackageBuilder(
-            trixie, REPO_ROOT / 'tests' / 'e2e' / 'project', None, name, None, None, 1
+            context, trixie, REPO_ROOT / 'tests' / 'e2e' / 'project', None, name
         )
         for name in ('hello-lib', 'hello-app')
     )
-    pkgbuild.order_packages([lib, app])
-    assert app._depends == {lib}
-    assert lib._depends == set()
+    assert dependencies([lib, app]) == {lib: frozenset(), app: frozenset({lib})}
 
 
 SNAPSHOTS = Path(__file__).parent / '__snapshots__' / 'test_selectors'

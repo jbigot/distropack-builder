@@ -4,15 +4,11 @@ The suite runs the code moved into the packages, unchanged in behaviour, and com
 master's scripts gave when it was recorded.
 """
 
-import gzip
 import importlib
-import io
 import json
 import os
-import shutil
 import subprocess
 import sys
-import tarfile
 import threading
 from collections.abc import Callable, Iterator
 from datetime import date
@@ -26,7 +22,6 @@ import pytest
 import respx
 import stamina
 import time_machine
-import yaml
 from syrupy.assertion import SnapshotAssertion
 from syrupy.extensions.json import JSONSnapshotExtension
 
@@ -40,6 +35,8 @@ from support import (
     RELEASE_DATA,
     REPO_ROOT,
     SCRIPT_MODULES,
+    make_project,
+    write_tarball,
 )
 
 
@@ -125,23 +122,6 @@ class QuietHandler(SimpleHTTPRequestHandler):
         pass
 
 
-def write_tarball(source: Path, target: Path) -> None:
-    """A reproducible .tar.gz of source, whose single top-level directory is source's name."""
-
-    def reset(info: tarfile.TarInfo) -> tarfile.TarInfo:
-        info.mtime, info.uid, info.gid, info.uname, info.gname = 0, 0, 0, '', ''
-        return info
-
-    data = io.BytesIO()
-    with tarfile.open(fileobj=data, mode='w') as tar:
-        for path in [source, *sorted(source.rglob('*'))]:
-            tar.add(
-                path, arcname=str(path.relative_to(source.parent)), recursive=False, filter=reset
-            )
-    with gzip.GzipFile(target, 'wb', mtime=0) as gz:
-        gz.write(data.getvalue())
-
-
 @pytest.fixture(scope='session')
 def orig_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     """Serve the fixture's upstream tarballs on 127.0.0.1 for the session; yields the base URL."""
@@ -155,29 +135,6 @@ def orig_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     server.shutdown()
     thread.join()
     server.server_close()
-
-
-def make_project(
-    target: Path, orig_base: str, versions: dict[str, list[str]], packages: list[str]
-) -> Path:
-    """Copy the fixture project to target, limited to some releases and packages.
-
-    Every *.in file of the copy is rendered with @ORIG_BASE@ set to orig_base.
-    """
-    project_dir = Path(
-        shutil.copytree(FIXTURE_PROJECT, target, ignore=shutil.ignore_patterns('upstream'))
-    )
-    for template in project_dir.rglob('*.in'):
-        template.with_suffix('').write_text(template.read_text().replace('@ORIG_BASE@', orig_base))
-        template.unlink()
-    conf_path = project_dir / 'build.conf'
-    conf = yaml.safe_load(conf_path.read_text())
-    conf['distribs'] = {
-        dist: conf['distribs'][dist] | {'versions': rels} for dist, rels in versions.items()
-    }
-    conf['packages'] = {name: conf['packages'][name] for name in packages}
-    conf_path.write_text(yaml.safe_dump(conf))
-    return project_dir
 
 
 @pytest.fixture

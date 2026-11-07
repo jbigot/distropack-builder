@@ -1,9 +1,8 @@
 import argparse
-import atexit
-from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+from collections.abc import Callable, Mapping, Set as AbstractSet
 from configparser import ConfigParser
+from contextlib import ExitStack
 from datetime import UTC, date, datetime
-import filetype
 import importlib.resources
 import json
 import logging
@@ -18,11 +17,12 @@ from sys import stderr
 from string import Template
 from tempfile import mkdtemp, TemporaryDirectory
 from typing import Iterable, Set
-from urllib.parse import parse_qsl, ParseResult, urljoin, urlparse, urlunparse
+from urllib.parse import ParseResult, urljoin, urlparse, urlunparse
 
 from debian.changelog import Changelog, format_date
 from debian.deb822 import Deb822, _PkgRelationMixin
 import docker.errors
+from rich.console import Console
 import yaml
 
 from distro_releases import (
@@ -35,14 +35,15 @@ from distro_releases import (
 )
 from distropack_builder import targets
 from distropack_builder.bake import REGISTRY
-from distropack_builder.docker import Cancellation, Cancelled, Engine, Mount
+from distropack_builder.context import BuildContext, Runner
+from distropack_builder.docker import Cancellation, Engine, Mount
 from distropack_builder.docker import run as run_container
 from distropack_builder.docker.endpoint import EngineNotFound, RemoteEndpoint
-from distropack_builder.downloader import Downloader
+from distropack_builder.downloads import DownloadFailed, fetch_all, orig_name, source_name
 from distropack_builder.graph import closure, dependencies
+from distropack_builder.report import Reporter, build_logger, github_mode
+from distropack_builder.scheduler import Succeeded, schedule
 from distropack_builder.versions import deb_version
-
-VERBOSE = None
 
 
 def builder_image(dist_release: Release) -> str:
@@ -61,25 +62,20 @@ def urlnormalize(url):
     return urlunparse(su)
 
 
-# The engine every container runs on, connected by main; until Phase 5's BuildContext.
-ENGINE: Engine | None = None
-# What cancels every container of the run, and the downloads between them.
-CANCELLATION = Cancellation()
-# How a container is run: the seam the orchestration tests replace.
-RUN = run_container
+def source_format(debian_dir: Path) -> str:
+    """The format of a deb source package, as debian/source/format says, 1.0 without it."""
+    try:
+        return (debian_dir / 'source' / 'format').read_text().strip()
+    except FileNotFoundError:
+        return '1.0'
 
 
-class CancellationException(Exception):
-    pass
-
-
-def cancellation_point():
-    if CANCELLATION.cancelled:
-        raise CancellationException('Termination request received')
-
-
-def cancellation_request():
-    CANCELLATION.cancel()
+def link_or_copy(source: Path, target: Path):
+    """target, a hard link to source where the file system allows it, a copy elsewhere."""
+    try:
+        link(source, target)
+    except OSError:
+        copy2(source, target)
 
 
 class DockerBindMount:
@@ -90,8 +86,10 @@ class DockerBindMount:
 
 
 class DockerContainer:
-    def __init__(self, img_name):
+    def __init__(self, context: BuildContext, img_name, logger: logging.Logger | None = None):
+        self._context = context
         self._img_name = REGISTRY + img_name
+        self._logger = logger
 
     def __call__(
         self,
@@ -103,30 +101,27 @@ class DockerContainer:
         as_root: bool = False,
         env: Iterable[tuple[str, any]] = [],
     ):
-        try:
-            result = RUN(
-                ENGINE,
-                self._img_name,
-                [str(arg) for arg in args],
-                mounts=[Mount(str(m.target), m.source, m.ro) for m in mounts],
-                env={str(name): str(value) for name, value in env},
-                workdir=None if workdir is None else str(workdir),
-                shm_size=shm_size,
-                as_root=as_root,
-                cancellation=CANCELLATION,
-            )
-        except Cancelled:
-            raise CancellationException('Termination request received') from None
+        result = self._context.run(
+            self._context.engine,
+            self._img_name,
+            [str(arg) for arg in args],
+            mounts=[Mount(str(m.target), m.source, m.ro) for m in mounts],
+            env={str(name): str(value) for name, value in env},
+            workdir=None if workdir is None else str(workdir),
+            shm_size=shm_size,
+            as_root=as_root,
+            cancellation=self._context.cancellation,
+            logger=self._logger,
+        )
         return result.stdout if return_stdout else None
 
 
 class GpgInfo(DockerContainer):
-    def __init__(self, keyfile, keyid=None, passphrase=None, uid=None):
-        super().__init__('gpg2')
+    def __init__(self, context: BuildContext, keyfile, keyid=None, passphrase=None, uid=None):
+        super().__init__(context, 'gpg2')
         self._keyid = keyid
         self._passphrase = passphrase
-        self._home_dir = Path(mkdtemp(prefix='GNUPG_HOME.'))
-        atexit.register(rmtree, self._home_dir)
+        self._home_dir = Path(mkdtemp(prefix='GNUPG_HOME.', dir=context.workdir))
         self._gpg_bin = self._home_dir / 'bin' / 'gpg'
         self._uid = uid
         self._mount_gnupghome = DockerBindMount('/gnupghome', self._home_dir)
@@ -226,8 +221,8 @@ class GpgInfo(DockerContainer):
 
 
 class DebTools(DockerContainer):
-    def __init__(self, gpg: GpgInfo):
-        super().__init__('deb_tools')
+    def __init__(self, context: BuildContext, gpg: GpgInfo, logger: logging.Logger | None = None):
+        super().__init__(context, 'deb_tools', logger)
         self._gpg = gpg
 
     def __call__(
@@ -239,15 +234,6 @@ class DebTools(DockerContainer):
             + mounts,
             **kwargs,
         )
-
-    def dpkg_source_format(self, dir: Path):
-        return self(
-            'dpkg-source',
-            '--print-format',
-            '/data',
-            mounts=[DockerBindMount('/data', dir)],
-            return_stdout=True,
-        ).strip()
 
     def debsign(self, pkg_src_dir: Path, key_id: str):
         return self(
@@ -278,8 +264,8 @@ class DebTools(DockerContainer):
 
 
 class RpmTools(DockerContainer):
-    def __init__(self, gpg: GpgInfo):
-        super().__init__('rpm_tools')
+    def __init__(self, context: BuildContext, gpg: GpgInfo, logger: logging.Logger | None = None):
+        super().__init__(context, 'rpm_tools', logger)
         self._gpg = gpg
 
     def __call__(
@@ -324,36 +310,74 @@ class Control(Deb822, _PkgRelationMixin):
         _PkgRelationMixin.__init__(self, *args, **kwargs)
 
 
-class DebPackageBuilder:
+class PackageBuilder:
+    """The build of one package for one release, the base of the builders of each family."""
+
+    # The suffix of the build's work directory.
+    family = None
+
+    def __init__(
+        self, context: BuildContext, dist_release: Release, base_dir: Path, gpg: GpgInfo, name: str
+    ):
+        self._context = context
+        self.dist_release = dist_release
+        self._base_dir = base_dir
+        self._gpg = gpg
+        self.name = name
+        self.logger = build_logger(name, dist_release)
+        self.outdir = None
+        self.bin_provides = set()
+        self.bin_depends = set()
+
+    def __str__(self):
+        """The package's name, as the report names the build a skipped one waited for."""
+        return self.name
+
+    @classmethod
+    def applies(cls, base_dir: Path, name: str) -> bool:
+        """Whether the package has packaging for this family."""
+        raise NotImplementedError
+
+    def sources(self) -> list[str]:
+        """The URLs of the files the build needs downloaded."""
+        return []
+
+    def build(
+        self, deps: AbstractSet['PackageBuilder'], files: Mapping[str, Path | DownloadFailed]
+    ):
+        """Build, with the outputs of deps in the local repository, and files downloaded."""
+        for url in self.sources():
+            if isinstance(files[url], DownloadFailed):
+                raise files[url]
+        wk_dir = self._context.workdir / f'{self.name}.{self.dist_release.uid}.{self.family}-build'
+        wk_dir.mkdir()
+        self.outdir = wk_dir / 'output'
+        self.outdir.mkdir()
+        self._build(wk_dir, set(deps) | {self}, files)
+
+    def _build(self, wk_dir: Path, deps, files):
+        raise NotImplementedError
+
+
+class DebPackageBuilder(PackageBuilder):
+    family = 'deb'
+
     def __init__(
         self,
+        context: BuildContext,
         dist_release: Release,
         base_dir: Path,
         gpg: GpgInfo,
         name: str,
-        downloader: Downloader,
-        orig_url: str,
-        parallelism: int,
+        orig_url: str | None = None,
     ):
-        self.dist_release = dist_release
+        super().__init__(context, dist_release, base_dir, gpg, name)
         self._debian_dir = base_dir / name / 'debian'
-        self._gpg = gpg
-        self._name = name
-        self._downloader = downloader
         self._orig_url = orig_url
-        self._parallelism = parallelism
-
-        self._deb_tools = DebTools(gpg)
-
-        self._finished = False
-        self.outdir = None
-        self._depends = set([self])  # self depend => never ready
-        self.bin_provides = set()
-        self.bin_depends = set()
-
-        if not self._debian_dir.is_dir():
-            self._debian_dir = None
-            return
+        self._deb_tools = DebTools(context, gpg, self.logger)
+        self._format = source_format(self._debian_dir)
+        with (self._debian_dir / 'changelog').open() as raw_changelog:
+            self._changelog = Changelog(raw_changelog)
 
         deps_kind = ['build-depends', 'build-depends-indep', 'build-depends-arch']
         with (self._debian_dir / 'control').open() as raw_control:
@@ -367,173 +391,123 @@ class DebPackageBuilder:
                 om['name'] for dl in deps_kind for am in control.relations[dl] for om in am
             }
 
-    def ready(self):
-        return all(map(DebPackageBuilder.finished, self._depends))
+    @classmethod
+    def applies(cls, base_dir: Path, name: str) -> bool:
+        return (base_dir / name / 'debian').is_dir()
 
-    def finished(self):
-        return self._finished
+    def _orig(self):
+        """The URL of the upstream tarball, for a 3.0 (quilt) package that names one."""
+        if self._format != '3.0 (quilt)' or self._orig_url is None:
+            return None
+        return self._orig_url.format(
+            upstream_version=self._changelog.upstream_version, package=self._changelog.package
+        )
 
-    def name(self):
-        return self._name
+    def sources(self) -> list[str]:
+        orig = self._orig()
+        return [] if orig is None else [orig]
 
-    def build(self, wk_dir):
-        cancellation_point()
-        try:
-            print(
-                '\033[34m[STARTED]\033[39m * building deb for '
-                + self._name
-                + ' on '
-                + str(self.dist_release)
-                + '...'
-            )
+    def _build(self, wk_dir: Path, deps, files):
+        pkg_dir = wk_dir / 'pkg'
+        pkg_dir.mkdir()
 
-            if self._debian_dir is None:
-                self._finished = True
-                print(
-                    '\033[36m[SKIPPED]\033[39m * building deb for '
-                    + self._name
-                    + ' on '
-                    + str(self.dist_release)
-                    + '!'
+        # Copy the data
+        fmt = self._format
+        # a fresh copy of the changelog: each release adds its own entry
+        with (self._debian_dir / 'changelog').open() as raw_changelog:
+            changelog = Changelog(raw_changelog)
+        if fmt == '3.0 (quilt)':
+            if self._orig_url is None:
+                raise Exception('a 3.0 (quilt) package needs an orig: URL in build.conf')
+            pkg_src_dir = pkg_dir / (changelog.package + '-' + changelog.upstream_version)
+            debian_dir = Path(copytree(self._debian_dir, pkg_src_dir / 'debian'))
+        elif fmt == '3.0 (native)':
+            pkg_src_dir = Path(
+                copytree(
+                    self._debian_dir.parent,
+                    pkg_dir / (changelog.package + '-' + changelog.upstream_version),
                 )
-                return
-
-            # Setup our directories
-            wk_dir = wk_dir / (self._name + '.' + self.dist_release.uid + '.deb-build')
-            wk_dir.mkdir()
-            self.outdir = wk_dir / 'output'
-            self.outdir.mkdir()
-            pkg_dir = wk_dir / 'pkg'
-            pkg_dir.mkdir()
-
-            # Copy the data
-            fmt = self._deb_tools.dpkg_source_format(self._debian_dir.parent)
-
-            with (self._debian_dir / 'changelog').open() as raw_changelog:
-                changelog = Changelog(raw_changelog)
-            if fmt == '3.0 (quilt)':
-                pkg_src_dir = pkg_dir / (changelog.package + '-' + changelog.upstream_version)
-                debian_dir = Path(copytree(self._debian_dir, pkg_src_dir / 'debian'))
-            elif fmt == '3.0 (native)':
-                pkg_src_dir = Path(
-                    copytree(
-                        self._debian_dir.parent,
-                        pkg_dir / (changelog.package + '-' + changelog.upstream_version),
-                    )
-                )
-                debian_dir = pkg_src_dir / 'debian'
-            else:
-                raise Exception('Unsupported deb package format: ' + fmt)
-
-            # Generate the automated entry in changelog
-            version = deb_version(
-                str(changelog.version), changelog.date, self.dist_release, datetime.now(UTC)
             )
-            changelog.new_block(
-                package=changelog.package,
-                version=version,
-                distributions=self.dist_release.codename,
-                urgency=changelog.urgency,
-                changes=['  * Rebuild for ' + str(self.dist_release)],
-                author=self._gpg.uid(),
-                date=format_date(),
-            )
-            with (debian_dir / 'changelog').open('w') as raw_changelog:
-                changelog.write_to_open_file(raw_changelog)
+            debian_dir = pkg_src_dir / 'debian'
+        else:
+            raise Exception('Unsupported deb package format: ' + fmt)
 
-            # Download the orig file
-            if fmt == '3.0 (quilt)':
-                self._orig_url = self._orig_url.format(
-                    upstream_version=changelog.upstream_version, package=changelog.package
-                )
-                orig_file_noext = (
-                    changelog.package + '_' + changelog.upstream_version + '.orig.tar.'
-                )
-                self._downloader.download(self._orig_url, pkg_dir / orig_file_noext)
-                orig_file = (
-                    orig_file_noext + filetype.guess(str(pkg_dir / orig_file_noext)).extension
-                )
-                (pkg_dir / orig_file_noext).rename(pkg_dir / orig_file)
+        # Generate the automated entry in changelog
+        version = deb_version(
+            str(changelog.version), changelog.date, self.dist_release, datetime.now(UTC)
+        )
+        changelog.new_block(
+            package=changelog.package,
+            version=version,
+            distributions=self.dist_release.codename,
+            urgency=changelog.urgency,
+            changes=['  * Rebuild for ' + str(self.dist_release)],
+            author=self._gpg.uid(),
+            date=format_date(),
+        )
+        with (debian_dir / 'changelog').open('w') as raw_changelog:
+            changelog.write_to_open_file(raw_changelog)
 
-            # Generate the dependencies .deb
-            deps_dir = wk_dir / 'deps'
-            deps_dir.mkdir()
-            self._deb_tools.mk_build_deps(
-                debian_dir / 'control',
-                deps_dir,
-                [self.dist_release.distribution.id, self.dist_release.codename],
-            )
+        # Put the downloaded orig file in place
+        orig = self._orig()
+        if orig is not None:
+            name = orig_name(changelog.package, changelog.upstream_version, orig, files[orig])
+            link_or_copy(files[orig], pkg_dir / name)
 
-            # Build a repo with all dependencies
-            localrepo = wk_dir / 'repo'
-            DebRepoBuilder(localrepo, self._gpg).build(self._deps)
+        # Generate the dependencies .deb
+        deps_dir = wk_dir / 'deps'
+        deps_dir.mkdir()
+        self._deb_tools.mk_build_deps(
+            debian_dir / 'control',
+            deps_dir,
+            [self.dist_release.distribution.id, self.dist_release.codename],
+        )
 
-            # Build the package in docker
-            DockerContainer(builder_image(self.dist_release))(
-                '-j' + str(self._parallelism),
-                '-sa',
-                '-P' + self.dist_release.distribution.id + ',' + self.dist_release.codename,
-                mounts=[
-                    DockerBindMount('/src', pkg_dir),
-                    DockerBindMount('/deps', deps_dir),
-                    DockerBindMount('/localrepo', localrepo),
-                ],
-                shm_size='5g',
-                as_root=True,
-                env=[('DH_VERBOSE', 1)],
-            )
+        # Build a repo with all dependencies
+        localrepo = wk_dir / 'repo'
+        DebRepoBuilder(self._context, localrepo, self._gpg, logger=self.logger).build(deps)
 
-            rmtree(localrepo)
-            rmtree(deps_dir)
+        # Build the package in docker
+        DockerContainer(self._context, builder_image(self.dist_release), self.logger)(
+            '-j' + str(self._context.jobs),
+            '-sa',
+            '-P' + self.dist_release.distribution.id + ',' + self.dist_release.codename,
+            mounts=[
+                DockerBindMount('/src', pkg_dir),
+                DockerBindMount('/deps', deps_dir),
+                DockerBindMount('/localrepo', localrepo),
+            ],
+            shm_size='5g',
+            as_root=True,
+            env=[('DH_VERBOSE', 1)],
+        )
 
-            # Signing the generated packages
-            self._deb_tools.debsign(pkg_src_dir, self._gpg.keyid())
+        rmtree(localrepo)
+        rmtree(deps_dir)
 
-            # Moving the generated packages to the output directory
-            for file in pkg_dir.iterdir():
-                if file.is_file():
-                    file.rename(self.outdir / file.name)
-            rmtree(pkg_dir)
+        # Signing the generated packages
+        self._deb_tools.debsign(pkg_src_dir, self._gpg.keyid())
 
-            self._finished = True
-            print(
-                '\033[32m[SUCCESS]\033[39m * building deb for '
-                + self._name
-                + ' on '
-                + str(self.dist_release)
-                + '!'
-            )
-        except CancellationException:
-            print(
-                '\033[33m[CANCEL]\033[39m  * building deb for '
-                + self._name
-                + ' on '
-                + str(self.dist_release)
-                + '!'
-            )
-            raise
-        except BaseException as e:
-            print(
-                '\033[31m[FAILURE]\033[39m * building deb for '
-                + self._name
-                + ' on '
-                + str(self.dist_release)
-                + '! '
-                + str(e)
-            )
-            raise
+        # Moving the generated packages to the output directory
+        for file in pkg_dir.iterdir():
+            if file.is_file():
+                file.rename(self.outdir / file.name)
+        rmtree(pkg_dir)
 
 
 class DebRepoBuilder:
     def __init__(
         self,
+        context: BuildContext,
         output_dir: Path,
         gpg: GpgInfo,
         url: str = None,
         name: str = None,
         description: str = None,
         readme_tpl: Path = None,
+        logger: logging.Logger | None = None,
     ):
+        self._context = context
         self._output_dir = output_dir
         self._gpg = gpg
         self._url = url
@@ -542,7 +516,7 @@ class DebRepoBuilder:
             self._name = name if name is not None else Path(str(urlparse(self._url).path)).name
             self._description = description if description is not None else self._name
         self._readme_tpl = readme_tpl
-        self._deb_tools = DebTools(gpg)
+        self._deb_tools = DebTools(context, gpg, logger)
 
     def build(self, pkgs: Iterable[DebPackageBuilder]):
         pkgs = list(filter(lambda p: targets.is_deb(p.dist_release.distribution), pkgs))
@@ -552,7 +526,7 @@ class DebRepoBuilder:
 
         distribs = set()
         install = ''
-        with TemporaryDirectory(prefix='PKGBAPTLY.') as tmp_dir:
+        with TemporaryDirectory(prefix='PKGBAPTLY.', dir=self._context.workdir) as tmp_dir:
             tmp_dir = Path(tmp_dir)
 
             with (tmp_dir / 'aptly.conf').open('w') as aptly_conf:
@@ -657,35 +631,22 @@ class DebRepoBuilder:
                     )
 
 
-class RpmPackageBuilder:
+class RpmPackageBuilder(PackageBuilder):
+    family = 'rpm'
+
     def __init__(
         self,
+        context: BuildContext,
         dist_release: Release,
         base_dir: Path,
         gpg: GpgInfo,
         name: str,
-        downloader: Downloader,
-        orig_url: str,
-        parallelism: int,
+        orig_url: str | None = None,
     ):
-        self.dist_release = dist_release
+        # orig: is a deb setting: the spec's Source: lines name the rpm's sources
+        super().__init__(context, dist_release, base_dir, gpg, name)
         self._spec = base_dir / name / (name + '.spec')
-        self._gpg = gpg
-        self._name = name
-        self._downloader = downloader
-        self._parallelism = parallelism
-
-        self._finished = False
-        self._depends = set([self])  # self depend => never ready
-        self.outdir = None
-        self.bin_provides = set()
-        self.bin_depends = set()
-
-        self._rpm_tools = RpmTools(gpg)
-
-        if not self._spec.is_file():
-            self._spec = None
-            return
+        self._rpm_tools = RpmTools(context, gpg, self.logger)
 
         self.bin_depends = {
             re.sub(r'[\( ].*', '', dep)
@@ -695,127 +656,71 @@ class RpmPackageBuilder:
             re.sub(r'[\( ].*', '', dep)
             for dep in self._rpm_tools.rpmspec('--provides', '-q', self._spec).splitlines()
         }
+        all_urls = self._rpm_tools.rpmspec('-P', self._spec).splitlines()
+        all_urls = [
+            url
+            for url in all_urls
+            if re.match(r'^\s*source[0-9]*\s*:', url, re.IGNORECASE) is not None
+        ]
+        self._sources = [
+            re.sub(r'^\s*source[0-9]*\s*:\s*', '', url, count=1, flags=re.IGNORECASE)
+            for url in all_urls
+        ]
 
-    def ready(self):
-        return all(map(RpmPackageBuilder.finished, self._depends))
+    @classmethod
+    def applies(cls, base_dir: Path, name: str) -> bool:
+        return (base_dir / name / (name + '.spec')).is_file()
 
-    def finished(self):
-        return self._finished
+    def sources(self) -> list[str]:
+        return list(self._sources)
 
-    def build(self, wk_dir):
-        cancellation_point()
-        try:
-            print(
-                '\033[34m[STARTED]\033[39m * building rpm for '
-                + self._name
-                + ' on '
-                + str(self.dist_release)
-                + '...'
-            )
+    def _build(self, wk_dir: Path, deps, files):
+        pkg_dir = wk_dir / 'pkg'
+        pkg_dir.mkdir()
+        spec = pkg_dir / self._spec.name
+        copy2(self._spec, spec)
 
-            if self._spec is None:
-                self._finished = True
-                print(
-                    '\033[36m[SKIPPED]\033[39m * building rpm for '
-                    + self._name
-                    + ' on '
-                    + str(self.dist_release)
-                    + '!'
-                )
-                return
+        localrepo = wk_dir / 'repo'
+        RpmRepoBuilder(self._context, localrepo, self._gpg, logger=self.logger).build(deps)
 
-            # Setup our directories
-            wk_dir = wk_dir / (self._name + '.' + self.dist_release.uid + '.rpm-build')
-            wk_dir.mkdir()
-            self.outdir = wk_dir / 'output'
-            self.outdir.mkdir()
-            pkg_dir = wk_dir / 'pkg'
-            pkg_dir.mkdir()
-            spec = pkg_dir / self._spec.name
-            copy2(self._spec, spec)
+        for url in self._sources:
+            link_or_copy(files[url], pkg_dir / source_name(url))
 
-            localrepo = wk_dir / 'repo'
-            RpmRepoBuilder(localrepo, self._gpg).build(self._deps)
+        DockerContainer(self._context, builder_image(self.dist_release), self.logger)(
+            mounts=[
+                DockerBindMount('/src', pkg_dir, ro=True),
+                DockerBindMount('/output', self.outdir),
+                DockerBindMount('/localrepo', localrepo / self.dist_release.version, ro=True),
+            ],
+            shm_size='5g',
+            as_root=True,
+        )
+        rmtree(localrepo)
 
-            all_urls = self._rpm_tools.rpmspec('-P', self._spec).splitlines()
-            all_urls = [
-                url
-                for url in all_urls
-                if re.match(r'^\s*source[0-9]*\s*:', url, re.IGNORECASE) is not None
-            ]
-            all_urls = [
-                re.sub(r'^\s*source[0-9]*\s*:\s*', '', url, count=1, flags=re.IGNORECASE)
-                for url in all_urls
-            ]
-            for orig_url in all_urls:
-                query = parse_qsl(urlparse(orig_url).query)
-                if len(query) > 0:
-                    orig_file = Path(query[-1][1]).name
-                else:
-                    orig_file = Path(urlparse(orig_url).path).name
-                self._downloader.download(orig_url, pkg_dir / orig_file)
-
-            DockerContainer(builder_image(self.dist_release))(
-                mounts=[
-                    DockerBindMount('/src', pkg_dir, ro=True),
-                    DockerBindMount('/output', self.outdir),
-                    DockerBindMount('/localrepo', localrepo / self.dist_release.version, ro=True),
-                ],
-                shm_size='5g',
-                as_root=True,
-            )
-            rmtree(localrepo)
-
-            # Sign the generated packages
-            for file in self.outdir.iterdir():
-                if file.suffix == '.rpm':
-                    self._rpm_tools.rpmsign(
-                        '--define=%_gpg_name ' + self._gpg.uid(), '--resign', file
-                    )
-            rmtree(pkg_dir)
-
-            print(
-                '\033[32m[SUCCESS]\033[39m * building rpm for '
-                + self._name
-                + ' on '
-                + str(self.dist_release)
-                + '!'
-            )
-            self._finished = True
-        except CancellationException:
-            print(
-                '\033[33m[CANCEL]\033[39m  * building rpm for '
-                + self._name
-                + ' on '
-                + str(self.dist_release)
-                + '!'
-            )
-            raise
-        except BaseException:
-            print(
-                '\033[31m[FAILURE]\033[39m * building rpm for '
-                + self._name
-                + ' on '
-                + str(self.dist_release)
-                + '!'
-            )
-            raise
+        # Sign the generated packages
+        for file in self.outdir.iterdir():
+            if file.suffix == '.rpm':
+                self._rpm_tools.rpmsign('--define=%_gpg_name ' + self._gpg.uid(), '--resign', file)
+        rmtree(pkg_dir)
 
 
 class RpmRepoBuilder:
     def __init__(
         self,
+        context: BuildContext,
         output_dir: Path,
         gpg: GpgInfo,
         url: str = None,
         name: str = None,
         description: str = None,
         readme_tpl: Path = None,
+        logger: logging.Logger | None = None,
     ):
+        self._context = context
         self._output_dir = output_dir
         self._gpg = gpg
         self._url = url
-        self._rpm_tools = RpmTools(gpg)
+        self._rpm_tools = RpmTools(context, gpg, logger)
         if url is not None:
             # a trailing slash, so that urljoin appends to the URL rather than replace its end
             self._url = urlnormalize(self._url) + '/'
@@ -904,14 +809,6 @@ class RpmRepoBuilder:
                     )
 
 
-def order_packages(pkglst):
-    """Tell each builder the builders it depends on, and those its local repository holds."""
-    graph = dependencies(pkglst)
-    for pkg in pkglst:
-        pkg._depends = set(graph[pkg])
-        pkg._deps = closure(graph, pkg) | {pkg}
-
-
 def release_list(cfg: dict, on: date | None = None) -> Set[Release]:
     """The releases a {distribution id: release tokens} mapping names, as of on."""
     releases = set()
@@ -968,30 +865,6 @@ def disabled_releases(
     return result
 
 
-def build_packages(packages, parallelism: int = None):
-    with ThreadPoolExecutor(max_workers=parallelism) as executor:
-        try:
-            tmp_dir = Path(mkdtemp(prefix='PKGBUILD.'))
-            atexit.register(rmtree, tmp_dir)
-            order_packages(packages)
-
-            in_progress = set()
-            waiting = set(packages)
-            while (len(waiting) + len(in_progress)) > 0:
-                for pkg_cfg in {pkg_cfg for pkg_cfg in waiting if pkg_cfg.ready()}:
-                    waiting.remove(pkg_cfg)
-                    in_progress.add(executor.submit(pkg_cfg.build, tmp_dir))
-                if len(in_progress) == 0:
-                    raise Exception('Invalid scheduling: no task ready')
-                done, in_progress = wait(in_progress, return_when=FIRST_COMPLETED)
-                for done_pkg in done:
-                    done_pkg.result()
-        except BaseException:
-            executor.shutdown(False)
-            cancellation_request()
-            raise
-
-
 def write_bake_file(output):
     """Write the bake definition of the installed images to output, or to stdout."""
     from distropack_builder import bake
@@ -1004,7 +877,9 @@ def write_bake_file(output):
         Path(output).write_text(definition)
 
 
-def main():
+def main(
+    *, runner: Runner = run_container, connect: Callable[[str | None], Engine] = Engine.connect
+):
     base_dir = Path.cwd().absolute()
 
     parser = argparse.ArgumentParser(
@@ -1068,8 +943,6 @@ def main():
         write_bake_file(args.output)
         return
 
-    global VERBOSE
-    VERBOSE = args.verbose
     if args.jobs is None and args.verbose:
         args.jobs = 1
     elif args.jobs is None:
@@ -1077,17 +950,9 @@ def main():
 
     # One date for the whole run, so that a run crossing midnight sees one list of releases.
     on = date.today()
-    if args.verbose:
-        handler = logging.StreamHandler()
-        handler.setFormatter(logging.Formatter('%(message)s'))
-        logging.getLogger('distropack_builder').addHandler(handler)
-        logging.getLogger('distropack_builder').setLevel(logging.DEBUG)
-    global ENGINE
     try:
         with (base_dir / args.build_conf).open('r') as cfg_file:
             cfg = yaml.safe_load(cfg_file)
-
-        downloader = Downloader(verbose=args.verbose, cancellation_point=cancellation_point)
 
         # The configuration's errors, and the release data, come before any work.
         patterns = {e for el in args.distributions or [] for e in el}
@@ -1096,77 +961,28 @@ def main():
 
         # Then the engine, before any container.
         try:
-            ENGINE = Engine.connect(args.docker_host)
+            engine = connect(args.docker_host)
         except RemoteEndpoint as error:
             parser.error(str(error))
         except (EngineNotFound, docker.errors.DockerException) as error:
             print(f'{parser.prog}: error: {error}', file=sys.stderr)
             sys.exit(1)
 
-        packages = set()
-        repo_builders = []
-        for dist_id, distrib_cfg in cfg['distribs'].items():
-            keyfile = base_dir / distrib_cfg.get('gpg', {}).get('file', 'key.gpg')
-            keyid = distrib_cfg.get('gpg', {}).get('id', None)
-            uid = distrib_cfg.get('gpg', {}).get('uid', None)
-            gpg = GpgInfo(keyfile, keyid, args.passphrase, uid)
-
-            dist_packages = set()
-            for dist_release in selected[dist_id]:
-                for name, pkg_cfg in cfg['packages'].items():
-                    if not isinstance(pkg_cfg, dict):
-                        pkg_cfg = {'value': pkg_cfg}
-                    if dist_release in disabled[name]:
-                        continue
-                    if targets.is_deb(dist_release.distribution):
-                        dist_packages.add(
-                            DebPackageBuilder(
-                                dist_release,
-                                base_dir,
-                                gpg,
-                                name,
-                                downloader,
-                                pkg_cfg.get('orig', None),
-                                args.jobs,
-                            )
-                        )
-                    if targets.is_rpm(dist_release.distribution):
-                        dist_packages.add(
-                            RpmPackageBuilder(
-                                dist_release,
-                                base_dir,
-                                gpg,
-                                name,
-                                downloader,
-                                pkg_cfg.get('orig', None),
-                                args.jobs,
-                            )
-                        )
-
-            output_path = base_dir / distrib_cfg.get('repository', {}).get('path', 'repositories')
-            url = distrib_cfg.get('repository', {}).get('url')
-            name = distrib_cfg.get('repository', {}).get('name')
-            description = distrib_cfg.get('repository', {}).get('description')
-            if targets.is_deb(targets.target(dist_id)):
-                repo_builder = DebRepoBuilder(
-                    output_path, gpg, url, name, description, base_dir / 'README.tpl'
-                )
-            elif targets.is_rpm(targets.target(dist_id)):
-                repo_builder = RpmRepoBuilder(
-                    output_path, gpg, url, name, description, base_dir / 'README.tpl'
-                )
-
-            repo_builders.append(
-                (
-                    repo_builder,
-                    dist_packages,
+        with ExitStack() as stack:
+            workdir = Path(stack.enter_context(TemporaryDirectory(prefix='distropack-build.')))
+            context = BuildContext(engine, runner, Cancellation(), workdir, args.jobs)
+            summary = os.environ.get('GITHUB_STEP_SUMMARY')
+            reporter = stack.enter_context(
+                Reporter(
+                    Console(),
+                    verbose=args.verbose,
+                    github=github_mode(os.environ),
+                    summary=Path(summary) if summary else None,
                 )
             )
-            packages.update(dist_packages)
-
-        build_packages(packages, parallelism=args.jobs)
-        for builder in repo_builders:
-            builder[0].build(builder[1])
+            failed = run_builds(context, reporter, cfg, base_dir, selected, disabled, args)
+        if failed:
+            sys.exit(1)
 
     except (targets.NotATarget, UnknownDistribution, SelectorError) as error:
         parser.error(str(error))
@@ -1196,3 +1012,64 @@ def main():
         if args.interactive:
             input('Press Enter to clean-up and continue...')
         raise
+
+
+def run_builds(context: BuildContext, reporter: Reporter, cfg, base_dir, selected, disabled, args):
+    """Download, build and publish; whether any build did not succeed."""
+    builders = []
+    repo_builders = []
+    for dist_id, distrib_cfg in cfg['distribs'].items():
+        keyfile = base_dir / distrib_cfg.get('gpg', {}).get('file', 'key.gpg')
+        keyid = distrib_cfg.get('gpg', {}).get('id', None)
+        uid = distrib_cfg.get('gpg', {}).get('uid', None)
+        gpg = GpgInfo(context, keyfile, keyid, args.passphrase, uid)
+
+        dist_builders = []
+        family = DebPackageBuilder if targets.is_deb(targets.target(dist_id)) else RpmPackageBuilder
+        for dist_release in sorted(selected[dist_id], key=lambda release: release.uid):
+            for name, pkg_cfg in cfg['packages'].items():
+                if not isinstance(pkg_cfg, dict):
+                    pkg_cfg = {'value': pkg_cfg}
+                if dist_release in disabled[name] or not family.applies(base_dir, name):
+                    continue
+                dist_builders.append(
+                    family(context, dist_release, base_dir, gpg, name, pkg_cfg.get('orig', None))
+                )
+
+        output_path = base_dir / distrib_cfg.get('repository', {}).get('path', 'repositories')
+        url = distrib_cfg.get('repository', {}).get('url')
+        name = distrib_cfg.get('repository', {}).get('name')
+        description = distrib_cfg.get('repository', {}).get('description')
+        repo_family = DebRepoBuilder if family is DebPackageBuilder else RpmRepoBuilder
+        repo_builder = repo_family(
+            context, output_path, gpg, url, name, description, base_dir / 'README.tpl'
+        )
+        repo_builders.append((repo_builder, dist_builders))
+        builders += dist_builders
+
+    downloads = context.workdir / 'downloads'
+    downloads.mkdir()
+    files = fetch_all(
+        [url for builder in builders for url in builder.sources()],
+        downloads,
+        jobs=context.jobs,
+        cancellation=context.cancellation,
+    )
+
+    graph = dependencies(builders)
+    reporter.expect(len(builders))
+    outcomes = schedule(
+        graph,
+        lambda builder: builder.build(closure(graph, builder), files),
+        jobs=context.jobs,
+        cancellation=context.cancellation,
+        on_start=lambda builder: reporter.started(builder.name, builder.dist_release),
+        on_finish=lambda builder, outcome: reporter.finished(
+            builder.name, builder.dist_release, outcome
+        ),
+    )
+    reporter.summarize({(b.name, b.dist_release): outcome for b, outcome in outcomes.items()})
+
+    for repo_builder, dist_builders in repo_builders:
+        repo_builder.build(dist_builders)
+    return any(not isinstance(outcome, Succeeded) for outcome in outcomes.values())

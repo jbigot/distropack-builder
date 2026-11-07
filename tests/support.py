@@ -1,7 +1,13 @@
 """Constants shared by the test files and the fixtures of conftest.py."""
 
+import gzip
+import io
+import shutil
+import tarfile
 from datetime import date
 from pathlib import Path
+
+import yaml
 
 from distro_releases import Release, distribution
 
@@ -11,7 +17,6 @@ DATA = REPO_ROOT / 'tests' / 'characterization' / 'data'
 RELEASE_DATA = REPO_ROOT / 'packages' / 'distro-releases' / 'tests' / 'data'
 # The modules load_script reloads, so that each test starts from fresh module state.
 MODULES = (
-    'distropack_builder.downloader',
     'distropack_builder.targets',
     'distropack_builder.bake',
     'distropack_builder.cli',
@@ -47,3 +52,43 @@ def made_release(dist: str, version: str | None, codename: str | None, order: in
 TRIXIE = made_release('debian', '13', 'trixie', 13)
 FORKY = made_release('debian', '14', 'forky', 14)
 SID = made_release('debian', None, 'sid', 1000)
+
+
+def write_tarball(source: Path, target: Path) -> None:
+    """A reproducible .tar.gz of source, whose single top-level directory is source's name."""
+
+    def reset(info: tarfile.TarInfo) -> tarfile.TarInfo:
+        info.mtime, info.uid, info.gid, info.uname, info.gname = 0, 0, 0, '', ''
+        return info
+
+    data = io.BytesIO()
+    with tarfile.open(fileobj=data, mode='w') as tar:
+        for path in [source, *sorted(source.rglob('*'))]:
+            tar.add(
+                path, arcname=str(path.relative_to(source.parent)), recursive=False, filter=reset
+            )
+    with gzip.GzipFile(target, 'wb', mtime=0) as gz:
+        gz.write(data.getvalue())
+
+
+def make_project(
+    target: Path, orig_base: str, versions: dict[str, list[str]], packages: list[str]
+) -> Path:
+    """Copy the fixture project to target, limited to some releases and packages.
+
+    Every *.in file of the copy is rendered with @ORIG_BASE@ set to orig_base.
+    """
+    project_dir = Path(
+        shutil.copytree(FIXTURE_PROJECT, target, ignore=shutil.ignore_patterns('upstream'))
+    )
+    for template in project_dir.rglob('*.in'):
+        template.with_suffix('').write_text(template.read_text().replace('@ORIG_BASE@', orig_base))
+        template.unlink()
+    conf_path = project_dir / 'build.conf'
+    conf = yaml.safe_load(conf_path.read_text())
+    conf['distribs'] = {
+        dist: conf['distribs'][dist] | {'versions': rels} for dist, rels in versions.items()
+    }
+    conf['packages'] = {name: conf['packages'][name] for name in packages}
+    conf_path.write_text(yaml.safe_dump(conf))
+    return project_dir

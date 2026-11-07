@@ -36,20 +36,29 @@ def github_mode(environ: Mapping[str, str]) -> bool:
     return environ.get('GITHUB_ACTIONS') == 'true'
 
 
-def status(outcome: Outcome) -> str:
-    """How an outcome reads, before the package and the release."""
+def status(outcome: Outcome) -> tuple[str, str | None]:
+    """How an outcome reads: a word, and the detail of why, if any."""
     match outcome:
         case Succeeded():
-            return 'built'
+            return 'built', None
         case Failed(error):
-            return f'failed: {str(error) or type(error).__name__}'
+            return 'failed', str(error) or type(error).__name__
         case Skipped(because):
-            return f'skipped: {because} failed'
+            return 'skipped', f'{because} failed'
         case Interrupted():
-            return 'interrupted'
+            return 'interrupted', None
 
 
 _STYLES = {Succeeded: 'green', Failed: 'red', Skipped: 'yellow', Interrupted: 'yellow'}
+
+
+def status_line(package: str, release: Release, outcome: Outcome) -> Text:
+    """`<status> <package> on <release>`, then `: <detail>` when there is one."""
+    word, detail = status(outcome)
+    line = Text.assemble((word, _STYLES[type(outcome)]), f' {package} on {release}')
+    if detail is not None:
+        line.append(f': {detail}')
+    return line
 
 
 class _Handler(logging.Handler):
@@ -73,7 +82,6 @@ class Reporter:
         verbose: bool,
         github: bool,
         summary: Path | None = None,
-        total: int = 0,
     ) -> None:
         """A report to console.
 
@@ -83,13 +91,11 @@ class Reporter:
                 rather than only for the builds that fail.
             github: whether to report as a GitHub Actions job: one group per build, all printed.
             summary: the file a GitHub Actions summary table is appended to, if any.
-            total: the number of builds, for the progress bar.
         """
         self._console = console
         self._verbose = verbose
         self._github = github
         self._summary = summary
-        self._total = total
         self._lock = threading.Lock()
         self._builds: dict[str, Build] = {}
         self._buffers: dict[Build, list[str]] = {}
@@ -112,7 +118,7 @@ class Reporter:
                 console=self._console,
                 transient=True,
             )
-            self._task = self._progress.add_task('builds', total=self._total)
+            self._task = self._progress.add_task('builds', total=None)
             self._progress.start()
         return self
 
@@ -145,6 +151,11 @@ class Reporter:
             else:
                 self._buffers[build].append(message)
 
+    def expect(self, total: int) -> None:
+        """There are total builds in the run: the progress bar counts them."""
+        if self._progress is not None and self._task is not None:
+            self._progress.update(self._task, total=total)
+
     def started(self, package: str, release: Release) -> None:
         """The build of package for release starts: its logger's records are its own from now."""
         with self._lock:
@@ -153,7 +164,7 @@ class Reporter:
 
     def finished(self, package: str, release: Release, outcome: Outcome) -> None:
         """The build of package for release ended with outcome, or will not run."""
-        line = Text.assemble((status(outcome), _STYLES[type(outcome)]), f' {package} on {release}')
+        line = status_line(package, release, outcome)
         with self._lock:
             self._builds.pop(build_logger(package, release).name, None)
             output = self._buffers.pop((package, release), [])
@@ -176,15 +187,13 @@ class Reporter:
         if self._summary is not None:
             rows = ['', '| Package | Release | Outcome |', '| --- | --- | --- |']
             for package, release in builds:
-                cell = status(outcomes[(package, release)]).replace('|', r'\|')
+                word, detail = status(outcomes[(package, release)])
+                cell = (word if detail is None else f'{word}: {detail}').replace('|', r'\|')
                 rows.append(f'| {package} | {release} | {cell} |')
             with self._summary.open('a') as summary:
                 summary.write('\n'.join(rows) + '\n')
-        for package, release in builds:
-            outcome = outcomes[(package, release)]
-            if not isinstance(outcome, Succeeded):
-                self._print(
-                    Text.assemble(
-                        (status(outcome), _STYLES[type(outcome)]), f' {package} on {release}'
-                    )
-                )
+        unsuccessful = [b for b in builds if not isinstance(outcomes[b], Succeeded)]
+        if unsuccessful:
+            self._print(f'{len(unsuccessful)} of {len(builds)} builds did not succeed:')
+        for package, release in unsuccessful:
+            self._print(Text('  ') + status_line(package, release, outcomes[(package, release)]))

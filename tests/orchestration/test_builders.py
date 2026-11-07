@@ -1,20 +1,27 @@
 """What the builders ask of the engine: images, mounts, users; no container runs."""
 
-from collections.abc import Callable
+import sys
+import tempfile
+from collections.abc import Callable, Iterator
 from datetime import date
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
+import httpx
 import pytest
 import respx
 
 from distro_releases import Release, distribution
-from distropack_builder.docker import Cancelled, RunResult
-from fake_runner import Call, FakeRunner, StopBuild
-from support import FIXTURE_PASSPHRASE, FIXTURE_PROJECT
+from distropack_builder.context import BuildContext
+from distropack_builder.docker import Cancellation, Cancelled, ContainerFailed, RunResult
+from distropack_builder.scheduler import Interrupted, schedule
+from fake_runner import Call, FakeRunner, StopBuild, tools_respond
+from support import FIXTURE_PASSPHRASE, FIXTURE_PROJECT, make_project, write_tarball
 
 REGISTRY = 'ghcr.io/jbigot/distropack-builder/'
+ORIG_BASE = 'https://orig.test'
+HELLO_LIB_ORIG = f'{ORIG_BASE}/hello-lib-1.0.tar.gz'
 
 
 def release(dist: str, name: str, on: date) -> Release:
@@ -23,42 +30,43 @@ def release(dist: str, name: str, on: date) -> Release:
 
 
 def respond(call: Call) -> RunResult | None:
-    """Stop at the builder's container; dpkg-source says native; other tools succeed silently."""
+    """Stop at the builder's container; other tools succeed silently."""
     if '_builder:' in call.image:
         raise StopBuild()
-    if 'dpkg-source' in call.args:
-        return RunResult(0, '3.0 (native)\n', '3.0 (native)\n')
     return None
 
 
 @pytest.fixture
-def fake(
-    load_script: Callable[[str], ModuleType],
-    recorded_http: respx.MockRouter,
-    monkeypatch: pytest.MonkeyPatch,
-) -> tuple[ModuleType, FakeRunner]:
-    cli = load_script('pkgbuild')
-    runner = FakeRunner(respond)
-    monkeypatch.setattr(cli, 'RUN', runner)
-    return cli, runner
+def cli(load_script: Callable[[str], ModuleType]) -> ModuleType:
+    return load_script('pkgbuild')
 
 
-def builder(cli: ModuleType, rel: Release) -> Any:
-    """The fixture project's builder for rel, ready to build."""
+@pytest.fixture
+def runner() -> FakeRunner:
+    return FakeRunner(respond)
+
+
+@pytest.fixture
+def context(runner: FakeRunner, tmp_path: Path) -> BuildContext:
+    workdir = tmp_path / 'work'
+    workdir.mkdir()
+    return BuildContext(cast(Any, None), runner, Cancellation(), workdir, 1)
+
+
+def builder(cli: ModuleType, context: BuildContext, rel: Release) -> Any:
+    """The fixture project's builder of hello-app for rel."""
     gpg = cli.GpgInfo(
-        FIXTURE_PROJECT / 'key.gpg', 'ABCDEF0123456789', FIXTURE_PASSPHRASE, 'Test <t@t>'
+        context, FIXTURE_PROJECT / 'key.gpg', 'ABCDEF0123456789', FIXTURE_PASSPHRASE, 'Test <t@t>'
     )
     family = (
         cli.DebPackageBuilder if cli.targets.is_deb(rel.distribution) else cli.RpmPackageBuilder
     )
-    found = family(rel, FIXTURE_PROJECT, gpg, 'hello-app', None, None, 1)
-    cli.order_packages([found])  # as the run does: a builder depends on itself until then
-    return found
+    return family(context, rel, FIXTURE_PROJECT, gpg, 'hello-app')
 
 
-def build(cli: ModuleType, rel: Release, tmp_path: Path) -> None:
+def build(cli: ModuleType, context: BuildContext, rel: Release) -> None:
     with pytest.raises(StopBuild):
-        builder(cli, rel).build(tmp_path)
+        builder(cli, context, rel).build(frozenset(), {})
 
 
 def builder_call(runner: FakeRunner) -> Call:
@@ -67,10 +75,9 @@ def builder_call(runner: FakeRunner) -> Call:
 
 
 def test_deb_builder_image_and_mounts(
-    fake: tuple[ModuleType, FakeRunner], frozen: date, tmp_path: Path
+    cli: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date
 ) -> None:
-    cli, runner = fake
-    build(cli, release('debian', 'trixie', frozen), tmp_path)
+    build(cli, context, release('debian', 'trixie', frozen))
     call = builder_call(runner)
     assert call.image == REGISTRY + 'debian_builder:trixie'
     assert call.as_root
@@ -78,10 +85,9 @@ def test_deb_builder_image_and_mounts(
 
 
 def test_rpm_builder_mounts_read_only(
-    fake: tuple[ModuleType, FakeRunner], frozen: date, tmp_path: Path
+    cli: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date
 ) -> None:
-    cli, runner = fake
-    build(cli, release('fedora', '44', frozen), tmp_path)
+    build(cli, context, release('fedora', '44', frozen))
     call = builder_call(runner)
     assert call.image == REGISTRY + 'fedora_builder:44'
     assert call.as_root
@@ -92,10 +98,14 @@ def test_rpm_builder_mounts_read_only(
 
 @pytest.mark.parametrize(('dist', 'name'), [('debian', 'trixie'), ('fedora', '44')])
 def test_no_secret_key_in_a_builder(
-    fake: tuple[ModuleType, FakeRunner], frozen: date, tmp_path: Path, dist: str, name: str
+    cli: ModuleType,
+    context: BuildContext,
+    runner: FakeRunner,
+    frozen: date,
+    dist: str,
+    name: str,
 ) -> None:
-    cli, runner = fake
-    build(cli, release(dist, name, frozen), tmp_path)
+    build(cli, context, release(dist, name, frozen))
     call = builder_call(runner)
     assert '/gnupghome' not in call.targets
     assert not [m for m in call.mounts if m.source.name.startswith('GNUPG_HOME.')]
@@ -103,34 +113,142 @@ def test_no_secret_key_in_a_builder(
 
 @pytest.mark.parametrize(('dist', 'name'), [('debian', 'trixie'), ('fedora', '44')])
 def test_tools_run_as_the_runner_chooses(
-    fake: tuple[ModuleType, FakeRunner], frozen: date, tmp_path: Path, dist: str, name: str
+    cli: ModuleType,
+    context: BuildContext,
+    runner: FakeRunner,
+    frozen: date,
+    dist: str,
+    name: str,
 ) -> None:
-    cli, runner = fake
-    build(cli, release(dist, name, frozen), tmp_path)
+    build(cli, context, release(dist, name, frozen))
     tools = [c for c in runner.calls if '_builder:' not in c.image]
     assert tools and not [c for c in tools if c.as_root]
 
 
 @pytest.mark.parametrize(('dist', 'name'), [('debian', 'trixie'), ('fedora', '44')])
-def test_cancelled_builder_reports_cancel(
-    fake: tuple[ModuleType, FakeRunner],
+def test_cancelled_builder_is_interrupted(
+    cli: ModuleType,
+    context: BuildContext,
+    runner: FakeRunner,
     frozen: date,
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
     dist: str,
     name: str,
 ) -> None:
-    """A builder whose container is cancelled says so, rather than reporting a failure."""
-    cli, runner = fake
+    """A builder whose container is cancelled is interrupted, not failed."""
 
     def cancelled(call: Call) -> RunResult | None:
         if '_builder:' in call.image:
             raise Cancelled()
-        return respond(call)
+        return None
 
     runner.respond = cancelled
-    with pytest.raises(cli.CancellationException):
-        builder(cli, release(dist, name, frozen)).build(tmp_path)
+    found = builder(cli, context, release(dist, name, frozen))
+    outcomes = schedule(
+        {found: frozenset()},
+        lambda b: b.build(frozenset(), {}),
+        jobs=1,
+        cancellation=context.cancellation,
+    )
+    assert outcomes == {found: Interrupted()}
+
+
+def tarball() -> bytes:
+    """hello-lib's upstream tarball, as the fixture's server serves it."""
+    with tempfile.TemporaryDirectory() as scratch:
+        write_tarball(FIXTURE_PROJECT / 'upstream' / 'hello-lib-1.0', Path(scratch) / 't.tar.gz')
+        return (Path(scratch) / 't.tar.gz').read_bytes()
+
+
+@pytest.fixture
+def run_main(
+    cli: ModuleType,
+    recorded_http: respx.MockRouter,
+    frozen: date,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[Callable[..., int]]:
+    """Run main on a copy of the fixture project, with a fake runner; its exit status.
+
+    hello-lib's upstream tarball is served at HELLO_LIB_ORIG, unless the test routes it otherwise.
+    """
+    recorded_http.get(HELLO_LIB_ORIG, name='orig').respond(200, content=tarball())
+
+    def call(
+        runner: FakeRunner, versions: dict[str, list[str]], packages: list[str], *args: str
+    ) -> int:
+        project = make_project(tmp_path / 'project', ORIG_BASE, versions, packages)
+        monkeypatch.chdir(project)
+        monkeypatch.setattr(
+            sys, 'argv', ['distropack-build', 'run', '-j', '2', '-p', 'x', *args, 'build.conf']
+        )
+        try:
+            cli.main(runner=runner, connect=lambda host: cast(Any, None))
+        except SystemExit as exit:
+            return int(exit.code or 0)
+        return 0
+
+    yield call
+
+
+def test_local_repository_is_the_closure(run_main: Callable[..., int]) -> None:
+    runner = FakeRunner(tools_respond)
+    assert run_main(runner, {'debian': ['trixie']}, ['hello-lib', 'hello-app']) == 0
+    included = [
+        c
+        for c in runner.calls
+        if 'include' in c.args
+        and c.targets['/aptlyout'].source.parent.name.startswith('hello-app.')
+    ]
+    # hello-app's own output directory, empty yet, is included as well, as master did
+    assert sorted(c.targets['/data'].source.parent.name.split('.')[0] for c in included) == [
+        'hello-app',
+        'hello-lib',
+    ]
+
+
+def test_failed_download_fails_only_dependents(
+    run_main: Callable[..., int],
+    recorded_http: respx.MockRouter,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    recorded_http.routes['orig'].return_value = httpx.Response(404)
+    runner = FakeRunner(tools_respond)
+    status = run_main(
+        runner, {'debian': ['trixie']}, ['hello-lib', 'hello-app', 'hello-undeclared']
+    )
+    assert status == 1
+    built = {
+        p
+        for p in ('hello-lib', 'hello-app', 'hello-undeclared')
+        for c in runner.calls
+        if c.build_of(p)
+    }
+    assert built == {'hello-undeclared'}
     out = capsys.readouterr().out
-    assert '[CANCEL]' in out
-    assert '[FAILURE]' not in out
+    assert (
+        f'failed hello-lib on Debian GNU/Linux 13 (Trixie): while downloading {HELLO_LIB_ORIG}'
+        in out
+    )
+    assert 'skipped hello-app on Debian GNU/Linux 13 (Trixie): hello-lib failed' in out
+
+
+@pytest.mark.parametrize('outcome', ['success', 'failure'])
+def test_work_directory_removed(
+    run_main: Callable[..., int],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
+) -> None:
+    temp = tmp_path / 'temp'
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, 'tempdir', str(temp))
+
+    def fail(call: Call) -> RunResult | None:
+        if '_builder:' in call.image:
+            raise ContainerFailed(2, [call.image])
+        return tools_respond(call)
+
+    runner = FakeRunner(tools_respond if outcome == 'success' else fail)
+    status = run_main(runner, {'debian': ['trixie']}, ['hello-lib', 'hello-app'])
+    assert status == (0 if outcome == 'success' else 1)
+    assert list(temp.iterdir()) == []
