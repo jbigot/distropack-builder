@@ -1,0 +1,118 @@
+"""The signing key of a run, and every signature the builder makes with it but rpm's.
+
+The only module that uses pysequoia: its API still moves, so it is wrapped here rather than pinned.
+The secret key is unlocked once, in memory, and never written anywhere unlocked.
+"""
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Self
+
+import pysequoia
+
+
+class SigningKeyError(Exception):
+    """The signing key cannot be used: unreadable, locked, or not the one asked for."""
+
+
+@dataclass(frozen=True)
+class Signer:
+    """An unlocked signing key.
+
+    Attributes:
+        fingerprint: the fingerprint of its certificate, 40 upper-case hexadecimal digits.
+        uid: the user id it signs as.
+    """
+
+    fingerprint: str
+    uid: str
+    _certificate: pysequoia.Cert
+    _signer: pysequoia.PySigner
+
+    @classmethod
+    def load(
+        cls,
+        keyfile: Path,
+        passphrase: str | None,
+        *,
+        keyid: str | None = None,
+        uid: str | None = None,
+    ) -> Self:
+        """The key of keyfile, unlocked with passphrase.
+
+        Args:
+            keyfile: one or several secret keys, binary or armored.
+            passphrase: what unlocks the key, None for a key without one.
+            keyid: the end of the fingerprint of the key to use, any case; the first key otherwise.
+            uid: the user id to sign as, compared without surrounding spaces; the first otherwise.
+
+        Raises:
+            SigningKeyError: keyfile holds no secret key, none whose fingerprint ends with keyid,
+                or the passphrase does not unlock it.
+        """
+        try:
+            data = keyfile.read_bytes()
+        except OSError as error:
+            raise SigningKeyError(f'cannot read the signing key: {error}') from error
+        try:
+            keys = pysequoia.Tsk.split_bytes(data)
+        except (ValueError, RuntimeError) as error:
+            raise SigningKeyError(f'{keyfile} holds no secret key: {error}') from error
+        keys = [k for k in keys if _has_secret(k)]
+        if not keys:
+            raise SigningKeyError(f'{keyfile} holds no secret key')
+        if keyid is not None:
+            keys = [k for k in keys if _fingerprint(k).endswith(keyid.upper())]
+            if not keys:
+                raise SigningKeyError(f'{keyfile} has no key {keyid.upper()}')
+        if uid is not None:
+            keys = [k for k in keys if uid.strip() in _uids(k)]
+            if not keys:
+                raise SigningKeyError(f'{keyfile} has no key of user id {uid.strip()}')
+        key = keys[0]
+        certificate = key.extract_certificate()
+        uids = [uid.strip()] if uid is not None else _uids(key)
+        try:
+            signer = key.signer(passphrase)
+        except Exception as error:
+            if passphrase is None:
+                message = f'{keyfile} is protected by a passphrase, and none was given'
+            else:
+                message = f'the passphrase does not unlock {keyfile}'
+            raise SigningKeyError(message) from error
+        return cls(_fingerprint(key), uids[0] if uids else '', certificate, signer)
+
+    @property
+    def keyid8(self) -> str:
+        """The last 8 hexadecimal digits of the fingerprint."""
+        return self.fingerprint[-8:]
+
+    def public_key(self, *, armored: bool) -> bytes:
+        """The public key, for the users of the repositories to verify them with."""
+        return str(self._certificate).encode() if armored else bytes(self._certificate)
+
+    def detached(self, data: bytes) -> bytes:
+        """An armored detached signature of data (Release.gpg, repomd.xml.asc)."""
+        return pysequoia.sign(self._signer, data, mode=pysequoia.SignatureMode.DETACHED)
+
+    def clearsign(self, data: bytes) -> bytes:
+        """data, clear-signed (InRelease, a .dsc).
+
+        As RFC 9580 (7.2) requires, the trailing spaces and tabs of every line are dropped from the
+        signed text: a file whose clear-signed copy must be identical to it has none.
+        """
+        return pysequoia.sign(self._signer, data, mode=pysequoia.SignatureMode.CLEAR)
+
+
+def _fingerprint(key: pysequoia.Tsk) -> str:
+    return key.extract_certificate().fingerprint.upper()
+
+
+def _uids(key: pysequoia.Tsk) -> list[str]:
+    return [str(u).strip() for u in key.extract_certificate().user_ids]
+
+
+def _has_secret(key: pysequoia.Tsk) -> bool:
+    """Whether key holds secret key material: a public certificate parses as a Tsk too."""
+    secret = [pysequoia.packet.Tag.SecretKey, pysequoia.packet.Tag.SecretSubkey]  # not hashable
+    return any(p.tag in secret for p in pysequoia.packet.PacketPile.from_bytes(bytes(key)))
