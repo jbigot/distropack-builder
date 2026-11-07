@@ -9,14 +9,14 @@ dependencies = [
     "docker",
     "filetype",
     "httpx",
-    "jinja2>=3.1.6",
-    "pydantic>=2.14.3",
+    "jinja2",
+    "pydantic",
     "pysequoia",
     "python-debian",
     "pyyaml",
     "rich",
     "stamina",
-    "typer>=0.28.0",
+    "typer",
 ]
 
 [project.scripts]

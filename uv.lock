@@ -512,14 +512,14 @@ requires-dist = [
     { name = "docker" },
     { name = "filetype" },
     { name = "httpx" },
-    { name = "jinja2", specifier = ">=3.1.6" },
-    { name = "pydantic", specifier = ">=2.14.3" },
+    { name = "jinja2" },
+    { name = "pydantic" },
     { name = "pysequoia" },
     { name = "python-debian" },
     { name = "pyyaml" },
     { name = "rich" },
     { name = "stamina" },
-    { name = "typer", specifier = ">=0.28.0" },
+    { name = "typer" },
 ]
 
 [[package]]
