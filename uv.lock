@@ -501,6 +501,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "rich" },
     { name = "stamina" },
+    { name = "typer" },
 ]
 
 [package.metadata]
@@ -516,6 +517,7 @@ requires-dist = [
     { name = "pyyaml" },
     { name = "rich" },
     { name = "stamina" },
+    { name = "typer", specifier = ">=0.28.0" },
 ]
 
 [[package]]

@@ -4,9 +4,17 @@ The suite runs the code moved into the packages, unchanged in behaviour, and com
 master's scripts gave when it was recorded.
 """
 
+import os
+
+# typer decides once, when it is imported, to colour its output whenever one of these is set, as
+# GITHUB_ACTIONS is in CI; the tests read that output as plain text, as a run without a terminal
+# prints it.
+os.environ.pop('FORCE_COLOR', None)
+os.environ.pop('GITHUB_ACTIONS', None)
+os.environ.pop('PY_COLORS', None)
+
 import importlib
 import json
-import os
 import subprocess
 import sys
 import threading
@@ -77,6 +85,10 @@ def load_script(
     """
     for name in MODULES:
         monkeypatch.delitem(sys.modules, name, raising=False)
+        # and the package's attribute, which `from distropack_builder import bake` reads first
+        package, _, module = name.rpartition('.')
+        if package in sys.modules:
+            monkeypatch.delattr(sys.modules[package], module, raising=False)
 
     def load(filename: str) -> ModuleType:
         return importlib.import_module(SCRIPT_MODULES[filename])
@@ -179,12 +191,10 @@ def pkgbuild_run(env: dict[str, str], project_dir: Path) -> subprocess.Completed
             'run',
             '-j',
             '3',
-            '-p',
-            FIXTURE_PASSPHRASE,
             'build.conf',
         ],
         cwd=project_dir,
-        env=env,
+        env={**env, 'DISTROPACK_GPG_PASSPHRASE': FIXTURE_PASSPHRASE},
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

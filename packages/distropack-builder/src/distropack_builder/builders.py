@@ -1,4 +1,4 @@
-from collections.abc import Mapping, Set as AbstractSet
+from collections.abc import Callable, Mapping, Set as AbstractSet
 from configparser import ConfigParser
 from datetime import UTC, datetime
 import json
@@ -19,7 +19,7 @@ from distro_releases import (
 )
 from distropack_builder import targets
 from distropack_builder.bake import PROTOCOL, REGISTRY, tool_image
-from distropack_builder.config import BuildConfig
+from distropack_builder.config import BuildConfig, Distrib
 from distropack_builder.context import BuildContext
 from distropack_builder.docker import Mount
 from distropack_builder.downloads import (
@@ -681,16 +681,19 @@ class RpmRepoBuilder:
 
 
 def run_builds(
-    context: BuildContext, reporter: Reporter, config: BuildConfig, selected, disabled, args
-):
+    context: BuildContext,
+    reporter: Reporter,
+    config: BuildConfig,
+    selected: Mapping[str, AbstractSet[Release]],
+    disabled: Mapping[str, AbstractSet[Release]],
+    signer_for: Callable[[Distrib], Signer],
+) -> bool:
     """Download, build and publish; whether any build did not succeed."""
     builders = []
     repo_builders = []
     root = config.root
     for dist_id, distrib in config.distribs.items():
-        gpg = Signer.load(
-            root / distrib.gpg.file, args.passphrase, keyid=distrib.gpg.id, uid=distrib.gpg.uid
-        )
+        gpg = signer_for(distrib)
 
         dist_builders = []
         family = DebPackageBuilder if targets.is_deb(targets.target(dist_id)) else RpmPackageBuilder

@@ -15,6 +15,7 @@ import httpx
 import pysequoia
 import pytest
 import respx
+from typer.testing import CliRunner
 
 from distro_releases import Release, distribution
 from distropack_builder.bake import PROTOCOL
@@ -208,20 +209,22 @@ def run_main(
         packages: list[str],
         *args: str,
         prepare: Callable[[Path], None] = lambda project: None,
+        passphrase: str = FIXTURE_PASSPHRASE,
     ) -> int:
         project = make_project(tmp_path / 'project', ORIG_BASE, versions, packages)
         prepare(project)
         monkeypatch.chdir(project)
-        monkeypatch.setattr(
-            sys,
-            'argv',
-            ['distropack-build', 'run', '-j', '2', '-p', FIXTURE_PASSPHRASE, *args, 'build.conf'],
+        app = cli.make_app(runner=runner, connect=lambda host: cast(Any, None))
+        result = CliRunner().invoke(
+            app,
+            ['run', '-j', '2', *args, 'build.conf'],
+            env={'DISTROPACK_GPG_PASSPHRASE': passphrase},
+            catch_exceptions=False,
         )
-        try:
-            cli.main(runner=runner, connect=lambda host: cast(Any, None))
-        except SystemExit as exit:
-            return int(exit.code or 0)
-        return 0
+        # what the run printed, for the tests that read it with capsys
+        sys.stdout.write(result.stdout)
+        sys.stderr.write(result.stderr)
+        return result.exit_code
 
     yield call
 
@@ -405,8 +408,7 @@ def test_sigterm_cancels(
             return super().__call__(*args, **kwargs)
 
     runner = Spy(respond)
-    with pytest.raises(KeyboardInterrupt):
-        run_main(runner, {'debian': ['trixie']}, ['hello-undeclared'])
+    assert run_main(runner, {'debian': ['trixie']}, ['hello-undeclared']) == 130
     assert cancellations[0].cancelled
     assert not [
         c
@@ -562,7 +564,7 @@ def test_wrong_passphrase_is_a_message(
     run_main: Callable[..., int], runner: FakeRunner, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A passphrase that does not unlock the key exits 1 with one line, before any container."""
-    status = run_main(runner, {'debian': ['trixie']}, ['hello-undeclared'], '-p', 'wrong')
+    status = run_main(runner, {'debian': ['trixie']}, ['hello-undeclared'], passphrase='wrong')
     assert status == 1
     err = capsys.readouterr().err
     assert 'error: the passphrase does not unlock' in err and 'key.gpg' in err

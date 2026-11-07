@@ -58,7 +58,6 @@ convention = "google"
 "packages/*/tests/**" = ["D"]
 # The ratchet: the code moved unchanged from master ignores exactly the rules it breaks today. The
 # lists only shrink, as later phases rewrite the modules.
-"packages/distropack-builder/src/distropack_builder/cli.py" = ["D100", "D101", "D102", "D103", "D107", "D403", "D415", "I001", "SIM102", "SIM117", "SIM910", "UP006", "UP035"]
 "packages/distropack-builder/src/distropack_builder/builders.py" = ["D100", "D101", "D102", "D103", "D107", "D403", "D415", "I001", "SIM102", "SIM117", "SIM910", "UP006", "UP035"]
 
 [tool.mypy]
@@ -72,7 +71,6 @@ explicit_package_bases = true  # tests/conftest.py and tests/workspace/conftest.
 [[tool.mypy.overrides]]
 module = [
     "distropack_builder.builders",
-    "distropack_builder.cli",
 ]
 ignore_errors = true
 
@@ -81,8 +79,3 @@ ignore_errors = true
 [[tool.mypy.overrides]]
 module = ["createrepo_c", "filetype"]
 ignore_missing_imports = true
-
-# It calls the untyped cli.main; goes when cli leaves the ratchet.
-[[tool.mypy.overrides]]
-module = "distropack_builder.__main__"
-disallow_untyped_calls = false

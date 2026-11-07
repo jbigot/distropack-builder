@@ -1,7 +1,6 @@
 """The sub-commands of distropack-build: run, which builds, and images."""
 
 import json
-import sys
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
@@ -11,6 +10,7 @@ from typing import Any
 import httpx
 import pytest
 import respx
+from typer.testing import CliRunner, Result
 
 from distropack_builder.config import BuildConfig
 from distropack_builder.selection import configured_releases, disabled_releases
@@ -19,50 +19,41 @@ from distropack_builder.selection import configured_releases, disabled_releases
 @pytest.fixture
 def main(
     load_script: Callable[[str], ModuleType], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> Callable[..., None]:
-    """The CLI's main, called with the given arguments from an empty directory."""
+) -> Callable[..., Result]:
+    """The CLI, invoked with the given arguments from an empty directory; its outcome."""
     cli = load_script('pkgbuild')
     # Without a sub-command, a parser falling back to build.conf fails on the missing file
     # instead of building anything.
     monkeypatch.chdir(tmp_path)
 
-    def call(*args: str) -> None:
-        monkeypatch.setattr(sys, 'argv', ['distropack-build', *args])
-        cli.main()
+    def call(*args: str) -> Result:
+        return CliRunner().invoke(cli.make_app(), list(args), env={'COLUMNS': '200'})
 
     return call
 
 
-def test_no_command_is_a_usage_error(
-    main: Callable[..., None], capsys: pytest.CaptureFixture[str]
-) -> None:
-    with pytest.raises(SystemExit) as exit:
-        main()
-    assert exit.value.code == 2
-    err = capsys.readouterr().err
-    assert 'run' in err and 'images' in err
+def test_no_command_is_a_usage_error(main: Callable[..., Result]) -> None:
+    result = main()
+    assert result.exit_code == 2
+    assert 'run' in result.output and 'images' in result.output
 
 
-def test_run_takes_the_build_options(
-    main: Callable[..., None], capsys: pytest.CaptureFixture[str]
-) -> None:
-    with pytest.raises(SystemExit) as exit:
-        main('run', '--help')
-    assert exit.value.code == 0
-    out = capsys.readouterr().out
-    assert out.startswith('usage: distropack-build run ')
-    for option in ('--passphrase', '--distributions', '--jobs', 'build.conf'):
+def test_run_takes_the_build_options(main: Callable[..., Result]) -> None:
+    result = main('run', '--help')
+    assert result.exit_code == 0
+    out = result.stdout
+    assert 'Usage: distropack-build run ' in out
+    for option in ('--passphrase-file', '--distributions', '--jobs', 'BUILD_CONF'):
         assert option in out
 
 
-def test_build_conf_alone_is_no_longer_a_command(main: Callable[..., None]) -> None:
-    with pytest.raises(SystemExit) as exit:
-        main('build.conf')
-    assert exit.value.code == 2
+def test_build_conf_alone_is_no_longer_a_command(main: Callable[..., Result]) -> None:
+    result = main('build.conf')
+    assert result.exit_code == 2
 
 
 def test_bake_file_command(
-    main: Callable[..., None],
+    main: Callable[..., Result],
     load_script: Callable[[str], ModuleType],
     frozen: date,
     monkeypatch: pytest.MonkeyPatch,
@@ -70,25 +61,22 @@ def test_bake_file_command(
 ) -> None:
     bake = load_script('build')
     monkeypatch.setattr(bake, 'registry_has', lambda image: True)
-    main('images', 'bake-file', '-o', str(tmp_path / 'b.json'))
+    assert main('images', 'bake-file', '-o', str(tmp_path / 'b.json')).exit_code == 0
     definition = json.loads((tmp_path / 'b.json').read_text())
     assert len(definition['target']) == 21
     for target in definition['target'].values():
         assert (Path(target['context']) / 'Dockerfile').is_file()
 
 
-def test_rhel_is_not_a_target(
-    main: Callable[..., None], tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_rhel_is_not_a_target(main: Callable[..., Result], tmp_path: Path) -> None:
     (tmp_path / 'build.conf').write_text(
         'distribs:\n  rhel:\n    versions: [supported]\npackages: {}\n'
     )
-    with pytest.raises(SystemExit) as exit:
-        main('run', 'build.conf')
-    assert exit.value.code == 2
+    result = main('run', 'build.conf')
+    assert result.exit_code == 2
     assert (
         'rhel is not a build target; the targets are almalinux, debian, fedora, rocky, ubuntu'
-        in capsys.readouterr().err
+        in result.stderr
     )
 
 
@@ -132,22 +120,18 @@ def write_conf(tmp_path: Path, conf: dict[str, Any]) -> None:
 
 
 def test_source_down_exits_1_before_any_work(
-    main: Callable[..., None],
+    main: Callable[..., Result],
     recorded_http: respx.MockRouter,
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     recorded_http.routes[BODHI].return_value = httpx.Response(503)
     write_conf(tmp_path, TWO_FAMILIES)
-    with pytest.raises(SystemExit) as exit:
-        main('run', 'build.conf')
-    assert exit.value.code == 1
-    assert BODHI in capsys.readouterr().err
+    result = main('run', 'build.conf')
+    assert result.exit_code == 1
+    assert BODHI in result.stderr
 
 
-def test_disable_naming_a_non_target_exits_2(
-    main: Callable[..., None], tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_disable_naming_a_non_target_exits_2(main: Callable[..., Result], tmp_path: Path) -> None:
     write_conf(
         tmp_path,
         {
@@ -155,17 +139,15 @@ def test_disable_naming_a_non_target_exits_2(
             'packages': {'p': {'disable': {'rhel': ['9']}}},
         },
     )
-    with pytest.raises(SystemExit) as exit:
-        main('run', 'build.conf')
-    assert exit.value.code == 2
-    assert 'rhel is not a build target' in capsys.readouterr().err
+    result = main('run', 'build.conf')
+    assert result.exit_code == 2
+    assert 'rhel is not a build target' in result.stderr
 
 
 @pytest.mark.parametrize('how', ['option', 'environment'])
 def test_docker_host_option(
-    main: Callable[..., None],
+    main: Callable[..., Result],
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
     how: str,
 ) -> None:
@@ -176,17 +158,15 @@ def test_docker_host_option(
     else:
         monkeypatch.setenv('DISTROPACK_DOCKER_HOST', 'tcp://x:2375')
         args = ['run', 'build.conf']
-    with pytest.raises(SystemExit) as exit:
-        main(*args)
-    assert exit.value.code == 2
-    assert 'tcp://x:2375 is not a local engine' in capsys.readouterr().err
+    result = main(*args)
+    assert result.exit_code == 2
+    assert 'tcp://x:2375 is not a local engine' in result.stderr
 
 
 def test_registry_error_exits_1_before_any_work(
-    main: Callable[..., None],
+    main: Callable[..., Result],
     recorded_http: respx.MockRouter,
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A registry that does not answer stops the run: no release is dropped silently."""
     manifest = 'https://ghcr.io/v2/jbigot/distropack-builder/debian_builder/manifests/trixie-p2'
@@ -194,7 +174,6 @@ def test_registry_error_exits_1_before_any_work(
     write_conf(
         tmp_path, {'distribs': {'debian': {'versions': ['trixie', 'available']}}, 'packages': {}}
     )
-    with pytest.raises(SystemExit) as exit:
-        main('run', 'build.conf')
-    assert exit.value.code == 1
-    assert 'debian_builder:trixie-p2' in capsys.readouterr().err
+    result = main('run', 'build.conf')
+    assert result.exit_code == 1
+    assert 'debian_builder:trixie-p2' in result.stderr
