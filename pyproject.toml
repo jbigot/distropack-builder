@@ -56,23 +56,12 @@ convention = "google"
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D"]
 "packages/*/tests/**" = ["D"]
-# The ratchet: the code moved unchanged from master ignores exactly the rules it breaks today. The
-# lists only shrink, as later phases rewrite the modules.
-"packages/distropack-builder/src/distropack_builder/builders.py" = ["D100", "D101", "D102", "D103", "D107", "D403", "D415", "I001", "SIM102", "SIM117", "SIM910", "UP006", "UP035"]
 
 [tool.mypy]
 strict = true
 files = ["packages/*/src", "tests"]
 mypy_path = "tests:tests/golden"
 explicit_package_bases = true  # tests/conftest.py and tests/workspace/conftest.py
-
-# The ratchet: the modules moved unchanged from master, typed as later phases rewrite them. The
-# list only shrinks.
-[[tool.mypy.overrides]]
-module = [
-    "distropack_builder.builders",
-]
-ignore_errors = true
 
 # filetype and createrepo_c ship neither types nor a py.typed marker, and typeshed has no stubs
 # for them.
