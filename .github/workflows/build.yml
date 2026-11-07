@@ -107,11 +107,8 @@ jobs:
           check='rpmbuild --version && dnf builddep --help > /dev/null && test -x /entrypoint' ;;
         aptly)
           check='aptly version' ;;
-        rpm_tools)
-          check='createrepo_c --version && rpm --version && gpg --version' ;;
-        gpg2)
-          docker run --rm "$image" --version
-          exit ;;
+        rpm_sign)
+          check='rpmsign --help > /dev/null && gpg --version && test -x /usr/local/bin/sign' ;;
         *)
           echo "::error::no smoke run for $kind"
           exit 1 ;;

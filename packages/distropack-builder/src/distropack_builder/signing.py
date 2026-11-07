@@ -4,7 +4,12 @@ The only module that uses pysequoia: its API still moves, so it is wrapped here 
 The secret key is unlocked once, in memory, and never written anywhere unlocked.
 """
 
-from dataclasses import dataclass
+import os
+import shutil
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Self
 
@@ -26,8 +31,10 @@ class Signer:
 
     fingerprint: str
     uid: str
-    _certificate: pysequoia.Cert
-    _signer: pysequoia.PySigner
+    _certificate: pysequoia.Cert = field(repr=False)
+    _signer: pysequoia.PySigner = field(repr=False)
+    _key: bytes = field(repr=False)
+    _passphrase: str | None = field(repr=False)
 
     @classmethod
     def load(
@@ -80,7 +87,9 @@ class Signer:
             else:
                 message = f'the passphrase does not unlock {keyfile}'
             raise SigningKeyError(message) from error
-        return cls(_fingerprint(key), uids[0] if uids else '', certificate, signer)
+        return cls(
+            _fingerprint(key), uids[0] if uids else '', certificate, signer, data, passphrase
+        )
 
     @property
     def keyid8(self) -> str:
@@ -94,6 +103,24 @@ class Signer:
     def detached(self, data: bytes) -> bytes:
         """An armored detached signature of data (Release.gpg, repomd.xml.asc)."""
         return pysequoia.sign(self._signer, data, mode=pysequoia.SignatureMode.DETACHED)
+
+    @contextmanager
+    def gpg_secret(self, fallback: Path) -> Iterator[Path]:
+        """A private directory holding the key file as given, still locked, and its passphrase.
+
+        For gpg in the one container that signs rpms, which needs the key on disk: the directory
+        is under /dev/shm, a tmpfs, when it is writable, under fallback otherwise, and it is removed
+        on exit, whatever happened.
+        """
+        shm = Path('/dev/shm')
+        base = shm if shm.is_dir() and os.access(shm, os.W_OK) else fallback
+        directory = Path(tempfile.mkdtemp(prefix='distropack-sign.', dir=base))
+        try:
+            (directory / 'key').write_bytes(self._key)
+            (directory / 'passphrase').write_text(self._passphrase or '')
+            yield directory
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
 
     def clearsign(self, data: bytes) -> bytes:
         """data, clear-signed (InRelease, a .dsc).

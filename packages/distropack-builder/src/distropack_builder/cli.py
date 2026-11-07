@@ -15,7 +15,7 @@ from subprocess import CalledProcessError
 import sys
 from sys import stderr
 from string import Template
-from tempfile import mkdtemp, TemporaryDirectory
+from tempfile import TemporaryDirectory
 from typing import Iterable, Set
 from urllib.parse import ParseResult, urljoin, urlparse, urlunparse
 
@@ -43,7 +43,7 @@ from distropack_builder.downloads import DownloadFailed, fetch_all, orig_name, s
 from distropack_builder.graph import closure, dependencies
 from distropack_builder.publication import published
 from distropack_builder.report import Reporter, build_logger, github_mode
-from distropack_builder import rpmquery
+from distropack_builder import repodata, rpmquery
 from distropack_builder.rpmquery import SpecFailed, SpecInfo
 from distropack_builder.scheduler import Succeeded, schedule
 from distropack_builder.signing import Signer
@@ -120,110 +120,6 @@ class DockerContainer:
         return result.stdout if return_stdout else None
 
 
-class GpgInfo(DockerContainer):
-    def __init__(self, context: BuildContext, keyfile, keyid=None, passphrase=None, uid=None):
-        super().__init__(context, tool_image('gpg2'))
-        self._keyid = keyid
-        self._passphrase = passphrase
-        self._home_dir = Path(mkdtemp(prefix='GNUPG_HOME.', dir=context.workdir))
-        self._gpg_bin = self._home_dir / 'bin' / 'gpg'
-        self._uid = uid
-        self._mount_gnupghome = DockerBindMount('/gnupghome', self._home_dir)
-
-        if self._keyid is not None:
-            self._keyid = self._keyid.upper()
-
-        # Build our config
-        self._home_dir.chmod(0o700)
-        with (self._home_dir / 'passphrase').open('w') as passphrase:
-            print(self._passphrase, end='', file=passphrase)
-        with (self._home_dir / 'S.gpg-agent').open('w') as gpgagent_socket:
-            print('%Assuan%\nsocket=/tmp/S.gpg-agent', file=gpgagent_socket)
-        with (self._home_dir / 'S.gpg-agent.ssh').open('w') as gpgagent_socketssh:
-            print('%Assuan%\nsocket=/tmp/S.gpg-agent.ssh', file=gpgagent_socketssh)
-        with (self._home_dir / 'gpg-agent.conf').open('w') as gpgagent_conf:
-            print('extra-socket /tmp/S.gpg-agent.extra', file=gpgagent_conf)
-            print('browser-socket /tmp/S.gpg-agent.browser', file=gpgagent_conf)
-        with (self._home_dir / 'gpg.conf').open('w') as gpg_conf:
-            print('batch', file=gpg_conf)
-            print('always-trust', file=gpg_conf)
-            print('pinentry-mode loopback', file=gpg_conf)
-            print('passphrase-file /gnupghome/passphrase', file=gpg_conf)
-
-        # Import the provided key
-        self(
-            '--passphrase-file',
-            '/gnupghome/passphrase',
-            '--import',
-            str(Path(keyfile).name),
-            mounts=[DockerBindMount('/data', Path(keyfile).parent)],
-        )
-
-        # Parse the KEYID & UID from the imported key
-        data = self(
-            '--with-colons',
-            '--with-fingerprint',
-            '--fixed-list-mode',
-            '--list-secret-keys',
-            return_stdout=True,
-        )
-        in_key = False
-        for line in data.splitlines():
-            res = line.split(':')
-            if res[0] == 'sec':
-                in_key = False
-                if self._keyid is None or res[4].upper()[-8:] == self._keyid[-8:]:
-                    in_key = True
-            elif (
-                res[0] == 'ssb'
-                or res[0] == 'pub'
-                or res[0] == 'crt'
-                or res[0] == 'crs'
-                or res[0] == 'sub'
-            ):
-                in_key = False
-            elif res[0] == 'fpr' and in_key:
-                self._keyid = res[9].upper()
-            elif res[0] == 'uid' and in_key:
-                if self._uid is None or res[9].strip() == self._uid.strip():
-                    self._uid = res[9]
-
-        # Mark the key as trusted
-        with (self._home_dir / 'gpg.conf').open('a') as gpg_conf:
-            print('trusted-key ' + self._keyid, file=gpg_conf)
-
-        # Remove the passphrase from the key
-        self('--passphrase-file', '/gnupghome/passphrase', '--passwd', self._keyid)
-
-        # Export the key to a gpg1-compatible keyring
-        self(
-            '--passphrase-file',
-            '/gnupghome/passphrase',
-            '--export',
-            '--output',
-            '/gnupghome/keyring.pgp',
-        )
-
-    def __call__(self, *args, mounts: Iterable[DockerBindMount] = [], **kwargs):
-        return super().__call__(*args, mounts=[self._mount_gnupghome] + mounts, **kwargs)
-
-    def uid(self):
-        """The UID of the key"""
-        return self._uid
-
-    def keyid(self):
-        """The full key identifier"""
-        return self._keyid
-
-    def keyid8(self):
-        """The 8-char key identifier"""
-        return self._keyid[-8:]
-
-    def gnupghome(self):
-        """The directory containing the GPG config"""
-        return self._home_dir
-
-
 class Aptly(DockerContainer):
     """aptly, alone in its image: it publishes unsigned, the Signer signs."""
 
@@ -231,31 +127,24 @@ class Aptly(DockerContainer):
         super().__init__(context, tool_image('aptly'), logger)
 
 
-class RpmTools(DockerContainer):
-    def __init__(self, context: BuildContext, gpg: GpgInfo, logger: logging.Logger | None = None):
-        super().__init__(context, tool_image('rpm_tools'), logger)
-        self._gpg = gpg
+class RpmSign(DockerContainer):
+    """rpmsign and gpg, alone in their image: rpm has no other way to sign a package."""
 
-    def __call__(
-        self, *args, gpgmount: bool = True, mounts: Iterable[DockerBindMount] = [], **kwargs
-    ):
-        return super().__call__(
-            *args,
-            mounts=([DockerBindMount('/gnupghome', self._gpg.gnupghome())] if gpgmount else [])
-            + mounts,
-            **kwargs,
-        )
+    def __init__(self, context: BuildContext, logger: logging.Logger | None = None):
+        super().__init__(context, tool_image('rpm_sign'), logger)
 
-    def createrepo(self, directory):
-        self('createrepo_c', '.', shm_size='5g', mounts=[DockerBindMount('/data', directory)])
-
-    def rpmsign(
-        self,
-        *args,
-    ):
-        file = Path(args[-1])
-        args = args[:-1]
-        self('rpmsign', *args, str(file.name), mounts=[DockerBindMount('/data', file.parent)])
+    def sign(self, signer: Signer, directory: Path, names: list[str]):
+        """Sign the rpms names of directory, with the key of signer, given to gpg locked."""
+        with signer.gpg_secret(self._context.workdir) as secret:
+            self(
+                'sign',
+                signer.fingerprint,
+                *names,
+                mounts=[
+                    DockerBindMount('/data', directory),
+                    DockerBindMount('/secret', secret, ro=True),
+                ],
+            )
 
 
 class Control(Deb822, _PkgRelationMixin):
@@ -273,7 +162,7 @@ class PackageBuilder:
     family = None
 
     def __init__(
-        self, context: BuildContext, dist_release: Release, base_dir: Path, gpg: GpgInfo, name: str
+        self, context: BuildContext, dist_release: Release, base_dir: Path, gpg: Signer, name: str
     ):
         self._context = context
         self.dist_release = dist_release
@@ -331,7 +220,7 @@ class DebPackageBuilder(PackageBuilder):
         context: BuildContext,
         dist_release: Release,
         base_dir: Path,
-        gpg: GpgInfo,
+        gpg: Signer,
         name: str,
         orig_url: str | None = None,
     ):
@@ -461,7 +350,7 @@ class DebRepoBuilder:
         self,
         context: BuildContext,
         output_dir: Path,
-        gpg: GpgInfo,
+        gpg: Signer,
         url: str = None,
         name: str = None,
         description: str = None,
@@ -621,7 +510,7 @@ class RpmPackageBuilder(PackageBuilder):
         context: BuildContext,
         dist_release: Release,
         base_dir: Path,
-        gpg: GpgInfo,
+        gpg: Signer,
         name: str,
         orig_url: str | None = None,
         *,
@@ -630,7 +519,6 @@ class RpmPackageBuilder(PackageBuilder):
         # orig: is a deb setting: the spec's Source: lines name the rpm's sources
         super().__init__(context, dist_release, base_dir, gpg, name)
         self._spec = self.spec_file(base_dir, name)
-        self._rpm_tools = RpmTools(context, gpg, self.logger)
         self._spec_info = spec
         self._sources = []
         if isinstance(spec, SpecInfo):
@@ -675,9 +563,9 @@ class RpmPackageBuilder(PackageBuilder):
         rmtree(localrepo)
 
         # Sign the generated packages
-        for file in self.outdir.iterdir():
-            if file.suffix == '.rpm':
-                self._rpm_tools.rpmsign('--define=%_gpg_name ' + self._gpg.uid(), '--resign', file)
+        rpms = sorted(file.name for file in self.outdir.iterdir() if file.suffix == '.rpm')
+        if rpms:
+            RpmSign(self._context, self.logger).sign(self._gpg, self.outdir, rpms)
         rmtree(pkg_dir)
 
 
@@ -686,7 +574,7 @@ class RpmRepoBuilder:
         self,
         context: BuildContext,
         output_dir: Path,
-        gpg: GpgInfo,
+        gpg: Signer,
         url: str = None,
         name: str = None,
         description: str = None,
@@ -699,7 +587,6 @@ class RpmRepoBuilder:
         self._gpg = gpg
         self._url = url
         self._sign = sign
-        self._rpm_tools = RpmTools(context, gpg, logger)
         if url is not None:
             # a trailing slash, so that urljoin appends to the URL rather than replace its end
             self._url = urlnormalize(self._url) + '/'
@@ -751,13 +638,8 @@ class RpmRepoBuilder:
             return failures
 
         if self._url is not None:
-            (self._output_dir / (self._name + '.key')).unlink(missing_ok=True)
-            self._gpg(
-                '--export',
-                '--armor',
-                '--output',
-                Path('/data') / (self._name + '.key'),
-                mounts=[DockerBindMount('/data', self._output_dir)],
+            (self._output_dir / (self._name + '.key')).write_bytes(
+                self._gpg.public_key(armored=True)
             )
 
         listed = set(published) | {r for r in set(kept) | failures.keys() if self.has_repository(r)}
@@ -788,12 +670,10 @@ class RpmRepoBuilder:
 
     def _publish(self, dist_release: Release):
         release_dir = self._output_dir / dist_release.version
-        self._rpm_tools.createrepo(release_dir)
-        (release_dir / 'repodata' / 'repomd.xml.asc').unlink(missing_ok=True)
+        repodata.write(release_dir)
         if self._sign:
-            self._gpg(
-                '-b', '-a', 'repodata/repomd.xml', mounts=[DockerBindMount('/data', release_dir)]
-            )
+            repomd = release_dir / 'repodata' / 'repomd.xml'
+            repomd.with_name('repomd.xml.asc').write_bytes(self._gpg.detached(repomd.read_bytes()))
         if self._url is not None:
             repo_data = ConfigParser()
             repo_data.add_section(self._name)
@@ -1035,10 +915,7 @@ def run_builds(context: BuildContext, reporter: Reporter, cfg, base_dir, selecte
         keyfile = base_dir / distrib_cfg.get('gpg', {}).get('file', 'key.gpg')
         keyid = distrib_cfg.get('gpg', {}).get('id', None)
         uid = distrib_cfg.get('gpg', {}).get('uid', None)
-        if targets.is_deb(targets.target(dist_id)):
-            gpg = Signer.load(keyfile, args.passphrase, keyid=keyid, uid=uid)
-        else:  # until rpm signs without gpg2
-            gpg = GpgInfo(context, keyfile, keyid, args.passphrase, uid)
+        gpg = Signer.load(keyfile, args.passphrase, keyid=keyid, uid=uid)
 
         dist_builders = []
         family = DebPackageBuilder if targets.is_deb(targets.target(dist_id)) else RpmPackageBuilder

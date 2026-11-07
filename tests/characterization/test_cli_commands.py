@@ -68,7 +68,7 @@ def test_bake_file_command(
     monkeypatch.setattr(bake, 'registry_has', lambda image: True)
     main('images', 'bake-file', '-o', str(tmp_path / 'b.json'))
     definition = json.loads((tmp_path / 'b.json').read_text())
-    assert len(definition['target']) == 22
+    assert len(definition['target']) == 21
     for target in definition['target'].values():
         assert (Path(target['context']) / 'Dockerfile').is_file()
 

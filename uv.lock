@@ -437,6 +437,22 @@ wheels = [
 ]
 
 [[package]]
+name = "createrepo-c"
+version = "1.2.6"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5e/9e/82202e067ba4f66abd48ee8bdfa4d1193b4ff9494fe37c243d15a30decf2/createrepo_c-1.2.6.tar.gz", hash = "sha256:81962c59ef7b1d0f278724589f56e7ee3b3b7951458e75089d8b7d686acd0d4a", size = 114027457, upload-time = "2026-10-27T13:30:32.344Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/37/a9/1eff8bab37a0a2aa89ad7514c02caf84d003276415b254480e41dab61916/createrepo_c-1.2.6-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:e546fc15021537e10e3561f7a9ef002c2d97ad8d63be30eeb1c0722a490895b6", size = 11307322, upload-time = "2026-10-27T13:28:20.302Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/fe/12ef3341404506d91083598432609e265a9071ba0b49f99c57ea3a19de19/createrepo_c-1.2.6-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:340f70ebf2c19f20c05c60fa2c8abdf05db5443278e4a4b5dbdfe4543df8adf4", size = 11938230, upload-time = "2026-10-27T13:28:22.739Z" },
+    { url = "https://files.pythonhosted.org/packages/b8/ea/914cfe090f6f246838529e851d0cadbeb6310864ec0773534c6ef0674b28/createrepo_c-1.2.6-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:308d153f964c19eda0b62daa3db48e48e461696bb2c1bea712313b9d17ec58cb", size = 11307350, upload-time = "2026-10-27T13:28:25.054Z" },
+    { url = "https://files.pythonhosted.org/packages/58/62/0f03456aa75a51f8c1236f07c156d110586f81001bb32aa6d128c57edcaf/createrepo_c-1.2.6-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:aade313fa27fffd261fc31212d44f0c07aceb7b0b385c6cff0d178a7e937ee71", size = 11938239, upload-time = "2026-10-27T13:28:27.708Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/ac/a3636624deda5d1ef0e5d3f910753276bc85fe721ee7db6ee8f4522a8b03/createrepo_c-1.2.6-cp314-cp314-manylinux_2_28_aarch64.whl", hash = "sha256:89b1db13f377ff9693ac385ad1272fc75c069730580f1508593ed9cdb041ae2a", size = 11307422, upload-time = "2026-10-27T13:28:30.243Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/68/1734fd7221679848033bb2514e443c3b2b50fa81c4cc1028394ec5ec0d42/createrepo_c-1.2.6-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:10be4a8f43addef87e03fe8f74d12a372c3dc5221e0b1143e625b496ef23bdf2", size = 11938283, upload-time = "2026-10-27T13:28:32.939Z" },
+    { url = "https://files.pythonhosted.org/packages/91/90/a86bee8f7d665125672763ab41f0d8d2eb9fe5e1563a4b7112ea86bea3f4/createrepo_c-1.2.6-cp315-cp315-manylinux_2_28_aarch64.whl", hash = "sha256:f8213ebf028740143bb756395f5e18e829295c90d77dac56cc9b82c19c4a51d7", size = 11307429, upload-time = "2026-10-27T13:28:35.465Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/0e/f345d9b7cd5aa1edc2b534715dacbece5c47e0eab046c8ce59cf6237b88b/createrepo_c-1.2.6-cp315-cp315-manylinux_2_28_x86_64.whl", hash = "sha256:980c39ca71476501d0a52ab7eb2cb48767b6343de713c7671c7da07d6239c75f", size = 11938302, upload-time = "2026-10-27T13:28:37.741Z" },
+]
+
+[[package]]
 name = "distlib"
 version = "0.4.4"
 source = { registry = "https://pypi.org/simple" }
@@ -465,6 +481,7 @@ requires-dist = [
 name = "distropack-builder"
 source = { editable = "packages/distropack-builder" }
 dependencies = [
+    { name = "createrepo-c" },
     { name = "distro-releases" },
     { name = "docker" },
     { name = "filetype" },
@@ -478,6 +495,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "createrepo-c" },
     { name = "distro-releases", editable = "packages/distro-releases" },
     { name = "docker" },
     { name = "filetype" },

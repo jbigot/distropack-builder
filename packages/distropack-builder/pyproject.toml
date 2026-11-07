@@ -4,6 +4,7 @@ dynamic = ["version"]
 description = "Build deb and rpm packages and their signed repositories in containers"
 requires-python = ">=3.12"
 dependencies = [
+    "createrepo-c",
     "distro-releases",
     "docker",
     "filetype",

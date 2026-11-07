@@ -7,13 +7,13 @@ declares and the host needs nothing but a container engine.
 
 | Container | Image | Runs |
 |---|---|---|
-| the builders | `<distribution>_builder:<release>` | the target release's own `dpkg-buildpackage` or `rpmbuild`, after installing the build dependencies |
-| GPG | `gpg2` | key import and listing, signatures |
+| the builders | `<distribution>_builder:<release>` | the target release's own `dpkg-buildpackage` or `rpmbuild`, after installing the build dependencies; for rpm, also the `rpmspec` queries of every spec of the release, in one container |
 | aptly | `aptly` | `aptly`, which publishes deb repositories unsigned: the builder signs them itself |
-| rpm tools | `rpm_tools` | `rpmspec`, `createrepo_c`, `rpmsign` |
+| rpm signing | `rpm_sign` | `rpmsign`, through gpg, with the key and its passphrase mounted for that one call |
 
-Later versions move the signatures and the repository metadata out of containers, into Python
-libraries, and keep in images only what has no equivalent on PyPI.
+Everything else runs in the builder's own process: the signatures of deb sources and of every
+repository (pysequoia), and the metadata of rpm repositories (the createrepo_c bindings). Only
+what has no equivalent on PyPI keeps an image.
 
 ## Engines
 

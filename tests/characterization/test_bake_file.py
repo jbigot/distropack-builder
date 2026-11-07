@@ -46,8 +46,9 @@ def test_bake_file_matches_the_recorded_build_calls(bake: ModuleType) -> None:
         for target in definition['target'].values()
     }
     recorded = recorded_images(bake.REGISTRY, bake.PROTOCOL)
-    assert len(recorded) == 22
-    assert generated == recorded
+    assert len(recorded) == 20
+    # rpm_sign is new (Phase 6): what remains of rpm_tools and gpg2, rpmsign, on Fedora
+    assert {k: v for k, v in generated.items() if '/rpm_sign:' not in k} == recorded
     assert sorted(definition['group']['default']['targets']) == sorted(definition['target'])
 
 
@@ -59,7 +60,8 @@ def recorded_images(registry: str, protocol: int) -> dict[str, Image]:
     - a tag build left implicit is spelled out as latest;
     - each image gains its protocol tag: <release>-p<N> on a builder, p<N> on a tool;
     - build's --force-rm has no bake equivalent, and building in CI leaves nothing behind anyway;
-    - the tool images shrink (Phase 6): deb_tools, whose aptly alone remains, is the aptly image.
+    - the tool images shrink (Phase 6): deb_tools, whose aptly alone remains, is the aptly image;
+      rpm_tools and gpg2 go.
     """
     tools = {'deb_tools': 'aptly'}
 
@@ -74,6 +76,8 @@ def recorded_images(registry: str, protocol: int) -> dict[str, Image]:
     blocks: dict[str, list[list[str]]] = json.loads(RECORDED_CALLS.read_text())
     for block in blocks.values():
         build, *others = block
+        if build[-1] in ('rpm_tools', 'gpg2'):
+            continue
         assert build[:3] == ['docker', 'build', '--force-rm']
         primary = rename(build[build.index('-t') + 1])
         args = dict(

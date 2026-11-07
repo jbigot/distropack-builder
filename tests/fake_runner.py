@@ -69,14 +69,6 @@ class FakeRunner:
         return self.respond(call) or RunResult(0, '', '')
 
 
-# What gpg --list-secret-keys --with-colons says of the fixture key, as far as GpgInfo reads it.
-FIXTURE_KEY_LISTING = (
-    'sec:u:255:22:ABCDEF0123456789:1:::u:::scESC:::+:::23::0:\n'
-    'fpr:::::::::0123456789ABCDEF0123456789ABCDEF01234567:\n'
-    'uid:u::::1::0::Test <test@example.invalid>::::::::::0:\n'
-)
-
-
 def answer_queries(call: Call) -> None:
     """Write what rpmspec says of each spec the query container mounts, as its entrypoint does."""
     out = call.targets['/out'].source
@@ -106,8 +98,6 @@ def tools_respond(call: Call) -> RunResult | None:
         release = call.targets['/aptlyout'].source / 'dists' / distribution / 'Release'
         release.parent.mkdir(parents=True, exist_ok=True)
         release.write_text(f'Origin: hello \nCodename: {distribution}\n')
-    if '--list-secret-keys' in call.args:
-        return RunResult(0, FIXTURE_KEY_LISTING, FIXTURE_KEY_LISTING)
     if '_builder:' in call.image and call.args[:1] == ('query',):
         answer_queries(call)
     return None

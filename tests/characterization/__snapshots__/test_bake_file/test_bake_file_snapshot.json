@@ -14,11 +14,10 @@
         "fedora_builder-44",
         "fedora_builder-45",
         "fedora_builder-46",
-        "gpg2",
         "rocky_builder-10",
         "rocky_builder-8",
         "rocky_builder-9",
-        "rpm_tools",
+        "rpm_sign",
         "ubuntu_builder-jammy",
         "ubuntu_builder-noble",
         "ubuntu_builder-resolute",
@@ -186,13 +185,6 @@
         "ghcr.io/jbigot/distropack-builder/fedora_builder:rawhide"
       ]
     },
-    "gpg2": {
-      "context": "/images/gpg2",
-      "tags": [
-        "ghcr.io/jbigot/distropack-builder/gpg2:latest",
-        "ghcr.io/jbigot/distropack-builder/gpg2:p2"
-      ]
-    },
     "rocky_builder-10": {
       "args": {
         "DIST_CODENAME": "None",
@@ -233,11 +225,11 @@
         "ghcr.io/jbigot/distropack-builder/rocky_builder:9-p2"
       ]
     },
-    "rpm_tools": {
-      "context": "/images/rpm_tools",
+    "rpm_sign": {
+      "context": "/images/rpm_sign",
       "tags": [
-        "ghcr.io/jbigot/distropack-builder/rpm_tools:latest",
-        "ghcr.io/jbigot/distropack-builder/rpm_tools:p2"
+        "ghcr.io/jbigot/distropack-builder/rpm_sign:latest",
+        "ghcr.io/jbigot/distropack-builder/rpm_sign:p2"
       ]
     },
     "ubuntu_builder-jammy": {

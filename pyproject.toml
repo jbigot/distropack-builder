@@ -74,9 +74,10 @@ module = [
 ]
 ignore_errors = true
 
-# filetype ships neither types nor a py.typed marker, and typeshed has no stubs for it.
+# filetype and createrepo_c ship neither types nor a py.typed marker, and typeshed has no stubs
+# for them.
 [[tool.mypy.overrides]]
-module = "filetype"
+module = ["createrepo_c", "filetype"]
 ignore_missing_imports = true
 
 # It calls the untyped cli.main; goes when cli leaves the ratchet.

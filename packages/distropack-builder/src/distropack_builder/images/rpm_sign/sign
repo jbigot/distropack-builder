@@ -1,0 +1,14 @@
+#!/bin/sh
+# sign <fingerprint> <rpm>...: sign the rpms with the key of /secret/key, which /secret/passphrase
+# unlocks. Both are mounted read-only for this container alone; the key is imported into a keyring
+# of the container's own, and gpg reads the passphrase from its file, never from a command line.
+set -eu
+fingerprint=$1
+shift
+GNUPGHOME=$(mktemp -d)
+export GNUPGHOME
+gpg --batch --quiet --pinentry-mode loopback --passphrase-file /secret/passphrase \
+	--import /secret/key
+rpmsign --addsign --define "_gpg_name ${fingerprint}" \
+	--define '_gpg_sign_cmd_extra_args --pinentry-mode loopback --passphrase-file /secret/passphrase' \
+	"$@"

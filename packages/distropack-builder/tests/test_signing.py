@@ -106,3 +106,20 @@ def test_public_keyfile_is_no_signing_key(signer: Signer, tmp_path: Path) -> Non
     public.write_bytes(signer.public_key(armored=True))
     with pytest.raises(SigningKeyError, match='holds no secret key'):
         Signer.load(public, FIXTURE_PASSPHRASE)
+
+
+def test_gpg_secret(signer: Signer, tmp_path: Path) -> None:
+    """The key as given, still locked, and its passphrase, in a private directory, then gone."""
+    with signer.gpg_secret(tmp_path) as secret:
+        assert secret.stat().st_mode & 0o777 == 0o700
+        assert (secret / 'key').read_bytes() == KEY.read_bytes()
+        assert (secret / 'passphrase').read_text() == FIXTURE_PASSPHRASE
+        with pytest.raises(RuntimeError):
+            pysequoia.Tsk.from_bytes((secret / 'key').read_bytes()).signer('wrong')
+    assert not secret.exists()
+
+
+def test_gpg_secret_removed_on_error(signer: Signer, tmp_path: Path) -> None:
+    with pytest.raises(KeyError), signer.gpg_secret(tmp_path) as secret:
+        raise KeyError()
+    assert not secret.exists()

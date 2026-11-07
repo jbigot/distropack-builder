@@ -61,14 +61,11 @@ def context(runner: FakeRunner, tmp_path: Path) -> BuildContext:
 
 def builder(cli: ModuleType, context: BuildContext, rel: Release) -> Any:
     """The fixture project's builder of hello-app for rel."""
-    key = FIXTURE_PROJECT / 'key.gpg'
+    signer = Signer.load(FIXTURE_PROJECT / 'key.gpg', FIXTURE_PASSPHRASE)
     if cli.targets.is_deb(rel.distribution):
-        return cli.DebPackageBuilder(
-            context, rel, FIXTURE_PROJECT, Signer.load(key, FIXTURE_PASSPHRASE), 'hello-app'
-        )
-    gpg = cli.GpgInfo(context, key, 'ABCDEF0123456789', FIXTURE_PASSPHRASE, 'Test <t@t>')
+        return cli.DebPackageBuilder(context, rel, FIXTURE_PROJECT, signer, 'hello-app')
     spec = SpecInfo(frozenset({'hello-lib'}), frozenset({'hello-app'}), ())
-    return cli.RpmPackageBuilder(context, rel, FIXTURE_PROJECT, gpg, 'hello-app', spec=spec)
+    return cli.RpmPackageBuilder(context, rel, FIXTURE_PROJECT, signer, 'hello-app', spec=spec)
 
 
 def build(cli: ModuleType, context: BuildContext, rel: Release) -> None:
@@ -123,11 +120,20 @@ def test_no_secret_key_in_a_builder(
 ) -> None:
     build(cli, context, release(dist, name, frozen))
     call = builder_call(runner)
-    assert '/gnupghome' not in call.targets
-    assert not [m for m in call.mounts if m.source.name.startswith('GNUPG_HOME.')]
+    assert '/secret' not in call.targets
+    assert not [m for m in call.mounts if m.source.name.startswith('distropack-sign.')]
 
 
-@pytest.mark.parametrize(('dist', 'name'), [('debian', 'trixie'), ('fedora', '44')])
+def test_tools_run_as_the_runner_chooses_in_a_run(run_main: Callable[..., int]) -> None:
+    """aptly and rpm_sign run as the runner chooses; only builder images run as root."""
+    runner = FakeRunner(rpm_builds())
+    assert run_main(runner, {'fedora': ['44'], 'debian': ['trixie']}, ['hello-undeclared']) == 0
+    tools = [c for c in runner.calls if '_builder:' not in c.image]
+    assert {c.image.rsplit('/', 1)[1].split(':')[0] for c in tools} == {'aptly', 'rpm_sign'}
+    assert not [c for c in tools if c.as_root]
+
+
+@pytest.mark.parametrize(('dist', 'name'), [('debian', 'trixie')])
 def test_tools_run_as_the_runner_chooses(
     cli: ModuleType,
     context: BuildContext,
@@ -277,33 +283,50 @@ def test_work_directory_removed(
     assert list(temp.iterdir()) == []
 
 
-def rpm_builds(fail_on: tuple[str, str] | None = None) -> Callable[[Call], RunResult | None]:
-    """Builders that write an rpm, but for fail_on, a (package, image tag) pair."""
+# A real rpm, which the fake builders copy under the name of what they build: the repository
+# metadata is read from it.
+RPM = (
+    Path(__file__).parents[2]
+    / 'packages/distropack-builder/tests/data/rpms'
+    / 'hello-lib-1.0-1.fc44.noarch.rpm'
+).read_bytes()
+
+
+def rpm_builds(
+    fail_on: tuple[str, str] | None = None, junk_on: str | None = None
+) -> Callable[[Call], RunResult | None]:
+    """Builders that write an rpm, but for fail_on, a (package, image tag) pair.
+
+    On the release junk_on, they write a file that is not an rpm, for its publication to fail.
+    """
 
     def respond(call: Call) -> RunResult | None:
-        if call.is_build:
+        if call.is_build and '/output' in call.targets:  # an rpm builder
             tag = call.image.rpartition(':')[2].removesuffix(f'-p{PROTOCOL}')
             output = call.targets['/output'].source
             package = output.parent.name.split('.')[0]
             if (package, tag) == fail_on:
                 raise ContainerFailed(1, [call.image], output='the build broke')
-            (output / f'{package}-1.0-1.fc{tag}.noarch.rpm').touch()
+            rpm = output / f'{package}-1.0-1.fc{tag}.noarch.rpm'
+            rpm.write_bytes(b'not an rpm' if tag == junk_on else RPM)
             return None
         return tools_respond(call)
 
     return respond
 
 
-def createrepo_dirs(runner: FakeRunner) -> list[str]:
-    return [c.targets['/data'].source.name for c in runner.calls if 'createrepo_c' in c.args]
+def indexed(project: Path) -> list[str]:
+    """The Fedora releases whose repository metadata the run wrote."""
+    fedora = project / 'repositories' / 'fedora'
+    return sorted(d.name for d in fedora.iterdir() if (d / 'repodata' / 'repomd.xml').is_file())
 
 
-def test_failing_release_publishes_nothing(run_main: Callable[..., int]) -> None:
+def test_failing_release_publishes_nothing(run_main: Callable[..., int], tmp_path: Path) -> None:
     """hello-undeclared builds on 44, but hello-needs-root does not: 44 is not published."""
     runner = FakeRunner(rpm_builds(fail_on=('hello-needs-root', '44')))
     packages = ['hello-undeclared', 'hello-needs-root']
     assert run_main(runner, {'fedora': ['43', '44']}, packages) == 1
-    assert createrepo_dirs(runner) == ['43']
+    assert indexed(tmp_path / 'project') == ['43']
 
 
 @pytest.mark.parametrize('exists', [True, False])
@@ -337,21 +360,15 @@ def test_readme_keeps_failed_release_with_repository(
 
 
 def test_failed_publication_spares_others(
-    run_main: Callable[..., int], capsys: pytest.CaptureFixture[str]
+    run_main: Callable[..., int], tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    builds = rpm_builds()
-
-    def respond(call: Call) -> RunResult | None:
-        if 'createrepo_c' in call.args and call.targets['/data'].source.name == '43':
-            raise ContainerFailed(1, [call.image, *call.args], output='createrepo broke')
-        return builds(call)
-
-    runner = FakeRunner(respond)
+    """The metadata of 43 cannot be written (its package is no rpm): 44 is still published."""
+    runner = FakeRunner(rpm_builds(junk_on='43'))
     assert run_main(runner, {'fedora': ['43', '44']}, ['hello-undeclared']) == 1
-    assert sorted(createrepo_dirs(runner)) == ['43', '44']
+    assert indexed(tmp_path / 'project') == ['44']
     out = capsys.readouterr().out
     assert 'publication failed for Fedora 43:' in out
-    assert 'createrepo broke' in out
+    assert 'rpmReadPackageFile' in out
 
 
 def test_sigterm_cancels(
@@ -497,3 +514,38 @@ def test_failed_query_fails_its_package_only(
     assert [c for c in runner.calls if c.build_of('hello-undeclared')]
     assert not [c for c in runner.calls if c.build_of('hello-needs-root')]
     assert 'Unknown tag: Bogus' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('outcome', ['success', 'failure'])
+def test_rpm_sign_secret_removed(
+    run_main: Callable[..., int], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    """rpm_sign gets the locked key and its passphrase read-only, for its call alone."""
+    secrets: list[Path] = []
+    builds = rpm_builds()
+
+    def respond(call: Call) -> RunResult | None:
+        if 'rpm_sign:' in call.image:
+            secret = call.targets['/secret']
+            assert secret.read_only
+            assert sorted(p.name for p in secret.source.iterdir()) == ['key', 'passphrase']
+            secrets.append(secret.source)
+            if outcome == 'failure':
+                raise ContainerFailed(1, [call.image])
+        return builds(call)
+
+    runner = FakeRunner(respond)
+    status = run_main(runner, {'fedora': ['44']}, ['hello-undeclared'])
+    assert status == (0 if outcome == 'success' else 1)
+    assert secrets and not [s for s in secrets if s.exists()]
+    for call in runner.calls:
+        assert FIXTURE_PASSPHRASE not in ' '.join(call.args)
+        assert FIXTURE_PASSPHRASE not in ' '.join(call.env.values())
+
+
+def test_no_gpg_tool_images(run_main: Callable[..., int]) -> None:
+    runner = FakeRunner(rpm_builds())
+    assert run_main(runner, {'fedora': ['44'], 'debian': ['trixie']}, ['hello-undeclared']) == 0
+    images = {c.image.rsplit('/', 1)[1].split(':')[0] for c in runner.calls}
+    assert not images & {'gpg2', 'rpm_tools', 'deb_tools'}
+    assert {'rpm_sign', 'aptly'} <= images
