@@ -49,7 +49,10 @@ class Engine:
             docker.errors.DockerException: the engine does not answer.
         """
         url = endpoint.resolve(
-            override, os.environ, endpoint.current_context_host(), lambda p: Path(p).exists()
+            override,
+            os.environ,
+            endpoint.current_context_host(os.environ),
+            lambda p: Path(p).exists(),
         )
         client = docker.DockerClient(base_url=url)
         return cls(client, is_rootless(client.info()))

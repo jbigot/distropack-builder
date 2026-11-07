@@ -83,9 +83,13 @@ def resolve(
     raise EngineNotFound([f'unix://{socket}' for socket in sockets])
 
 
-def current_context_host() -> str | None:
-    """The endpoint of the current Docker context, `None` when it is the default one."""
-    context = ContextAPI.get_current_context()
+def current_context_host(environ: Mapping[str, str]) -> str | None:
+    """The endpoint of the current Docker context, `None` when it is the default one.
+
+    The current context is `DOCKER_CONTEXT`'s when it is set, the configuration's otherwise, as
+    for the docker CLI (docker-py's `get_current_context` reads only the configuration).
+    """
+    context = ContextAPI.get_context(environ.get('DOCKER_CONTEXT') or None)
     if context is None or context.name == 'default':
         return None
     host: str | None = context.Host

@@ -22,8 +22,8 @@ rootful or rootless. It talks to the first of these that applies:
 
 1. the `--docker-host` option, or `DISTROPACK_DOCKER_HOST`;
 2. `DOCKER_HOST`;
-3. the current Docker context, when it is not `default` (rootless Docker is usually reached this
-   way);
+3. the current Docker context, `DOCKER_CONTEXT`'s or else the one `docker context use` chose, when
+   it is not `default` (rootless Docker is usually reached this way);
 4. Docker's socket, `/var/run/docker.sock`, if it exists;
 5. Podman's socket, `$XDG_RUNTIME_DIR/podman/podman.sock`, if it exists.
 

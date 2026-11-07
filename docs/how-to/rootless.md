@@ -6,8 +6,8 @@ included, has the invoking user's privileges, and what it writes belongs to that
 ## Rootless Docker
 
 Install it as Docker documents (`dockerd-rootless-setuptool.sh install`). The installer creates a
-`rootless` Docker context: once it is the current one (`docker context use rootless`), the builder
-finds the engine with no setting. Otherwise, point it there:
+`rootless` Docker context: once it is the current one (`docker context use rootless`, or
+`DOCKER_CONTEXT=rootless`), the builder finds the engine with no other setting. Otherwise, point it there:
 
 ```sh
 export DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock

@@ -1,11 +1,18 @@
 """Which engine the builder talks to."""
 
+import hashlib
+import json
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
-from distropack_builder.docker.endpoint import EngineNotFound, RemoteEndpoint, resolve
+from distropack_builder.docker.endpoint import (
+    EngineNotFound,
+    RemoteEndpoint,
+    current_context_host,
+    resolve,
+)
 
 DEFAULT = 'unix:///var/run/docker.sock'
 PODMAN = 'unix:///run/user/1000/podman/podman.sock'
@@ -73,3 +80,45 @@ def test_path_check_uses_paths() -> None:
     with pytest.raises(EngineNotFound):
         resolve(None, ENV, None, record)
     assert seen == [Path('/var/run/docker.sock'), Path('/run/user/1000/podman/podman.sock')]
+
+
+def docker_config(tmp_path: Path, current: str | None, **contexts: str) -> Path:
+    """A docker CLI configuration directory: its current context, and each context's host."""
+    # Always written: without it, docker-py falls back to the invoking user's configuration.
+    (tmp_path / 'config.json').write_text(
+        json.dumps({'currentContext': current} if current else {})
+    )
+    for name, host in contexts.items():
+        meta = tmp_path / 'contexts' / 'meta' / hashlib.sha256(name.encode()).hexdigest()
+        meta.mkdir(parents=True)
+        endpoints = {'docker': {'Host': host, 'SkipTLSVerify': False}}
+        (meta / 'meta.json').write_text(
+            json.dumps({'Name': name, 'Metadata': {}, 'Endpoints': endpoints})
+        )
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    ('current', 'variable', 'expected'),
+    [
+        (None, None, None),
+        ('used', None, 'unix:///used.sock'),
+        ('used', 'chosen', 'unix:///chosen.sock'),
+        (None, 'chosen', 'unix:///chosen.sock'),
+        ('used', 'default', None),
+    ],
+)
+def test_current_context_as_the_cli_reads_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    current: str | None,
+    variable: str | None,
+    expected: str | None,
+) -> None:
+    """DOCKER_CONTEXT wins over the configuration's current context, as for the docker CLI."""
+    config = docker_config(
+        tmp_path, current, used='unix:///used.sock', chosen='unix:///chosen.sock'
+    )
+    monkeypatch.setenv('DOCKER_CONFIG', str(config))
+    environ = {} if variable is None else {'DOCKER_CONTEXT': variable}
+    assert current_context_host(environ) == expected
