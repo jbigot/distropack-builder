@@ -9,7 +9,7 @@ declares and the host needs nothing but a container engine.
 |---|---|---|
 | the builders | `<distribution>_builder:<release>` | the target release's own `dpkg-buildpackage` or `rpmbuild`, after installing the build dependencies |
 | GPG | `gpg2` | key import and listing, signatures |
-| deb tools | `deb_tools` | `dpkg-source`, `mk-build-deps`, `debsign`, `aptly` |
+| deb tools | `deb_tools` | `mk-build-deps`, `debsign`, `aptly` |
 | rpm tools | `rpm_tools` | `rpmspec`, `createrepo_c`, `rpmsign` |
 
 Later versions move the signatures and the repository metadata out of containers, into Python
@@ -52,5 +52,6 @@ isolation of a build rests on the container itself. Every container also gets an
 process limit, since Podman's default throttles parallel builds, and a fully qualified image
 reference, since Podman may ask which registry a short name means.
 
-Containers are labelled `distropack-builder=1`. Interrupting a run kills its containers, and every
-container is removed once it ends, whether it succeeded, failed or was killed.
+Containers are labelled `distropack-builder=1`. Interrupting a run, with Ctrl-C or SIGTERM, kills
+its containers, and every container is removed once it ends, whether it succeeded, failed or was
+killed.

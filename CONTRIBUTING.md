@@ -34,7 +34,10 @@ those lists only shrink.
 Rootless Docker and rootless Podman work for `golden` and `e2e` as rootful Docker does.
 The golden master itself is recorded on a rootful engine, the one of GitHub's runners.
 The orchestration tests (`tests/orchestration/`) replace the runner with `tests/fake_runner.py`'s
-`FakeRunner`, so that they check what the builders ask of the engine without running anything.
+`FakeRunner`, so that they check what the builders ask of the engine without running anything. They
+build a builder on a `BuildContext` holding the fake, or run the whole of `main(runner=...,
+connect=...)` on a copy of the fixture project, the upstream tarball served by respx;
+`tools_respond` answers the tool containers such a run asks for.
 
 The tests of `distro-releases` live in `packages/distro-releases/tests/`, with the release data they
 and the root `tests/` read, recorded under `data/` by `record.py` (run by hand, with the network). That
