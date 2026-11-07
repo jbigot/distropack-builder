@@ -116,13 +116,21 @@ def qualified(image: str) -> str:
     return image if tag else f'{repository}:latest'
 
 
-def _create(engine: Engine, image: str, **options: Any) -> Container:
-    """The container, created after pulling its image if the engine does not have it."""
+def _create(engine: Engine, image: str, cancellation: Cancellation, **options: Any) -> Container:
+    """The container, created after pulling its image if the engine does not have it.
+
+    Raises:
+        Cancelled: the cancellation came while the image was pulled.
+    """
     try:
         return engine.client.containers.create(image, **options)
     except docker.errors.ImageNotFound:
         repository, tag = parse_repository_tag(image)
-        engine.client.images.pull(repository, tag=tag)
+        # Streamed, so that a cancellation is seen at the next progress event; the engine finishes
+        # the pull on its own.
+        for _ in engine.client.api.pull(repository, tag=tag, stream=True, decode=True):
+            if cancellation.cancelled:
+                raise Cancelled() from None
         return engine.client.containers.create(image, **options)
 
 
@@ -179,6 +187,7 @@ def run(
     container = _create(
         engine,
         image,
+        cancellation,
         command=list(args),
         mounts=[
             docker.types.Mount(m.target, str(m.source), type='bind', read_only=m.read_only)
