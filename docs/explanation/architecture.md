@@ -58,9 +58,10 @@ one: upgrading a system to the next release upgrades the package too. The last p
 seconds from the changelog entry's date to the build, so that a later rebuild of the same entry
 sorts after an earlier one.
 
-Ctrl-C and SIGTERM (`kill`, `timeout`, a cancelled CI job) take the same path: no build starts any
-more, the containers of those running are killed, nothing is published, and the run's work
-directory is removed.
+Ctrl-C and SIGTERM (`kill`, `timeout`, a cancelled CI job) take the same path: no build or download
+starts any more, the containers of the builds running are killed, nothing is published, the run's
+work directory is removed, and the run ends with Python's `KeyboardInterrupt`. A download stalled
+on the network ends at its 30-second timeout, without a retry.
 
 ## Publication
 
@@ -73,8 +74,7 @@ The README of a distribution lists the releases this run published, and those it
 whose previous repository is still in the output directory. A distribution of which no release is
 published is left untouched, its README and exported key included.
 
-The run exits with status 1 when a build failed, was skipped or was interrupted, or when a
-publication failed.
+The run exits with status 1 when a build failed or was skipped, or when a publication failed.
 
 ## The report
 
@@ -88,4 +88,4 @@ When `GITHUB_ACTIONS` is `true`, each build is printed as one collapsed group of
 output included, and a table of every build's outcome is appended to the job's summary
 (`GITHUB_STEP_SUMMARY`).
 
-The run ends with the list of the builds that did not succeed.
+Unless interrupted, the run ends with the list of the builds that did not succeed.

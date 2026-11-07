@@ -459,7 +459,9 @@ class DebPackageBuilder(PackageBuilder):
         # Put the downloaded orig file in place
         orig = self._orig()
         if orig is not None:
-            name = orig_name(changelog.package, changelog.upstream_version, orig, files[orig])
+            # the upstream version of the entry packaged, not of the rebuild's new one
+            upstream = self._changelog.upstream_version
+            name = orig_name(changelog.package, upstream, orig, files[orig])
             link_or_copy(files[orig], pkg_dir / name)
 
         # Generate the dependencies .deb

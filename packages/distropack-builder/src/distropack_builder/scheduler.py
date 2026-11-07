@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Hashable, Mapping, Set
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from contextlib import suppress
 from dataclasses import dataclass
 from graphlib import TopologicalSorter
 
@@ -74,7 +75,7 @@ def schedule[T: Hashable](
     Raises:
         graphlib.CycleError: the graph has a cycle; no work ran.
         KeyboardInterrupt: it came while waiting; the cancellation was set, and the work in
-            progress ended, before it propagated.
+            progress ended, before it propagated. So does any exception a callback raises.
     """
     sorter = TopologicalSorter(graph)
     sorter.prepare()
@@ -112,13 +113,16 @@ def schedule[T: Hashable](
                     node = running.pop(future)
                     finish(node, _outcome(future))
                     sorter.done(node)
-        except KeyboardInterrupt:
+        except BaseException:
+            # Ctrl-C, or a callback that raised: the work in progress is cancelled, not awaited
             cancellation.cancel()
             pool.shutdown(cancel_futures=True)
-            for future, node in running.items():
-                finish(node, _outcome(future))
-            for node in graph.keys() - outcomes.keys():
-                finish(node, Interrupted())
+            # a callback that raised may raise again: the original exception is the one to tell
+            with suppress(Exception):
+                for future, node in running.items():
+                    finish(node, _outcome(future))
+                for node in graph.keys() - outcomes.keys():
+                    finish(node, Interrupted())
             raise
     return outcomes
 

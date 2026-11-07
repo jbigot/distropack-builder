@@ -51,6 +51,8 @@ def _transient(error: Exception) -> bool:
 
 @stamina.retry(on=_transient, attempts=ATTEMPTS)
 def _attempt(client: httpx.Client, url: str, path: Path, cancellation: Cancellation) -> None:
+    if cancellation.cancelled:  # Cancelled is not transient: no retry after it
+        raise Cancelled()
     with client.stream('GET', url) as response:
         response.raise_for_status()
         with path.open('wb') as file:

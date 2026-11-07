@@ -375,3 +375,17 @@ def test_sigterm_cancels(
     ]
     assert list(temp.iterdir()) == []
     assert signal.getsignal(signal.SIGTERM) == previous
+
+
+def test_orig_named_after_upstream_version(run_main: Callable[..., int]) -> None:
+    """The upstream tarball is named from the changelog, not from the rebuild's version."""
+    sources: list[list[str]] = []
+
+    def respond(call: Call) -> RunResult | None:
+        if call.build_of('hello-lib'):
+            sources.append(sorted(p.name for p in call.targets['/src'].source.iterdir()))
+        return tools_respond(call)
+
+    runner = FakeRunner(respond)
+    assert run_main(runner, {'debian': ['trixie', 'forky']}, ['hello-lib']) == 0
+    assert sources == [['hello-lib-1.0', 'hello-lib_1.0.orig.tar.gz']] * 2

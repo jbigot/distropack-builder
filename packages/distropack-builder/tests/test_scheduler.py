@@ -149,3 +149,30 @@ def test_keyboard_interrupt_finishes_every_node() -> None:
             on_finish=finished.__setitem__,
         )
     assert finished == {'a': Interrupted(), 'b': Interrupted()}
+
+
+def test_callback_error_cancels_and_drains() -> None:
+    """A callback that raises cancels the run before waiting for the work in progress."""
+    cancellation = Cancellation()
+
+    def work(node: str) -> None:
+        deadline = time.monotonic() + 5
+        while not cancellation.cancelled and time.monotonic() < deadline:
+            time.sleep(0.01)
+        raise Cancelled()
+
+    def on_start(node: str) -> None:
+        if node == 'b':
+            raise RuntimeError('broken pipe')
+
+    start = time.monotonic()
+    with pytest.raises(RuntimeError):
+        schedule(
+            {'a': set(), 'b': set()},
+            work,
+            jobs=2,
+            cancellation=cancellation,
+            on_start=on_start,
+        )
+    assert time.monotonic() - start < 2
+    assert cancellation.cancelled

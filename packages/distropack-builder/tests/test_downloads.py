@@ -131,3 +131,17 @@ def test_keyboard_interrupt_cancels(tmp_path: Path) -> None:
         fetch(URL, directory=tmp_path, cancellation=cancellation)
     assert time.monotonic() - start < 2
     assert cancellation.cancelled
+
+
+@respx.mock
+def test_cancel_stops_retries(tmp_path: Path) -> None:
+    cancellation = Cancellation()
+
+    def unavailable(request: httpx.Request) -> httpx.Response:
+        cancellation.cancel()
+        return httpx.Response(503)
+
+    route = respx.get(URL).mock(side_effect=unavailable)
+    with pytest.raises(Cancelled):
+        fetch(URL, directory=tmp_path, cancellation=cancellation)
+    assert route.call_count == 1
