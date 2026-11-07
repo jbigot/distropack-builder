@@ -24,6 +24,8 @@ def engine() -> Engine:
     try:
         return Engine.connect()
     except Exception as error:  # no engine is a reason to skip, whatever docker-py raises
+        if os.environ.get('DISTROPACK_TEST_ENGINE'):
+            pytest.fail(f'no container engine, although DISTROPACK_TEST_ENGINE names one: {error}')
         pytest.skip(f'no container engine: {error}')
 
 

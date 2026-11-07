@@ -77,26 +77,36 @@ jobs:
       if: matrix.engine == 'docker-rootless'
       shell: bash
       run: |
+        start=$SECONDS
         # Ubuntu 24.04 restricts the unprivileged user namespaces rootlesskit needs.
         sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-        if ! command -v dockerd-rootless-setuptool.sh; then
-          sudo apt-get install -y docker-ce-rootless-extras
-        fi
-        sudo apt-get install -y uidmap
-        start=$SECONDS
-        dockerd-rootless-setuptool.sh install --force
-        echo "rootless Docker set up in $((SECONDS - start)) s"
+        # The runner image installs Docker without its recommended rootless extras, then drops Docker's
+        # apt source: take the static extras of the very same version instead.
+        version=$(dockerd --version | sed -E 's/^Docker version ([^,]+),.*$/\1/')
+        curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-rootless-extras-$version.tgz" \
+          | tar -xz -C "$RUNNER_TEMP"
+        export PATH="$RUNNER_TEMP/docker-rootless-extras:$PATH"
+        grep -q "^$(id -un):" /etc/subuid || sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "$(id -un)"
+        # Started by hand: the runner's session has no systemd user manager to run it as a service.
+        nohup dockerd-rootless.sh > "$RUNNER_TEMP/engine.log" 2>&1 &
         echo "DOCKER_HOST=unix://$XDG_RUNTIME_DIR/docker.sock" >> "$GITHUB_ENV"
+        timeout 120 sh -c "until docker -H unix://$XDG_RUNTIME_DIR/docker.sock info > /dev/null 2>&1; do sleep 1; done"
+        echo "rootless Docker set up in $((SECONDS - start)) s"
     - name: Podman, alone
       if: matrix.engine == 'podman'
       shell: bash
       run: |
-        # Rootful Docker's socket goes, so that the builder has to find Podman's by itself.
+        # Rootful Docker goes, socket file included (systemd leaves it behind), so that the builder
+        # has to find Podman's socket by itself.
         sudo systemctl stop docker.service docker.socket
+        sudo rm -f /var/run/docker.sock
         mkdir -p "$XDG_RUNTIME_DIR/podman"
-        nohup podman system service --time=0 "unix://$XDG_RUNTIME_DIR/podman/podman.sock" > /dev/null 2>&1 &
-        until [ -S "$XDG_RUNTIME_DIR/podman/podman.sock" ]; do sleep 0.2; done
+        nohup podman system service --time=0 "unix://$XDG_RUNTIME_DIR/podman/podman.sock" > "$RUNNER_TEMP/engine.log" 2>&1 &
+        timeout 60 sh -c "until [ -S $XDG_RUNTIME_DIR/podman/podman.sock ]; do sleep 0.2; done"
     - run: uv run --python 3.13 pytest -m docker -rs -v
+    - name: Engine log
+      if: failure() && matrix.engine != 'docker'
+      run: cat "$RUNNER_TEMP/engine.log"
   docs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
