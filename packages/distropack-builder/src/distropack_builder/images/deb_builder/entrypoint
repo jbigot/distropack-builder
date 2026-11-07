@@ -28,7 +28,10 @@ set +e
 . /etc/profile
 set -e
 
-bgrun dpkg-buildpackage "$@"
+# the build itself as an unprivileged user, as the archives build: packaging that needs root fails
+chown -R builder:builder /tmp/src
+bgrun setpriv --reuid=builder --regid=builder --init-groups \
+	env HOME=/home/builder dpkg-buildpackage -rfakeroot "$@"
 
 chown -R "$(stat -c '%u:%g' /src)" /tmp/src
 find /tmp/src -maxdepth 1 -type f -execdir mv -t /src -- '{}' '+'

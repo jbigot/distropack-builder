@@ -19,10 +19,12 @@ RUN export DEBIAN_FRONTEND=noninteractive \
  && apt-get install -y --no-install-recommends \
     build-essential \
     eatmydata \
+    fakeroot \
     tini \
  && apt-get dist-upgrade -y \
  && apt-get clean \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --create-home builder
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/bin/bash", "-l", "/entrypoint"]
 ENV DIST_CODENAME="${DIST_CODENAME}"

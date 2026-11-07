@@ -30,9 +30,11 @@ def test_undeclared_tool_fails(
 
 
 @pytest.mark.e2e
-@pytest.mark.xfail(strict=True, reason='builds run as root until Phase 6')
 @pytest.mark.parametrize('dist,rel', RELEASES)
 def test_needs_root_fails(
     docker_engine: None, project: Project, run_pkgbuild: RunPkgbuild, dist: str, rel: str
 ) -> None:
-    assert run_pkgbuild(project({dist: [rel]}, ['hello-needs-root'])).returncode != 0
+    result = run_pkgbuild(project({dist: [rel]}, ['hello-needs-root']))
+    assert result.returncode != 0
+    # the build user may not write into /usr: only that error proves the build ran unprivileged
+    assert re.search(r'hello-needs-root-stamp.*Permission denied', result.stdout), result.stdout

@@ -25,6 +25,8 @@ RUN EXTRA_PKGS="" \
     'dnf-command(builddep)' \
     openssl \
     rpm-build \
+    shadow-utils \
+    util-linux \
     ${EXTRA_PKGS} \
  && if [ -n "${EXTRA_REPOS}" ] \
   ; then \
@@ -34,7 +36,8 @@ RUN EXTRA_PKGS="" \
   ; fi \
  && dnf upgrade -y \
  && dnf clean all -y --enablerepo='*' \
- && rm -f /*.log ${HOME}/*
+ && rm -f /*.log ${HOME}/* \
+ && useradd --create-home builder
 
 ENTRYPOINT ["/bin/bash", "-l", "/entrypoint"]
 

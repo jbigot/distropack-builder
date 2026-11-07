@@ -54,15 +54,18 @@ set +e
 . /etc/profile
 set -e
 
-mkdir -p "/tmp/BUILD" "/tmp/output" "/tmp/output/src"
-rpmbuild \
-	--define "_topdir    /tmp" \
+# the build itself as an unprivileged user, as the archives build: packaging that needs root fails
+cp -a /src /tmp/src
+mkdir -p "/tmp/build/BUILD" "/tmp/output" "/tmp/output/src"
+chown -R builder:builder /tmp/src /tmp/build /tmp/output
+setpriv --reuid=builder --regid=builder --init-groups env HOME=/home/builder rpmbuild \
+	--define "_topdir    /tmp/build" \
 	--define "_tmppath   %{_topdir}" \
 	--define "_builddir  %{_topdir}/BUILD" \
-	--define "_sourcedir /src" \
-	--define "_specdir   /src" \
+	--define "_sourcedir /tmp/src" \
+	--define "_specdir   /tmp/src" \
 	--define "_rpmdir    /tmp/output" \
 	--define "_srcrpmdir %{_rpmdir}/src" \
-	-ba /src/*.spec
+	-ba /tmp/src/*.spec
 chown -R $(stat -c '%u:%g' /src) /tmp/output
 find /tmp/output -type f -name '*.rpm' -execdir mv -t /output -- '{}' '+'
