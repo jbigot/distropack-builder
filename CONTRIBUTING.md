@@ -23,26 +23,31 @@ those lists only shrink.
 |---|---|---|
 | unit | `uv run pytest` | nothing: no network, recorded release data, a fixed date |
 | `packaging` | `uv run pytest -m packaging` | git, uv and PyPI: it builds the packages from synthetic repositories and archives |
-| `golden` | `uv run pytest -m golden` | a Docker engine and the images the checkout bakes (below): it compares the repositories built for the fixture project with the recorded golden master |
 | `e2e` | `uv run pytest -m e2e` | a Docker engine and the images the checkout bakes (below): it builds the fixture project and installs from its repositories |
 | `docker` | `uv run pytest -m docker` | a container engine (Docker or Podman, rootful or rootless) and `docker.io/library/alpine`: it runs containers through the runner; CI runs it on rootful Docker, rootless Docker and rootless Podman |
 | `live` | `uv run pytest -m live` | the network: it reads the real release sources of distro-releases (the nightly `Live canary` workflow, which opens an issue labelled `live-canary` when it fails) |
 
-`.python-version` makes 3.13 the default interpreter, the one the golden master is recorded with;
+`.python-version` makes 3.13 the default interpreter, the one CI's `e2e` and `packaging` jobs use;
 `uv run --python 3.12 pytest` runs the unit tests on another one, as the CI matrix does.
 
-`golden` and `e2e` run the images of the checkout, not those the registry publishes from `main`:
+`e2e` runs the images of the checkout, not those the registry publishes from `main`:
 bake them into the local engine first, with `uv run python tests/bake_fixture_images.py` (the
 fixture's builders and the tools; Docker buildx needed). The runner asks for each image's protocol
 tag, which the local image answers without a pull.
 
-Rootless Docker and rootless Podman work for `golden` and `e2e` as rootful Docker does.
-The golden master itself is recorded on a rootful engine, the one of GitHub's runners.
+Rootless Docker and rootless Podman work for `e2e` as rootful Docker does.
+
+`tests/golden/` holds what remains of the golden master that compared the fixture project's
+repositories with those master's code built, retired once the builder was rewritten: the
+normalization of a repository, and master's Rocky Linux 10 repository so normalized, the reference
+of the el repository to come.
+
 The orchestration tests (`tests/orchestration/`) replace the runner with `tests/fake_runner.py`'s
 `FakeRunner`, so that they check what the builders ask of the engine without running anything. They
-build a builder on a `BuildContext` holding the fake, or run the whole of `main(runner=...,
-connect=...)` on a copy of the fixture project, the upstream tarball served by respx;
-`tools_respond` answers the tool containers such a run asks for.
+build a builder on a `BuildContext` holding the fake, or run the whole command line,
+`cli.make_app(runner=..., connect=...)` under typer's `CliRunner`, on a copy of the fixture project,
+the upstream tarball served by respx; `tools_respond` answers the tool containers such a run asks
+for.
 
 The tests of `distro-releases` live in `packages/distro-releases/tests/`, with the release data they
 and the root `tests/` read, recorded under `data/` by `record.py` (run by hand, with the network). That

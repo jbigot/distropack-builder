@@ -1,4 +1,4 @@
-"""Unit tests of the golden-master normalization, on synthetic aptly and createrepo trees."""
+"""Unit tests of the normalization kept from the golden master, on synthetic repositories."""
 
 import gzip
 import subprocess

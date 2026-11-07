@@ -1,7 +1,7 @@
 """The built repositories install in clean containers, with their signatures checked.
 
-The golden master verifies the signatures itself; this checks that apt and dnf accept the
-repositories as their users configure them, and refuse them once tampered with.
+This checks that apt and dnf accept the repositories as their users configure them, signatures
+checked, and refuse them once tampered with.
 """
 
 import shutil

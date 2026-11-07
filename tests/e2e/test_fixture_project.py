@@ -1,4 +1,4 @@
-"""The fixture project is rendered and served as the e2e and golden tests expect."""
+"""The fixture project is rendered and served as the e2e tests expect."""
 
 import tarfile
 import urllib.request

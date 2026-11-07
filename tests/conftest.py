@@ -210,7 +210,7 @@ def fixture_build(
 ) -> Path:
     """hello-lib and hello-app built once per session for FIXTURE_RELEASES; the project directory.
 
-    Shared by the golden-master and install tests, so that one run builds the fixture once.
+    Shared by the install tests, so that one run builds the fixture once.
     """
     project_dir = make_project(
         tmp_path_factory.mktemp('fixture-build') / 'project',

@@ -6,6 +6,10 @@ metadata files. normalize_repository() keeps everything else: the files publishe
 stanzas, the releases and the files they list, the dependencies, the file lists, the generated
 README and .repo files, which key made each repository signature and whether it verifies against
 the key the repository publishes, and the key packets of that published key.
+
+The golden master that compared the fixture project's repositories with master's is retired (Phase
+7 of the modernization). This module stays, with data/rocky-master.json, master's Rocky Linux 10
+repository so reduced, for Phase 10 to compare its el repository with.
 """
 
 import bz2
