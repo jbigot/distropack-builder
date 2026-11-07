@@ -11,6 +11,7 @@ from os import cpu_count, link
 from pathlib import Path
 import re
 from shutil import copy2, copytree, rmtree
+import signal
 from subprocess import CalledProcessError
 import sys
 from sys import stderr
@@ -41,6 +42,7 @@ from distropack_builder.docker import run as run_container
 from distropack_builder.docker.endpoint import EngineNotFound, RemoteEndpoint
 from distropack_builder.downloads import DownloadFailed, fetch_all, orig_name, source_name
 from distropack_builder.graph import closure, dependencies
+from distropack_builder.publication import published
 from distropack_builder.report import Reporter, build_logger, github_mode
 from distropack_builder.scheduler import Succeeded, schedule
 from distropack_builder.versions import deb_version
@@ -358,6 +360,12 @@ class PackageBuilder:
     def _build(self, wk_dir: Path, deps, files):
         raise NotImplementedError
 
+    def _local_repository(self, family, localrepo: Path, deps):
+        """The repository of the outputs of deps, at localrepo, for the builder container."""
+        failures = family(self._context, localrepo, self._gpg, logger=self.logger).build(deps)
+        for error in failures.values():
+            raise error
+
 
 class DebPackageBuilder(PackageBuilder):
     family = 'deb'
@@ -465,7 +473,7 @@ class DebPackageBuilder(PackageBuilder):
 
         # Build a repo with all dependencies
         localrepo = wk_dir / 'repo'
-        DebRepoBuilder(self._context, localrepo, self._gpg, logger=self.logger).build(deps)
+        self._local_repository(DebRepoBuilder, localrepo, deps)
 
         # Build the package in docker
         DockerContainer(self._context, builder_image(self.dist_release), self.logger)(
@@ -518,14 +526,28 @@ class DebRepoBuilder:
         self._readme_tpl = readme_tpl
         self._deb_tools = DebTools(context, gpg, logger)
 
-    def build(self, pkgs: Iterable[DebPackageBuilder]):
-        pkgs = list(filter(lambda p: targets.is_deb(p.dist_release.distribution), pkgs))
+    def has_repository(self, dist_release: Release) -> bool:
+        """Whether the output directory has a repository of dist_release already."""
+        return (self._output_dir / 'dists' / dist_release.codename / 'Release').is_file()
 
+    def build(self, pkgs: Iterable[DebPackageBuilder], kept: AbstractSet[Release] = frozenset()):
+        """Publish the releases of pkgs, each on its own; the releases whose publication failed.
+
+        The README lists the releases published, and those of kept (left as they were) whose
+        repository is still there. Without a release to publish, nothing is touched.
+        """
+        pkgs = [
+            p
+            for p in pkgs
+            if targets.is_deb(p.dist_release.distribution)
+            and p.outdir is not None
+            and p.outdir.is_dir()
+        ]
         if len(pkgs) == 0:
-            return
+            return {}
 
-        distribs = set()
-        install = ''
+        published = []
+        failures = {}
         with TemporaryDirectory(prefix='PKGBAPTLY.', dir=self._context.workdir) as tmp_dir:
             tmp_dir = Path(tmp_dir)
 
@@ -559,59 +581,32 @@ class DebRepoBuilder:
                     + ([DockerBindMount('/data', data)] if data is not None else []),
                 )
 
-            repos = set()
-            for pkg in pkgs:
-                if pkg.outdir is None or not pkg.outdir.is_dir():
-                    continue
-                if pkg.dist_release not in repos:
-                    repos.add(pkg.dist_release)
-                    aptly('repo', 'create', pkg.dist_release.uid)
-                aptly(
-                    'repo',
-                    'include',
-                    '-keyring=/gnupghome/keyring.pgp',
-                    '-no-remove-files',
-                    '-repo=' + pkg.dist_release.uid,
-                    '/data',
-                    data=pkg.outdir,
-                )
-            repos = sorted(repos, key=str)
-            for dist_release in repos:
-                distribs.add(str(dist_release.distribution))
-                if self._readme_tpl is not None:
-                    with open(
-                        self._readme_tpl
-                        / ('INSTALL.' + str(dist_release.distribution.id) + '.tpl.html')
-                    ) as template_file:
-                        install += Template(template_file.read()).substitute(
-                            dist_release=str(dist_release),
-                            codename=str(dist_release.codename),
-                            baseurl=str(self._url),
-                        )
-                publish_repo = [
-                    'publish',
-                    'repo',
-                    '-batch',
-                    '-force-overwrite',
-                    '-gpg-key=' + self._gpg.keyid8(),
-                ]
-                if self._url is not None:
-                    publish_repo += ['-label=' + self._description, '-origin=' + self._name]
+            for dist_release in sorted({p.dist_release for p in pkgs}, key=str):
+                try:
+                    self._publish(
+                        aptly, dist_release, [p for p in pkgs if p.dist_release == dist_release]
+                    )
+                    published.append(dist_release)
+                except Exception as error:
+                    failures[dist_release] = error
 
-                # like the Debian archive, publish the release under its codename and under its
-                # suite, each Release file naming both so that apt accepts either in sources.list
-                names = ['-codename=' + dist_release.codename]
-                if dist_release.suite is not None:
-                    names.append('-suite=' + dist_release.suite)
-                for distribution in [dist_release.codename, dist_release.suite]:
-                    if distribution is not None:
-                        aptly(
-                            *publish_repo,
-                            *names,
-                            '-distribution=' + distribution,
-                            dist_release.uid,
-                            'filesystem:default:',
-                        )
+        if not published:
+            return failures
+        listed = set(published) | {r for r in set(kept) | failures.keys() if self.has_repository(r)}
+        distribs = set()
+        install = ''
+        for dist_release in sorted(listed, key=str):
+            distribs.add(str(dist_release.distribution))
+            if self._readme_tpl is not None:
+                with open(
+                    self._readme_tpl
+                    / ('INSTALL.' + str(dist_release.distribution.id) + '.tpl.html')
+                ) as template_file:
+                    install += Template(template_file.read()).substitute(
+                        dist_release=str(dist_release),
+                        codename=str(dist_release.codename),
+                        baseurl=str(self._url),
+                    )
 
         if self._url is not None:
             (self._output_dir / (self._name + '-archive-keyring.gpg')).unlink(missing_ok=True)
@@ -629,6 +624,44 @@ class DebRepoBuilder:
                             distribs=' '.join(list(distribs)), install=install
                         )
                     )
+        return failures
+
+    def _publish(self, aptly, dist_release: Release, pkgs):
+        aptly('repo', 'create', dist_release.uid)
+        for pkg in pkgs:
+            aptly(
+                'repo',
+                'include',
+                '-keyring=/gnupghome/keyring.pgp',
+                '-no-remove-files',
+                '-repo=' + dist_release.uid,
+                '/data',
+                data=pkg.outdir,
+            )
+        publish_repo = [
+            'publish',
+            'repo',
+            '-batch',
+            '-force-overwrite',
+            '-gpg-key=' + self._gpg.keyid8(),
+        ]
+        if self._url is not None:
+            publish_repo += ['-label=' + self._description, '-origin=' + self._name]
+
+        # like the Debian archive, publish the release under its codename and under its
+        # suite, each Release file naming both so that apt accepts either in sources.list
+        names = ['-codename=' + dist_release.codename]
+        if dist_release.suite is not None:
+            names.append('-suite=' + dist_release.suite)
+        for distribution in [dist_release.codename, dist_release.suite]:
+            if distribution is not None:
+                aptly(
+                    *publish_repo,
+                    *names,
+                    '-distribution=' + distribution,
+                    dist_release.uid,
+                    'filesystem:default:',
+                )
 
 
 class RpmPackageBuilder(PackageBuilder):
@@ -681,7 +714,7 @@ class RpmPackageBuilder(PackageBuilder):
         copy2(self._spec, spec)
 
         localrepo = wk_dir / 'repo'
-        RpmRepoBuilder(self._context, localrepo, self._gpg, logger=self.logger).build(deps)
+        self._local_repository(RpmRepoBuilder, localrepo, deps)
 
         for url in self._sources:
             link_or_copy(files[url], pkg_dir / source_name(url))
@@ -728,16 +761,29 @@ class RpmRepoBuilder:
             self._description = description if description is not None else self._name
         self._readme_tpl = readme_tpl
 
-    def build(self, pkgs: Iterable[RpmPackageBuilder]):
-        pkgs = list(filter(lambda p: targets.is_rpm(p.dist_release.distribution), pkgs))
+    def has_repository(self, dist_release: Release) -> bool:
+        """Whether the output directory has a repository of dist_release already."""
+        return (self._output_dir / dist_release.version / 'repodata' / 'repomd.xml').is_file()
+
+    def build(self, pkgs: Iterable[RpmPackageBuilder], kept: AbstractSet[Release] = frozenset()):
+        """Publish the releases of pkgs, each on its own; the releases whose publication failed.
+
+        The README lists the releases published, and those of kept (left as they were) whose
+        repository is still there. Without a release to publish, nothing is touched.
+        """
+        pkgs = [
+            p
+            for p in pkgs
+            if targets.is_rpm(p.dist_release.distribution)
+            and p.outdir is not None
+            and p.outdir.is_dir()
+        ]
         if len(pkgs) == 0:
-            return
+            return {}
 
         releases_set = set()
         self._output_dir.mkdir(parents=True, exist_ok=True)
         for pkg in pkgs:
-            if pkg.outdir is None or not pkg.outdir.is_dir():
-                continue
             release_dir = self._output_dir / pkg.dist_release.version
             release_dir.mkdir(parents=True, exist_ok=True)
             for file in pkg.outdir.iterdir():
@@ -745,10 +791,18 @@ class RpmRepoBuilder:
                     releases_set.add(pkg.dist_release)
                     rpmdir = release_dir / file.suffixes[-2][1:]
                     rpmdir.mkdir(exist_ok=True)
-                    try:
-                        link(file, rpmdir / file.name)
-                    except OSError:
-                        copy2(file, rpmdir / file.name)
+                    link_or_copy(file, rpmdir / file.name)
+
+        published = []
+        failures = {}
+        for dist_release in sorted(releases_set, key=str):
+            try:
+                self._publish(dist_release)
+                published.append(dist_release)
+            except Exception as error:
+                failures[dist_release] = error
+        if not published:
+            return failures
 
         if self._url is not None:
             (self._output_dir / (self._name + '.key')).unlink(missing_ok=True)
@@ -760,44 +814,21 @@ class RpmRepoBuilder:
                 mounts=[DockerBindMount('/data', self._output_dir)],
             )
 
+        listed = set(published) | {r for r in set(kept) | failures.keys() if self.has_repository(r)}
         install = ''
         distribs = set()
-        releases_set = sorted(releases_set, key=str)
-        for dist_release in releases_set:
-            release_dir = self._output_dir / dist_release.version
-
+        for dist_release in sorted(listed, key=str):
             distribs.add(str(dist_release.distribution))
-
-            self._rpm_tools.createrepo(release_dir)
-            (release_dir / 'repodata' / 'repomd.xml.asc').unlink(missing_ok=True)
-            self._gpg(
-                '-b', '-a', 'repodata/repomd.xml', mounts=[DockerBindMount('/data', release_dir)]
-            )
-            if self._url is not None:
-                baseurl = urljoin(self._url, dist_release.version)
-                repo_data = ConfigParser()
-                repo_data.add_section(self._name)
-                repo_data.set(
-                    self._name, 'name', self._description + ' (' + str(dist_release) + ')'
-                )
-                repo_data.set(self._name, 'type', 'rpm-md')
-                repo_data.set(self._name, 'baseurl', baseurl)
-                repo_data.set(self._name, 'gpgcheck', '1')
-                repo_data.set(self._name, 'repo_gpgcheck', '1')
-                repo_data.set(self._name, 'gpgkey', urljoin(self._url, self._name + '.key'))
-                repo_data.set(self._name, 'enabled', '1')
-                with (release_dir / (self._name + '.repo')).open('w') as repo_file:
-                    repo_data.write(repo_file, space_around_delimiters=False)
-                if self._readme_tpl is not None:
-                    with open(
-                        self._readme_tpl
-                        / ('INSTALL.' + str(dist_release.distribution.id) + '.tpl.html')
-                    ) as template_file:
-                        install += Template(template_file.read()).substitute(
-                            dist_release=str(dist_release),
-                            codename=str(dist_release.codename),
-                            baseurl=str(baseurl),
-                        )
+            if self._url is not None and self._readme_tpl is not None:
+                with open(
+                    self._readme_tpl
+                    / ('INSTALL.' + str(dist_release.distribution.id) + '.tpl.html')
+                ) as template_file:
+                    install += Template(template_file.read()).substitute(
+                        dist_release=str(dist_release),
+                        codename=str(dist_release.codename),
+                        baseurl=str(urljoin(self._url, dist_release.version)),
+                    )
 
         if self._readme_tpl is not None:
             with open(self._output_dir / 'README.html', mode='w') as readme_file:
@@ -807,6 +838,25 @@ class RpmRepoBuilder:
                             distribs=' '.join(list(distribs)), install=install
                         )
                     )
+        return failures
+
+    def _publish(self, dist_release: Release):
+        release_dir = self._output_dir / dist_release.version
+        self._rpm_tools.createrepo(release_dir)
+        (release_dir / 'repodata' / 'repomd.xml.asc').unlink(missing_ok=True)
+        self._gpg('-b', '-a', 'repodata/repomd.xml', mounts=[DockerBindMount('/data', release_dir)])
+        if self._url is not None:
+            repo_data = ConfigParser()
+            repo_data.add_section(self._name)
+            repo_data.set(self._name, 'name', self._description + ' (' + str(dist_release) + ')')
+            repo_data.set(self._name, 'type', 'rpm-md')
+            repo_data.set(self._name, 'baseurl', urljoin(self._url, dist_release.version))
+            repo_data.set(self._name, 'gpgcheck', '1')
+            repo_data.set(self._name, 'repo_gpgcheck', '1')
+            repo_data.set(self._name, 'gpgkey', urljoin(self._url, self._name + '.key'))
+            repo_data.set(self._name, 'enabled', '1')
+            with (release_dir / (self._name + '.repo')).open('w') as repo_file:
+                repo_data.write(repo_file, space_around_delimiters=False)
 
 
 def release_list(cfg: dict, on: date | None = None) -> Set[Release]:
@@ -943,6 +993,20 @@ def main(
         write_bake_file(args.output)
         return
 
+    # SIGTERM (kill, timeout, a CI job cancelled) takes the path of Ctrl-C: the builds are
+    # cancelled, their containers killed, nothing is published, and the work directory removed.
+    previous = signal.signal(signal.SIGTERM, _interrupt)
+    try:
+        _run(args, parser, base_dir, runner, connect)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def _interrupt(signum, frame):
+    raise KeyboardInterrupt()
+
+
+def _run(args, parser, base_dir, runner, connect):
     if args.jobs is None and args.verbose:
         args.jobs = 1
     elif args.jobs is None:
@@ -1044,7 +1108,7 @@ def run_builds(context: BuildContext, reporter: Reporter, cfg, base_dir, selecte
         repo_builder = repo_family(
             context, output_path, gpg, url, name, description, base_dir / 'README.tpl'
         )
-        repo_builders.append((repo_builder, dist_builders))
+        repo_builders.append(((dist_id, repo_builder), dist_builders))
         builders += dist_builders
 
     downloads = context.workdir / 'downloads'
@@ -1070,6 +1134,17 @@ def run_builds(context: BuildContext, reporter: Reporter, cfg, base_dir, selecte
     )
     reporter.summarize({(b.name, b.dist_release): outcome for b, outcome in outcomes.items()})
 
-    for repo_builder, dist_builders in repo_builders:
-        repo_builder.build(dist_builders)
-    return any(not isinstance(outcome, Succeeded) for outcome in outcomes.values())
+    releases = published(outcomes)
+    failed = any(not isinstance(outcome, Succeeded) for outcome in outcomes.values())
+    for (dist_id, repo_builder), dist_builders in repo_builders:
+        kept = {b.dist_release for b in dist_builders} - releases
+        try:
+            failures = repo_builder.build(
+                [b for b in dist_builders if b.dist_release in releases], kept
+            )
+        except Exception as error:
+            failures = {dist_id: error}
+        for what, error in failures.items():
+            reporter.publication_failed(str(what), error)
+            failed = True
+    return failed

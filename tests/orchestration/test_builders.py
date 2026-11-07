@@ -1,7 +1,9 @@
 """What the builders ask of the engine: images, mounts, users; no container runs."""
 
+import signal
 import sys
 import tempfile
+import time
 from collections.abc import Callable, Iterator
 from datetime import date
 from pathlib import Path
@@ -174,9 +176,14 @@ def run_main(
     recorded_http.get(HELLO_LIB_ORIG, name='orig').respond(200, content=tarball())
 
     def call(
-        runner: FakeRunner, versions: dict[str, list[str]], packages: list[str], *args: str
+        runner: FakeRunner,
+        versions: dict[str, list[str]],
+        packages: list[str],
+        *args: str,
+        prepare: Callable[[Path], None] = lambda project: None,
     ) -> int:
         project = make_project(tmp_path / 'project', ORIG_BASE, versions, packages)
+        prepare(project)
         monkeypatch.chdir(project)
         monkeypatch.setattr(
             sys, 'argv', ['distropack-build', 'run', '-j', '2', '-p', 'x', *args, 'build.conf']
@@ -252,3 +259,119 @@ def test_work_directory_removed(
     status = run_main(runner, {'debian': ['trixie']}, ['hello-lib', 'hello-app'])
     assert status == (0 if outcome == 'success' else 1)
     assert list(temp.iterdir()) == []
+
+
+def rpm_builds(fail_on: tuple[str, str] | None = None) -> Callable[[Call], RunResult | None]:
+    """Builders that write an rpm, but for fail_on, a (package, image tag) pair."""
+
+    def respond(call: Call) -> RunResult | None:
+        if '_builder:' in call.image:
+            tag = call.image.rpartition(':')[2]
+            output = call.targets['/output'].source
+            package = output.parent.name.split('.')[0]
+            if (package, tag) == fail_on:
+                raise ContainerFailed(1, [call.image], output='the build broke')
+            (output / f'{package}-1.0-1.fc{tag}.noarch.rpm').touch()
+            return None
+        return tools_respond(call)
+
+    return respond
+
+
+def createrepo_dirs(runner: FakeRunner) -> list[str]:
+    return [c.targets['/data'].source.name for c in runner.calls if 'createrepo_c' in c.args]
+
+
+def test_failing_release_publishes_nothing(run_main: Callable[..., int]) -> None:
+    """hello-undeclared builds on 44, but hello-needs-root does not: 44 is not published."""
+    runner = FakeRunner(rpm_builds(fail_on=('hello-needs-root', '44')))
+    packages = ['hello-undeclared', 'hello-needs-root']
+    assert run_main(runner, {'fedora': ['43', '44']}, packages) == 1
+    assert createrepo_dirs(runner) == ['43']
+
+
+@pytest.mark.parametrize('exists', [True, False])
+def test_readme_keeps_failed_release_with_repository(
+    run_main: Callable[..., int], tmp_path: Path, exists: bool
+) -> None:
+    def respond(call: Call) -> RunResult | None:
+        if call.image.endswith('debian_builder:forky'):
+            raise ContainerFailed(1, [call.image])
+        return tools_respond(call)
+
+    def previous_run(project: Path) -> None:
+        if exists:
+            forky = project / 'repositories' / 'debian' / 'dists' / 'forky'
+            forky.mkdir(parents=True)
+            (forky / 'Release').write_text('previous run\n')
+
+    runner = FakeRunner(respond)
+    packages = ['hello-undeclared']
+    status = run_main(runner, {'debian': ['trixie', 'forky']}, packages, prepare=previous_run)
+    assert status == 1
+    readme = (tmp_path / 'project' / 'repositories' / 'debian' / 'index.html').read_text()
+    assert 'codename trixie' in readme
+    assert ('codename forky' in readme) == exists
+    published = [
+        c.args[-2]
+        for c in runner.calls
+        if 'publish' in c.args and c.targets['/aptlyout'].source.name == 'debian'
+    ]
+    assert published and 'debian-14-forky' not in published
+
+
+def test_failed_publication_spares_others(
+    run_main: Callable[..., int], capsys: pytest.CaptureFixture[str]
+) -> None:
+    builds = rpm_builds()
+
+    def respond(call: Call) -> RunResult | None:
+        if 'createrepo_c' in call.args and call.targets['/data'].source.name == '43':
+            raise ContainerFailed(1, [call.image, *call.args], output='createrepo broke')
+        return builds(call)
+
+    runner = FakeRunner(respond)
+    assert run_main(runner, {'fedora': ['43', '44']}, ['hello-undeclared']) == 1
+    assert sorted(createrepo_dirs(runner)) == ['43', '44']
+    out = capsys.readouterr().out
+    assert 'publication failed for Fedora 43:' in out
+    assert 'createrepo broke' in out
+
+
+def test_sigterm_cancels(
+    run_main: Callable[..., int], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temp = tmp_path / 'temp'
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, 'tempdir', str(temp))
+    previous = signal.getsignal(signal.SIGTERM)
+    cancellations: list[Cancellation] = []
+
+    def respond(call: Call) -> RunResult | None:
+        if '_builder:' in call.image:
+            signal.raise_signal(signal.SIGTERM)
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                time.sleep(0.01)
+                if cancellations and cancellations[0].cancelled:
+                    break
+            raise Cancelled()
+        return tools_respond(call)
+
+    class Spy(FakeRunner):
+        def __call__(self, *args: Any, **kwargs: Any) -> RunResult:
+            if kwargs.get('cancellation') is not None and not cancellations:
+                cancellations.append(kwargs['cancellation'])
+            return super().__call__(*args, **kwargs)
+
+    runner = Spy(respond)
+    with pytest.raises(KeyboardInterrupt):
+        run_main(runner, {'debian': ['trixie']}, ['hello-undeclared'])
+    assert cancellations[0].cancelled
+    assert not [
+        c
+        for c in runner.calls
+        if 'publish' in c.args and c.targets['/aptlyout'].source.name == 'debian'
+    ]
+    assert list(temp.iterdir()) == []
+    assert signal.getsignal(signal.SIGTERM) == previous

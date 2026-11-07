@@ -181,6 +181,14 @@ class Reporter:
             if self._progress is not None and self._task is not None:
                 self._progress.advance(self._task)
 
+    def publication_failed(self, what: str, error: BaseException) -> None:
+        """The publication of what (a release, or a whole distribution) failed with error."""
+        with self._lock:
+            self._print(Text.assemble(('publication failed', 'red'), f' for {what}: {error}'))
+            output = getattr(error, 'output', None)
+            for line in output.splitlines() if isinstance(output, str) else []:
+                self._print(Text('  ' + line))
+
     def summarize(self, outcomes: Mapping[Build, Outcome]) -> None:
         """List the builds that did not succeed; in GitHub mode, append a table of them all."""
         builds = sorted(outcomes, key=lambda build: (build[1].uid, build[0]))
