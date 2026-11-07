@@ -5,7 +5,6 @@ FROM ${DIST_ID}:${DIST_RELEASE}
 ARG DIST_CODENAME
 
 VOLUME /src
-VOLUME /deps
 VOLUME /localrepo
 
 # Install build-essential because packages implicitly depend on it

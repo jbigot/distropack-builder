@@ -84,7 +84,16 @@ def test_deb_builder_image_and_mounts(
     call = builder_call(runner)
     assert call.image == REGISTRY + f'debian_builder:trixie-p{PROTOCOL}'
     assert call.as_root
-    assert sorted(call.targets) == ['/deps', '/localrepo', '/src']
+    assert sorted(call.targets) == ['/localrepo', '/src']
+    assert call.env['DISTROPACK_BUILD_PROFILES'] == 'debian,trixie'
+
+
+def test_no_mk_build_deps(
+    cli: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date
+) -> None:
+    """The builder installs the build dependencies itself, in the target release."""
+    build(cli, context, release('debian', 'trixie', frozen))
+    assert not [c for c in runner.calls if 'mk-build-deps' in c.args]
 
 
 def test_rpm_builder_mounts_read_only(

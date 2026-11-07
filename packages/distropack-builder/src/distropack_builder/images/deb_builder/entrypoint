@@ -13,19 +13,21 @@ then
 	echo "deb [trusted=yes] file:///localrepo/ ${DIST_CODENAME} main" > /etc/apt/sources.list.d/local.list
 fi
 
+cp -a /src /tmp/
+cd "$(find /tmp/src/ -mindepth 1 -maxdepth 1 -type d)"
+bgrun find /tmp/src/ -maxdepth 1 -name '*.orig.tar.*' -exec tar -C "${PWD}" --strip-components=1 -xf '{}' ';'
+
+# the build dependencies of the source, resolved in the target release with its build profiles
 bgrun apt-get -y update
 bgrun apt-get -y dist-upgrade
-bgrun dpkg -R --unpack /deps
-bgrun apt-get -o Debug::pkgProblemResolver=yes -y --no-install-recommends --fix-broken install
+bgrun apt-get -o Debug::pkgProblemResolver=yes -y --no-install-recommends \
+	${DISTROPACK_BUILD_PROFILES:+-P "${DISTROPACK_BUILD_PROFILES}"} build-dep ./
 
 # re-read profile after installation to load any new env
 set +e
 . /etc/profile
 set -e
 
-cp -a /src /tmp/
-cd "$(find /tmp/src/ -mindepth 1 -maxdepth 1 -type d)"
-bgrun find /tmp/src/ -maxdepth 1 -name '*.orig.tar.*' -exec tar -C "${PWD}" --strip-components=1 -xf '{}' ';'
 bgrun dpkg-buildpackage "$@"
 
 chown -R "$(stat -c '%u:%g' /src)" /tmp/src

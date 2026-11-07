@@ -247,23 +247,6 @@ class DebTools(DockerContainer):
             mounts=[DockerBindMount('/data', pkg_src_dir.parent)],
         )
 
-    def mk_build_deps(
-        self, control_file: Path | str, outdir: Path | str, build_profiles: Iterable[str]
-    ):
-        build_profiles_params = []
-        if build_profiles is not None and len(build_profiles) > 0:
-            build_profiles_params = ['--build-profiles', ','.join(build_profiles)]
-        return self(
-            'mk-build-deps',
-            *build_profiles_params,
-            str(Path('/input') / Path(control_file).name),
-            gpgmount=False,
-            mounts=[
-                DockerBindMount('/input', Path(control_file).parent),
-                DockerBindMount('/data', outdir),
-            ],
-        )
-
 
 class RpmTools(DockerContainer):
     def __init__(self, context: BuildContext, gpg: GpgInfo, logger: logging.Logger | None = None):
@@ -464,15 +447,6 @@ class DebPackageBuilder(PackageBuilder):
             name = orig_name(changelog.package, upstream, orig, files[orig])
             link_or_copy(files[orig], pkg_dir / name)
 
-        # Generate the dependencies .deb
-        deps_dir = wk_dir / 'deps'
-        deps_dir.mkdir()
-        self._deb_tools.mk_build_deps(
-            debian_dir / 'control',
-            deps_dir,
-            [self.dist_release.distribution.id, self.dist_release.codename],
-        )
-
         # Build a repo with all dependencies
         localrepo = wk_dir / 'repo'
         self._local_repository(DebRepoBuilder, localrepo, deps)
@@ -484,16 +458,20 @@ class DebPackageBuilder(PackageBuilder):
             '-P' + self.dist_release.distribution.id + ',' + self.dist_release.codename,
             mounts=[
                 DockerBindMount('/src', pkg_dir),
-                DockerBindMount('/deps', deps_dir),
                 DockerBindMount('/localrepo', localrepo),
             ],
             shm_size='5g',
             as_root=True,
-            env=[('DH_VERBOSE', 1)],
+            env=[
+                ('DH_VERBOSE', 1),
+                (
+                    'DISTROPACK_BUILD_PROFILES',
+                    self.dist_release.distribution.id + ',' + self.dist_release.codename,
+                ),
+            ],
         )
 
         rmtree(localrepo)
-        rmtree(deps_dir)
 
         # Signing the generated packages
         self._deb_tools.debsign(pkg_src_dir, self._gpg.keyid())
