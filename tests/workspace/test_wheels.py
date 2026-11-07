@@ -28,7 +28,11 @@ def test_wheel_ships_the_images(tmp_path: Path) -> None:
         assert member in modes, f'{member} is missing from the wheel'
         if modes[member] & stat.S_IXUSR:
             executable.add(Path(member).name + ' in ' + Path(member).parent.name)
-    assert executable == {'entrypoint in deb_builder', 'entrypoint in rpm_builder'}
+    assert executable == {
+        'entrypoint in deb_builder',
+        'entrypoint in rpm_builder',
+        'sign in rpm_sign',
+    }
 
 
 @pytest.fixture(scope='module')

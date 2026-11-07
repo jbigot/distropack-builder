@@ -120,6 +120,22 @@ class DockerContainer:
         return result.stdout if return_stdout else None
 
 
+# The configuration of aptly: its database in /aptlyroot, what it publishes in /aptlyout. It reads
+# the clear-signed .dsc with its own OpenPGP code: gpg needs a home to write to, which the user a
+# tool container runs as under rootful Docker does not have in the image.
+APTLY_CONFIG = {
+    'architectures': ['amd64', 'source'],
+    'gpgProvider': 'internal',
+    'rootDir': '/aptlyroot',
+    'FileSystemPublishEndpoints': {
+        'default': {
+            'rootDir': '/aptlyout',
+            'linkMethod': 'copy',
+        }
+    },
+}
+
+
 class Aptly(DockerContainer):
     """aptly, alone in its image: it publishes unsigned, the Signer signs."""
 
@@ -396,19 +412,7 @@ class DebRepoBuilder:
             tmp_dir = Path(tmp_dir)
 
             with (tmp_dir / 'aptly.conf').open('w') as aptly_conf:
-                json.dump(
-                    {
-                        'architectures': ['amd64', 'source'],
-                        'rootDir': '/aptlyroot',
-                        'FileSystemPublishEndpoints': {
-                            'default': {
-                                'rootDir': '/aptlyout',
-                                'linkMethod': 'copy',
-                            }
-                        },
-                    },
-                    aptly_conf,
-                )
+                json.dump(APTLY_CONFIG, aptly_conf)
 
             self._output_dir.mkdir(parents=True, exist_ok=True)
 
