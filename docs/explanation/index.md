@@ -6,10 +6,12 @@ data are fetched.
 
 - [How a run is organized](architecture.md)
 - [Containers and engines](containers.md)
+- [How packages and repositories are signed](signing.md)
 
 ```{toctree}
 :hidden:
 
 architecture
 containers
+signing
 ```

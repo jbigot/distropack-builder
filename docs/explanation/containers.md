@@ -41,7 +41,9 @@ under Docker and Podman alike), and chooses the user of each container from that
 - under **rootful** Docker, the tool containers run as the invoking user's uid and gid, for the
   same result.
 - the **builders** start as container root under every engine, since they install the build
-  dependencies, and hand their outputs back to the owner of their source mount when they end.
+  dependencies; they then build as an unprivileged `builder` user (`dpkg-buildpackage` with
+  fakeroot, `rpmbuild`), as the archives' own builders do, so that packaging that writes outside
+  its build tree fails; and they hand their outputs back to the owner of their source mount.
 
 ## Engine quirks handled once
 
