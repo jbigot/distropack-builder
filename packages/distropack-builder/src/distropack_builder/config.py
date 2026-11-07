@@ -36,7 +36,7 @@ class ConfigError(Exception):
 
 def _tokens(value: object) -> object:
     """A list of release tokens, from a list or a single token; numbers become strings."""
-    return [_token(item) for item in (value if isinstance(value, list) else [value])]
+    return [_token(item) for item in (value if isinstance(value, list | tuple) else [value])]
 
 
 def _token(item: object) -> object:
@@ -81,6 +81,16 @@ def _target(id: str) -> str:
 TargetId = Annotated[str, AfterValidator(_target)]
 
 
+def _not_available_alone(tokens: tuple[str, ...]) -> tuple[str, ...]:
+    """The tokens, unless available is the only one: it filters, and would have nothing to."""
+    if tokens == (AVAILABLE,):
+        raise PydanticCustomError(
+            'available_alone',
+            f'{AVAILABLE} keeps some of the releases the other tokens select: it needs one',
+        )
+    return tokens
+
+
 class _Model(BaseModel):
     """The settings every model shares: frozen, strict about keys, documented by attributes."""
 
@@ -120,7 +130,7 @@ class Gpg(_Model):
 class Distrib(_Model):
     """A distribution to build for, keyed by its id (``debian``, ``fedora``)."""
 
-    versions: Tokens = ('supported',)
+    versions: Annotated[Tokens, AfterValidator(_not_available_alone)] = ('supported',)
     """The releases to build for: codenames, versions, ``supported``, ``testing``, ``sid``,
     ``all``, and ``available``, which keeps only those whose builder image is published."""
 

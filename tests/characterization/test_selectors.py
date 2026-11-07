@@ -9,18 +9,23 @@ from typing import Any, cast
 
 import pytest
 import respx
+from pydantic import ValidationError
 
 from distro_releases import (
-    UnknownDistribution,
+    Release,
+    SelectorError,
     UnknownRelease,
     distribution,
     distributions,
     matches,
     select,
 )
+from distropack_builder import targets
+from distropack_builder.config import BuildConfig, Distrib
 from distropack_builder.context import BuildContext
 from distropack_builder.docker import Cancellation
 from distropack_builder.graph import dependencies
+from distropack_builder.selection import configured_releases, matching
 from fake_runner import FakeRunner
 from support import FROZEN_DATE, REPO_ROOT
 
@@ -65,44 +70,53 @@ def filter_id(flt: str) -> str:
     return flt.replace(':', '-').replace('/', '').replace(' ', '_')
 
 
+def release_list(cfg: dict[str, object], on: date) -> frozenset[Release]:
+    """The releases a {distribution id: tokens} mapping names, as build.conf's versions."""
+    config = BuildConfig(
+        distribs={
+            dist: Distrib.model_validate({'versions': tokens}) for dist, tokens in cfg.items()
+        },
+        packages={},
+        root=Path('/project'),
+    )
+    selected = configured_releases(config, (), on, lambda release: True)
+    return frozenset(release for releases in selected.values() for release in releases)
+
+
 @pytest.mark.parametrize('cfg', RELEASE_LISTS, ids=cfg_id)
 def test_release_list(
-    load_script: Callable[[str], ModuleType], frozen: date, cfg: dict[str, object], snapshot: object
+    recorded_http: respx.MockRouter, frozen: date, cfg: dict[str, object], snapshot: object
 ) -> None:
-    assert sorted(r.uid for r in load_script('pkgbuild').release_list(cfg)) == snapshot
+    assert sorted(r.uid for r in release_list(cfg, frozen)) == snapshot
 
 
 @pytest.mark.parametrize('cfg', [{'debian': ['+']}, {'debian': ['-']}], ids=cfg_id)
 def test_release_list_misplaced_sign(
-    load_script: Callable[[str], ModuleType], frozen: date, cfg: dict[str, object]
+    recorded_http: respx.MockRouter, frozen: date, cfg: dict[str, object]
 ) -> None:
-    with pytest.raises(Exception, match=r"'[+-]' must follow a release in debian versions"):
-        load_script('pkgbuild').release_list(cfg)
+    with pytest.raises(SelectorError, match=r"'[+-]' must follow a release in debian versions"):
+        release_list(cfg, frozen)
 
 
-def test_release_list_unknown_release(
-    load_script: Callable[[str], ModuleType], frozen: date
-) -> None:
+def test_release_list_unknown_release(recorded_http: respx.MockRouter, frozen: date) -> None:
     # Intended difference: master selected nothing, silently.
     with pytest.raises(UnknownRelease, match='nosuch'):
-        load_script('pkgbuild').release_list({'debian': ['nosuch']})
+        release_list({'debian': ['nosuch']}, frozen)
 
 
-def test_release_list_unknown_distribution(
-    load_script: Callable[[str], ModuleType], frozen: date
-) -> None:
+def test_release_list_unknown_distribution(recorded_http: respx.MockRouter, frozen: date) -> None:
     # Intended difference: master failed with the bare StopIteration of next(distributions(id=...)).
-    with pytest.raises(UnknownDistribution, match='nosuch'):
-        load_script('pkgbuild').release_list({'nosuch': ['1']})
+    # The configuration refuses it now, before any release is selected.
+    with pytest.raises(ValidationError, match='unknown distribution nosuch'):
+        release_list({'nosuch': ['1']}, frozen)
 
 
 @pytest.mark.parametrize('flt', FILTERS, ids=filter_id)
 def test_release_filter(
-    load_script: Callable[[str], ModuleType], frozen: date, flt: str, snapshot: object
+    recorded_http: respx.MockRouter, frozen: date, flt: str, snapshot: object
 ) -> None:
-    pkgbuild = load_script('pkgbuild')
-    releases = {r for d in pkgbuild.targets.targets() for r in d.releases()}
-    assert sorted(r.uid for r in pkgbuild.release_filter(releases, [flt])) == snapshot
+    releases = {r for d in targets.targets() for r in d.releases()}
+    assert sorted(r.uid for r in matching(releases, [flt])) == snapshot
 
 
 def test_deb_build_order(

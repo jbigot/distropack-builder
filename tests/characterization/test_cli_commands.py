@@ -6,10 +6,14 @@ from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import httpx
 import pytest
 import respx
+
+from distropack_builder.config import BuildConfig
+from distropack_builder.selection import configured_releases, disabled_releases
 
 
 @pytest.fixture
@@ -91,39 +95,40 @@ def test_rhel_is_not_a_target(
 BODHI = 'https://bodhi.fedoraproject.org/releases/?exclude_archived=False&rows_per_page=100&page=1'
 TWO_FAMILIES = {
     'distribs': {'debian': {'versions': ['supported']}, 'fedora': {'versions': ['supported']}},
-    'packages': {'p': {'disable': {'fedora': ['rawhide']}}, 'q': 'x'},
+    'packages': {'p': {'disable': {'fedora': ['rawhide']}}, 'q': None},
 }
+# The same, as the configuration models read it.
+TWO_FAMILIES_CONFIG = BuildConfig.model_validate({**TWO_FAMILIES, 'root': '/project'})
 
 
 def test_source_down_spares_other_distributions(
-    load_script: Callable[[str], ModuleType], recorded_http: respx.MockRouter, frozen: date
+    recorded_http: respx.MockRouter, frozen: date
 ) -> None:
     """-D debian reads Debian's source alone: Bodhi down changes nothing."""
     recorded_http.routes[BODHI].return_value = httpx.Response(503)
-    cli = load_script('pkgbuild')
-    releases = cli.configured_releases(TWO_FAMILIES, {'debian'}, frozen)
+    releases = configured_releases(TWO_FAMILIES_CONFIG, {'debian'}, frozen, lambda r: True)
     assert {d: sorted(r.uid for r in rs) for d, rs in releases.items()} == {
         'debian': ['debian-13-trixie'],
         'fedora': [],
     }
-    assert cli.disabled_releases(TWO_FAMILIES, releases, frozen) == {'p': set(), 'q': set()}
+    assert disabled_releases(TWO_FAMILIES_CONFIG, releases, frozen) == {'p': set(), 'q': set()}
     assert recorded_http.routes[BODHI].call_count == 0
 
 
-def test_disabled_releases(
-    load_script: Callable[[str], ModuleType], recorded_http: respx.MockRouter, frozen: date
-) -> None:
-    cli = load_script('pkgbuild')
-    releases = cli.configured_releases(TWO_FAMILIES, set(), frozen)
-    disabled = cli.disabled_releases(TWO_FAMILIES, releases, frozen)
+def test_disabled_releases(recorded_http: respx.MockRouter, frozen: date) -> None:
+    releases = configured_releases(TWO_FAMILIES_CONFIG, set(), frozen, lambda r: True)
+    disabled = disabled_releases(TWO_FAMILIES_CONFIG, releases, frozen)
     assert {p: sorted(r.uid for r in rs) for p, rs in disabled.items()} == {
         'p': ['fedora-46'],
         'q': [],
     }
 
 
-def write_conf(tmp_path: Path, conf: dict[str, object]) -> None:
+def write_conf(tmp_path: Path, conf: dict[str, Any]) -> None:
+    """build.conf in tmp_path, beside a directory with debian/ for each of its packages."""
     (tmp_path / 'build.conf').write_text(json.dumps(conf))
+    for name in conf['packages']:
+        (tmp_path / name / 'debian').mkdir(parents=True)
 
 
 def test_source_down_exits_1_before_any_work(
@@ -175,3 +180,21 @@ def test_docker_host_option(
         main(*args)
     assert exit.value.code == 2
     assert 'tcp://x:2375 is not a local engine' in capsys.readouterr().err
+
+
+def test_registry_error_exits_1_before_any_work(
+    main: Callable[..., None],
+    recorded_http: respx.MockRouter,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A registry that does not answer stops the run: no release is dropped silently."""
+    manifest = 'https://ghcr.io/v2/jbigot/distropack-builder/debian_builder/manifests/trixie-p2'
+    recorded_http.head(manifest).respond(429)
+    write_conf(
+        tmp_path, {'distribs': {'debian': {'versions': ['trixie', 'available']}}, 'packages': {}}
+    )
+    with pytest.raises(SystemExit) as exit:
+        main('run', 'build.conf')
+    assert exit.value.code == 1
+    assert 'debian_builder:trixie-p2' in capsys.readouterr().err

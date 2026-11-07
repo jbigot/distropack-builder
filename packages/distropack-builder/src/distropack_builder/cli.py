@@ -16,36 +16,42 @@ import sys
 from sys import stderr
 from string import Template
 from tempfile import TemporaryDirectory
-from typing import Iterable, Set
+from typing import Iterable
 from urllib.parse import ParseResult, urljoin, urlparse, urlunparse
 
 from debian.changelog import Changelog, format_date
 from debian.deb822 import Deb822, _PkgRelationMixin
 import docker.errors
 from rich.console import Console
-import yaml
 
 from distro_releases import (
     Release,
     SelectorError,
     SourceError,
     UnknownDistribution,
-    matches,
-    select,
 )
 from distropack_builder import targets
+from distropack_builder.availability import AvailabilityError, image_available
 from distropack_builder.bake import PROTOCOL, REGISTRY, tool_image
+from distropack_builder.config import BuildConfig, ConfigError, load
 from distropack_builder.context import BuildContext, Runner
 from distropack_builder.docker import Cancellation, Engine, Mount
 from distropack_builder.docker import run as run_container
 from distropack_builder.docker.endpoint import EngineNotFound, RemoteEndpoint
-from distropack_builder.downloads import DownloadFailed, fetch_all, orig_name, source_name
+from distropack_builder.downloads import (
+    DownloadFailed,
+    fetch_all,
+    new_client,
+    orig_name,
+    source_name,
+)
 from distropack_builder.graph import closure, dependencies
 from distropack_builder.publication import published
 from distropack_builder.report import Reporter, build_logger, github_mode
 from distropack_builder import repodata, rpmquery
 from distropack_builder.rpmquery import SpecFailed, SpecInfo
 from distropack_builder.scheduler import Succeeded, schedule
+from distropack_builder.selection import configured_releases, disabled_releases
 from distropack_builder.signing import Signer, SigningKeyError
 from distropack_builder.versions import deb_version
 
@@ -692,62 +698,6 @@ class RpmRepoBuilder:
                 repo_data.write(repo_file, space_around_delimiters=False)
 
 
-def release_list(cfg: dict, on: date | None = None) -> Set[Release]:
-    """The releases a {distribution id: release tokens} mapping names, as of on."""
-    releases = set()
-    for dist_id, tokens in cfg.items():
-        if not isinstance(tokens, list):
-            tokens = [tokens]
-        releases |= select(targets.target(dist_id), [str(token) for token in tokens], on)
-    return releases
-
-
-def release_filter(releases: Iterable[Release], dist_filter: Iterable[str]) -> Set[Release]:
-    """The releases one of the -D patterns names."""
-    return {release for release in releases if any(matches(release, f) for f in dist_filter)}
-
-
-def configured_releases(cfg: dict, patterns: Set[str], on: date) -> dict[str, Set[Release]]:
-    """The releases build.conf names for each of its distributions, as of on.
-
-    With -D patterns, a distribution none of them names gets no release, and its source is not
-    read: a source being down only stops the distributions it serves. Every distribution, and every
-    distribution a package's disable list names, must be a target.
-    """
-    for dist_id in cfg['distribs']:
-        targets.target(dist_id)
-    for pkg_cfg in cfg['packages'].values():
-        if isinstance(pkg_cfg, dict):
-            for dist_id in pkg_cfg.get('disable', {}):
-                targets.target(dist_id)
-    result = {}
-    for dist_id, distrib_cfg in cfg['distribs'].items():
-        distribution = targets.target(dist_id)
-        named = {pattern.partition(':')[0] for pattern in patterns}
-        if patterns and not named & {distribution.id, distribution.name}:
-            result[dist_id] = set()
-            continue
-        releases = release_list({dist_id: distrib_cfg.get('versions', {})}, on)
-        result[dist_id] = release_filter(releases, patterns) if patterns else releases
-    return result
-
-
-def disabled_releases(
-    cfg: dict, selected: dict[str, Set[Release]], on: date
-) -> dict[str, Set[Release]]:
-    """For each package, the selected releases its disable list names, as of on.
-
-    Only the distributions that have selected releases are read.
-    """
-    result = {}
-    for name, pkg_cfg in cfg['packages'].items():
-        disable = pkg_cfg.get('disable', {}) if isinstance(pkg_cfg, dict) else {}
-        result[name] = release_list(
-            {dist_id: tokens for dist_id, tokens in disable.items() if selected.get(dist_id)}, on
-        )
-    return result
-
-
 def write_bake_file(output):
     """Write the bake definition of the installed images to output, or to stdout."""
     from distropack_builder import bake
@@ -848,13 +798,19 @@ def _run(args, parser, base_dir, runner, connect):
     # One date for the whole run, so that a run crossing midnight sees one list of releases.
     on = date.today()
     try:
-        with (base_dir / args.build_conf).open('r') as cfg_file:
-            cfg = yaml.safe_load(cfg_file)
+        config = load(base_dir / args.build_conf)
 
-        # The configuration's errors, and the release data, come before any work.
+        # The configuration's errors, the release data and the images available come before any
+        # work.
         patterns = {e for el in args.distributions or [] for e in el}
-        selected = configured_releases(cfg, patterns, on)
-        disabled = disabled_releases(cfg, selected, on)
+        with new_client() as client:
+            selected = configured_releases(
+                config,
+                patterns,
+                on,
+                lambda release: image_available(REGISTRY + builder_image(release), client),
+            )
+        disabled = disabled_releases(config, selected, on)
 
         # Then the engine, before any container.
         try:
@@ -877,13 +833,13 @@ def _run(args, parser, base_dir, runner, connect):
                     summary=Path(summary) if summary else None,
                 )
             )
-            failed = run_builds(context, reporter, cfg, base_dir, selected, disabled, args)
+            failed = run_builds(context, reporter, config, selected, disabled, args)
         if failed:
             sys.exit(1)
 
-    except (targets.NotATarget, UnknownDistribution, SelectorError) as error:
+    except (ConfigError, targets.NotATarget, UnknownDistribution, SelectorError) as error:
         parser.error(str(error))
-    except (SourceError, SigningKeyError) as error:
+    except (SourceError, SigningKeyError, AvailabilityError) as error:
         print(f'{parser.prog}: error: {error}', file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt:
@@ -911,23 +867,25 @@ def _run(args, parser, base_dir, runner, connect):
         raise
 
 
-def run_builds(context: BuildContext, reporter: Reporter, cfg, base_dir, selected, disabled, args):
+def run_builds(
+    context: BuildContext, reporter: Reporter, config: BuildConfig, selected, disabled, args
+):
     """Download, build and publish; whether any build did not succeed."""
     builders = []
     repo_builders = []
-    for dist_id, distrib_cfg in cfg['distribs'].items():
-        keyfile = base_dir / distrib_cfg.get('gpg', {}).get('file', 'key.gpg')
-        keyid = distrib_cfg.get('gpg', {}).get('id', None)
-        uid = distrib_cfg.get('gpg', {}).get('uid', None)
-        gpg = Signer.load(keyfile, args.passphrase, keyid=keyid, uid=uid)
+    root = config.root
+    for dist_id, distrib in config.distribs.items():
+        gpg = Signer.load(
+            root / distrib.gpg.file, args.passphrase, keyid=distrib.gpg.id, uid=distrib.gpg.uid
+        )
 
         dist_builders = []
         family = DebPackageBuilder if targets.is_deb(targets.target(dist_id)) else RpmPackageBuilder
         for dist_release in sorted(selected[dist_id], key=lambda release: release.uid):
             names = [
                 name
-                for name in cfg['packages']
-                if dist_release not in disabled[name] and family.applies(base_dir, name)
+                for name in config.packages
+                if dist_release not in disabled[name] and family.applies(root, name)
             ]
             specs = {}
             if family is RpmPackageBuilder:
@@ -935,32 +893,32 @@ def run_builds(context: BuildContext, reporter: Reporter, cfg, base_dir, selecte
                 specs = rpmquery.query(
                     context,
                     REGISTRY + builder_image(dist_release),
-                    {name: RpmPackageBuilder.spec_file(base_dir, name) for name in names},
+                    {name: RpmPackageBuilder.spec_file(root, name) for name in names},
                 )
             for name in names:
-                pkg_cfg = cfg['packages'][name]
-                if not isinstance(pkg_cfg, dict):
-                    pkg_cfg = {'value': pkg_cfg}
                 extra = {'spec': specs[name]} if name in specs else {}
                 dist_builders.append(
                     family(
                         context,
                         dist_release,
-                        base_dir,
+                        root,
                         gpg,
                         name,
-                        pkg_cfg.get('orig', None),
+                        config.packages[name].orig,
                         **extra,
                     )
                 )
 
-        output_path = base_dir / distrib_cfg.get('repository', {}).get('path', 'repositories')
-        url = distrib_cfg.get('repository', {}).get('url')
-        name = distrib_cfg.get('repository', {}).get('name')
-        description = distrib_cfg.get('repository', {}).get('description')
+        repository = distrib.repository
         repo_family = DebRepoBuilder if family is DebPackageBuilder else RpmRepoBuilder
         repo_builder = repo_family(
-            context, output_path, gpg, url, name, description, base_dir / 'README.tpl'
+            context,
+            root / repository.path,
+            gpg,
+            repository.url,
+            repository.name,
+            repository.description,
+            root / 'README.tpl',
         )
         repo_builders.append(((dist_id, repo_builder), dist_builders))
         builders += dist_builders

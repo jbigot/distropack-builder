@@ -96,6 +96,11 @@ def test_load_fixture(fixture_project: Path) -> None:
         ),
         pytest.param('distribs: {}\npackages:\n', 'packages', id='null-packages'),
         pytest.param(
+            'distribs: {debian: {versions: [available]}}\npackages: {}\n',
+            'distribs.debian.versions',
+            id='available-alone',
+        ),
+        pytest.param(
             'distribs: {debian: {repository: 3}}\npackages: {}\n',
             'distribs.debian.repository',
             id='number-for-mapping',
