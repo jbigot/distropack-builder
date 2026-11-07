@@ -76,6 +76,11 @@ module = [
 ]
 ignore_errors = true
 
+# filetype ships neither types nor a py.typed marker, and typeshed has no stubs for it.
+[[tool.mypy.overrides]]
+module = "filetype"
+ignore_missing_imports = true
+
 # It calls the untyped cli.main; goes when cli leaves the ratchet.
 [[tool.mypy.overrides]]
 module = "distropack_builder.__main__"
