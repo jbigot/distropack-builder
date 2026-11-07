@@ -31,6 +31,11 @@ those lists only shrink.
 `.python-version` makes 3.13 the default interpreter, the one the golden master is recorded with;
 `uv run --python 3.12 pytest` runs the unit tests on another one, as the CI matrix does.
 
+`golden` and `e2e` run the images of the checkout, not those the registry publishes from `main`:
+bake them into the local engine first, with `uv run python tests/bake_fixture_images.py` (the
+fixture's builders and the tools; Docker buildx needed). The runner asks for each image's protocol
+tag, which the local image answers without a pull.
+
 Rootless Docker and rootless Podman work for `golden` and `e2e` as rootful Docker does.
 The golden master itself is recorded on a rootful engine, the one of GitHub's runners.
 The orchestration tests (`tests/orchestration/`) replace the runner with `tests/fake_runner.py`'s

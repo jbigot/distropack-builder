@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from distro_releases import distribution
 from support import DATA, FIXTURE_RELEASES
 
 # The docker calls of `build --publish` (Phase 0), cut into one block per image, each starting
@@ -147,7 +148,7 @@ def test_runner_pulls_baked_images(
         if {release.version, release.codename} & set(FIXTURE_RELEASES.get(distrib.id, []))
     ]
     assert len(pulled) == sum(len(releases) for releases in FIXTURE_RELEASES.values())
-    pulled += [f'{bake.REGISTRY}{tool}:latest' for tool in bake.TOOLS]
+    pulled += [bake.REGISTRY + bake.tool_image(tool) for tool in bake.TOOLS]
     assert set(pulled) <= tags
 
 
@@ -155,3 +156,15 @@ def test_bake_file_has_no_rhel(bake: ModuleType) -> None:
     """distro-releases lists RHEL, which is not a build target."""
     definition = bake.bake_definition(Path('/images'), everything_exists)
     assert not [name for name in definition['target'] if name.startswith('rhel')]
+
+
+def test_runner_asks_protocol_tags(
+    bake: ModuleType, load_script: Callable[[str], ModuleType], frozen: date
+) -> None:
+    """The runner asks the tags of the protocol it drives, never the moving ones."""
+    cli = load_script('pkgbuild')
+    (trixie,) = (r for r in distribution('debian').releases() if r.codename == 'trixie')
+    (f44,) = (r for r in distribution('fedora').releases() if r.version == '44')
+    assert cli.builder_image(trixie) == f'debian_builder:trixie-p{bake.PROTOCOL}'
+    assert cli.builder_image(f44) == f'fedora_builder:44-p{bake.PROTOCOL}'
+    assert bake.tool_image('gpg2') == f'gpg2:p{bake.PROTOCOL}'

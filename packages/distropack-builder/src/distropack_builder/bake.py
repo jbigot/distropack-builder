@@ -25,6 +25,11 @@ TOOLS: Final = ('rpm_tools', 'deb_tools', 'gpg2')
 MISSING_IMAGE: Final = re.compile(r'not found|manifest unknown', re.IGNORECASE)
 
 
+def tool_image(tool: str) -> str:
+    """The image of a tool, relative to REGISTRY, at the protocol the runner drives."""
+    return f'{tool}:p{PROTOCOL}'
+
+
 def registry_has(image: str) -> bool:
     """Whether the registry publishes image (a reference such as `debian:trixie-slim`).
 

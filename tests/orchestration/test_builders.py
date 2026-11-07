@@ -15,6 +15,7 @@ import pytest
 import respx
 
 from distro_releases import Release, distribution
+from distropack_builder.bake import PROTOCOL
 from distropack_builder.context import BuildContext
 from distropack_builder.docker import Cancellation, Cancelled, ContainerFailed, RunResult
 from distropack_builder.scheduler import Interrupted, schedule
@@ -81,7 +82,7 @@ def test_deb_builder_image_and_mounts(
 ) -> None:
     build(cli, context, release('debian', 'trixie', frozen))
     call = builder_call(runner)
-    assert call.image == REGISTRY + 'debian_builder:trixie'
+    assert call.image == REGISTRY + f'debian_builder:trixie-p{PROTOCOL}'
     assert call.as_root
     assert sorted(call.targets) == ['/deps', '/localrepo', '/src']
 
@@ -91,7 +92,7 @@ def test_rpm_builder_mounts_read_only(
 ) -> None:
     build(cli, context, release('fedora', '44', frozen))
     call = builder_call(runner)
-    assert call.image == REGISTRY + 'fedora_builder:44'
+    assert call.image == REGISTRY + f'fedora_builder:44-p{PROTOCOL}'
     assert call.as_root
     mounts = call.targets
     assert (mounts['/src'].read_only, mounts['/localrepo'].read_only) == (True, True)
@@ -266,7 +267,7 @@ def rpm_builds(fail_on: tuple[str, str] | None = None) -> Callable[[Call], RunRe
 
     def respond(call: Call) -> RunResult | None:
         if '_builder:' in call.image:
-            tag = call.image.rpartition(':')[2]
+            tag = call.image.rpartition(':')[2].removesuffix(f'-p{PROTOCOL}')
             output = call.targets['/output'].source
             package = output.parent.name.split('.')[0]
             if (package, tag) == fail_on:
@@ -295,7 +296,7 @@ def test_readme_keeps_failed_release_with_repository(
     run_main: Callable[..., int], tmp_path: Path, exists: bool
 ) -> None:
     def respond(call: Call) -> RunResult | None:
-        if call.image.endswith('debian_builder:forky'):
+        if call.image.endswith(f'debian_builder:forky-p{PROTOCOL}'):
             raise ContainerFailed(1, [call.image])
         return tools_respond(call)
 

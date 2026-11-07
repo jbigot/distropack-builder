@@ -35,7 +35,7 @@ from distro_releases import (
     select,
 )
 from distropack_builder import targets
-from distropack_builder.bake import REGISTRY
+from distropack_builder.bake import PROTOCOL, REGISTRY, tool_image
 from distropack_builder.context import BuildContext, Runner
 from distropack_builder.docker import Cancellation, Engine, Mount
 from distropack_builder.docker import run as run_container
@@ -54,8 +54,8 @@ def builder_image(dist_release: Release) -> str:
     The tag is the release's codename in the Debian family, its version elsewhere.
     """
     if targets.is_deb(dist_release.distribution):
-        return f'{dist_release.distribution.id}_builder:{dist_release.codename}'
-    return f'{dist_release.distribution.id}_builder:{dist_release.version}'
+        return f'{dist_release.distribution.id}_builder:{dist_release.codename}-p{PROTOCOL}'
+    return f'{dist_release.distribution.id}_builder:{dist_release.version}-p{PROTOCOL}'
 
 
 def urlnormalize(url):
@@ -120,7 +120,7 @@ class DockerContainer:
 
 class GpgInfo(DockerContainer):
     def __init__(self, context: BuildContext, keyfile, keyid=None, passphrase=None, uid=None):
-        super().__init__(context, 'gpg2')
+        super().__init__(context, tool_image('gpg2'))
         self._keyid = keyid
         self._passphrase = passphrase
         self._home_dir = Path(mkdtemp(prefix='GNUPG_HOME.', dir=context.workdir))
@@ -224,7 +224,7 @@ class GpgInfo(DockerContainer):
 
 class DebTools(DockerContainer):
     def __init__(self, context: BuildContext, gpg: GpgInfo, logger: logging.Logger | None = None):
-        super().__init__(context, 'deb_tools', logger)
+        super().__init__(context, tool_image('deb_tools'), logger)
         self._gpg = gpg
 
     def __call__(
@@ -267,7 +267,7 @@ class DebTools(DockerContainer):
 
 class RpmTools(DockerContainer):
     def __init__(self, context: BuildContext, gpg: GpgInfo, logger: logging.Logger | None = None):
-        super().__init__(context, 'rpm_tools', logger)
+        super().__init__(context, tool_image('rpm_tools'), logger)
         self._gpg = gpg
 
     def __call__(
