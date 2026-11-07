@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from distropack_builder.bake import REGISTRY, tool_image
-from distropack_builder.cli import APTLY_CONFIG
+from distropack_builder.builders import APTLY_CONFIG
 from distropack_builder.docker import Engine
 from distropack_builder.signing import Signer
 from support import FIXTURE_PASSPHRASE, FIXTURE_PROJECT

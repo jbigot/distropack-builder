@@ -19,6 +19,7 @@ RELEASE_DATA = REPO_ROOT / 'packages' / 'distro-releases' / 'tests' / 'data'
 MODULES = (
     'distropack_builder.targets',
     'distropack_builder.bake',
+    'distropack_builder.builders',
     'distropack_builder.cli',
 )
 # The names the tests pass to load_script, from before the move, and the modules they load.

@@ -1,5 +1,6 @@
 """What the builders ask of the engine: images, mounts, users; no container runs."""
 
+import importlib
 import signal
 import sys
 import tempfile
@@ -48,6 +49,12 @@ def cli(load_script: Callable[[str], ModuleType]) -> ModuleType:
 
 
 @pytest.fixture
+def builders(cli: ModuleType) -> ModuleType:
+    """The builders, loaded with cli."""
+    return importlib.import_module('distropack_builder.builders')
+
+
+@pytest.fixture
 def runner() -> FakeRunner:
     return FakeRunner(respond)
 
@@ -59,18 +66,18 @@ def context(runner: FakeRunner, tmp_path: Path) -> BuildContext:
     return BuildContext(cast(Any, None), runner, Cancellation(), workdir, 1)
 
 
-def builder(cli: ModuleType, context: BuildContext, rel: Release) -> Any:
+def builder(builders: ModuleType, context: BuildContext, rel: Release) -> Any:
     """The fixture project's builder of hello-app for rel."""
     signer = Signer.load(FIXTURE_PROJECT / 'key.gpg', FIXTURE_PASSPHRASE)
-    if cli.targets.is_deb(rel.distribution):
-        return cli.DebPackageBuilder(context, rel, FIXTURE_PROJECT, signer, 'hello-app')
+    if builders.targets.is_deb(rel.distribution):
+        return builders.DebPackageBuilder(context, rel, FIXTURE_PROJECT, signer, 'hello-app')
     spec = SpecInfo(frozenset({'hello-lib'}), frozenset({'hello-app'}), ())
-    return cli.RpmPackageBuilder(context, rel, FIXTURE_PROJECT, signer, 'hello-app', spec=spec)
+    return builders.RpmPackageBuilder(context, rel, FIXTURE_PROJECT, signer, 'hello-app', spec=spec)
 
 
-def build(cli: ModuleType, context: BuildContext, rel: Release) -> None:
+def build(builders: ModuleType, context: BuildContext, rel: Release) -> None:
     with pytest.raises(StopBuild):
-        builder(cli, context, rel).build(frozenset(), {})
+        builder(builders, context, rel).build(frozenset(), {})
 
 
 def builder_call(runner: FakeRunner) -> Call:
@@ -79,9 +86,9 @@ def builder_call(runner: FakeRunner) -> Call:
 
 
 def test_deb_builder_image_and_mounts(
-    cli: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date
 ) -> None:
-    build(cli, context, release('debian', 'trixie', frozen))
+    build(builders, context, release('debian', 'trixie', frozen))
     call = builder_call(runner)
     assert call.image == REGISTRY + f'debian_builder:trixie-p{PROTOCOL}'
     assert call.as_root
@@ -90,17 +97,17 @@ def test_deb_builder_image_and_mounts(
 
 
 def test_no_mk_build_deps(
-    cli: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date
 ) -> None:
     """The builder installs the build dependencies itself, in the target release."""
-    build(cli, context, release('debian', 'trixie', frozen))
+    build(builders, context, release('debian', 'trixie', frozen))
     assert not [c for c in runner.calls if 'mk-build-deps' in c.args]
 
 
 def test_rpm_builder_mounts_read_only(
-    cli: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date
 ) -> None:
-    build(cli, context, release('fedora', '44', frozen))
+    build(builders, context, release('fedora', '44', frozen))
     call = builder_call(runner)
     assert call.image == REGISTRY + f'fedora_builder:44-p{PROTOCOL}'
     assert call.as_root
@@ -111,14 +118,14 @@ def test_rpm_builder_mounts_read_only(
 
 @pytest.mark.parametrize(('dist', 'name'), [('debian', 'trixie'), ('fedora', '44')])
 def test_no_secret_key_in_a_builder(
-    cli: ModuleType,
+    builders: ModuleType,
     context: BuildContext,
     runner: FakeRunner,
     frozen: date,
     dist: str,
     name: str,
 ) -> None:
-    build(cli, context, release(dist, name, frozen))
+    build(builders, context, release(dist, name, frozen))
     call = builder_call(runner)
     assert '/secret' not in call.targets
     assert not [m for m in call.mounts if m.source.name.startswith('distropack-sign.')]
@@ -135,21 +142,21 @@ def test_tools_run_as_the_runner_chooses_in_a_run(run_main: Callable[..., int]) 
 
 @pytest.mark.parametrize(('dist', 'name'), [('debian', 'trixie')])
 def test_tools_run_as_the_runner_chooses(
-    cli: ModuleType,
+    builders: ModuleType,
     context: BuildContext,
     runner: FakeRunner,
     frozen: date,
     dist: str,
     name: str,
 ) -> None:
-    build(cli, context, release(dist, name, frozen))
+    build(builders, context, release(dist, name, frozen))
     tools = [c for c in runner.calls if '_builder:' not in c.image]
     assert tools and not [c for c in tools if c.as_root]
 
 
 @pytest.mark.parametrize(('dist', 'name'), [('debian', 'trixie'), ('fedora', '44')])
 def test_cancelled_builder_is_interrupted(
-    cli: ModuleType,
+    builders: ModuleType,
     context: BuildContext,
     runner: FakeRunner,
     frozen: date,
@@ -164,7 +171,7 @@ def test_cancelled_builder_is_interrupted(
         return None
 
     runner.respond = cancelled
-    found = builder(cli, context, release(dist, name, frozen))
+    found = builder(builders, context, release(dist, name, frozen))
     outcomes = schedule(
         {found: frozenset()},
         lambda b: b.build(frozenset(), {}),

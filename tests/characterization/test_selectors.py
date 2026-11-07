@@ -1,5 +1,6 @@
 """Characterize pkgbuild's release selectors, release filters and deb build order."""
 
+import importlib
 import json
 from collections.abc import Callable
 from datetime import date
@@ -122,11 +123,12 @@ def test_release_filter(
 def test_deb_build_order(
     load_script: Callable[[str], ModuleType], frozen: date, tmp_path: Path
 ) -> None:
-    pkgbuild = load_script('pkgbuild')
+    load_script('pkgbuild')
+    builders = importlib.import_module('distropack_builder.builders')
     (trixie,) = (r for r in distribution('debian').releases() if r.codename == 'trixie')
     context = BuildContext(cast(Any, None), FakeRunner(), Cancellation(), tmp_path, 1)
     lib, app = (
-        pkgbuild.DebPackageBuilder(
+        builders.DebPackageBuilder(
             context, trixie, REPO_ROOT / 'tests' / 'e2e' / 'project', None, name
         )
         for name in ('hello-lib', 'hello-app')
