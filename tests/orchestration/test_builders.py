@@ -4,12 +4,13 @@ from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 import respx
 
 from distro_releases import Release, distribution
-from distropack_builder.docker import RunResult
+from distropack_builder.docker import Cancelled, RunResult
 from fake_runner import Call, FakeRunner, StopBuild
 from support import FIXTURE_PASSPHRASE, FIXTURE_PROJECT
 
@@ -42,17 +43,22 @@ def fake(
     return cli, runner
 
 
-def build(cli: ModuleType, rel: Release, tmp_path: Path) -> None:
+def builder(cli: ModuleType, rel: Release) -> Any:
+    """The fixture project's builder for rel, ready to build."""
     gpg = cli.GpgInfo(
         FIXTURE_PROJECT / 'key.gpg', 'ABCDEF0123456789', FIXTURE_PASSPHRASE, 'Test <t@t>'
     )
     family = (
         cli.DebPackageBuilder if cli.targets.is_deb(rel.distribution) else cli.RpmPackageBuilder
     )
-    builder = family(rel, FIXTURE_PROJECT, gpg, 'hello-app', None, None, 1)
-    cli.order_packages([builder])  # as the run does: a builder depends on itself until then
+    found = family(rel, FIXTURE_PROJECT, gpg, 'hello-app', None, None, 1)
+    cli.order_packages([found])  # as the run does: a builder depends on itself until then
+    return found
+
+
+def build(cli: ModuleType, rel: Release, tmp_path: Path) -> None:
     with pytest.raises(StopBuild):
-        builder.build(tmp_path)
+        builder(cli, rel).build(tmp_path)
 
 
 def builder_call(runner: FakeRunner) -> Call:
@@ -103,3 +109,28 @@ def test_tools_run_as_the_runner_chooses(
     build(cli, release(dist, name, frozen), tmp_path)
     tools = [c for c in runner.calls if '_builder:' not in c.image]
     assert tools and not [c for c in tools if c.as_root]
+
+
+@pytest.mark.parametrize(('dist', 'name'), [('debian', 'trixie'), ('fedora', '44')])
+def test_cancelled_builder_reports_cancel(
+    fake: tuple[ModuleType, FakeRunner],
+    frozen: date,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    dist: str,
+    name: str,
+) -> None:
+    """A builder whose container is cancelled says so, rather than reporting a failure."""
+    cli, runner = fake
+
+    def cancelled(call: Call) -> RunResult | None:
+        if '_builder:' in call.image:
+            raise Cancelled()
+        return respond(call)
+
+    runner.respond = cancelled
+    with pytest.raises(cli.CancellationException):
+        builder(cli, release(dist, name, frozen)).build(tmp_path)
+    out = capsys.readouterr().out
+    assert '[CANCEL]' in out
+    assert '[FAILURE]' not in out

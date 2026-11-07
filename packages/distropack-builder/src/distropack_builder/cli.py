@@ -36,7 +36,7 @@ from distro_releases import (
 )
 from distropack_builder import targets
 from distropack_builder.bake import REGISTRY
-from distropack_builder.docker import Cancellation, Engine, Mount
+from distropack_builder.docker import Cancellation, Cancelled, Engine, Mount
 from distropack_builder.docker import run as run_container
 from distropack_builder.docker.endpoint import EngineNotFound, RemoteEndpoint
 from distropack_builder.downloader import Downloader
@@ -102,17 +102,20 @@ class DockerContainer:
         as_root: bool = False,
         env: Iterable[tuple[str, any]] = [],
     ):
-        result = RUN(
-            ENGINE,
-            self._img_name,
-            [str(arg) for arg in args],
-            mounts=[Mount(str(m.target), m.source, m.ro) for m in mounts],
-            env={str(name): str(value) for name, value in env},
-            workdir=None if workdir is None else str(workdir),
-            shm_size=shm_size,
-            as_root=as_root,
-            cancellation=CANCELLATION,
-        )
+        try:
+            result = RUN(
+                ENGINE,
+                self._img_name,
+                [str(arg) for arg in args],
+                mounts=[Mount(str(m.target), m.source, m.ro) for m in mounts],
+                env={str(name): str(value) for name, value in env},
+                workdir=None if workdir is None else str(workdir),
+                shm_size=shm_size,
+                as_root=as_root,
+                cancellation=CANCELLATION,
+            )
+        except Cancelled:
+            raise CancellationException('Termination request received') from None
         return result.stdout if return_stdout else None
 
 
