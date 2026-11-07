@@ -85,7 +85,16 @@ def _spec_query(call: Call) -> str:
 
 
 def tools_respond(call: Call) -> RunResult | None:
-    """The answers of the tool containers to a run of the fixture project; builders succeed."""
+    """The answers of the tool containers to a run of the fixture project; builders succeed.
+
+    aptly's publish writes the Release file of its distribution, with a trailing space on its
+    first line, as the signer then has to drop.
+    """
+    if 'publish' in call.args:
+        (distribution,) = (a.split('=', 1)[1] for a in call.args if a.startswith('-distribution='))
+        release = call.targets['/aptlyout'].source / 'dists' / distribution / 'Release'
+        release.parent.mkdir(parents=True, exist_ok=True)
+        release.write_text(f'Origin: hello \nCodename: {distribution}\n')
     if '--list-secret-keys' in call.args:
         return RunResult(0, FIXTURE_KEY_LISTING, FIXTURE_KEY_LISTING)
     if call.args[:1] == ('rpmspec',):

@@ -11,6 +11,7 @@ from types import ModuleType
 from typing import Any, cast
 
 import httpx
+import pysequoia
 import pytest
 import respx
 
@@ -19,6 +20,7 @@ from distropack_builder.bake import PROTOCOL
 from distropack_builder.context import BuildContext
 from distropack_builder.docker import Cancellation, Cancelled, ContainerFailed, RunResult
 from distropack_builder.scheduler import Interrupted, schedule
+from distropack_builder.signing import Signer
 from fake_runner import Call, FakeRunner, StopBuild, tools_respond
 from support import FIXTURE_PASSPHRASE, FIXTURE_PROJECT, make_project, write_tarball
 
@@ -58,13 +60,13 @@ def context(runner: FakeRunner, tmp_path: Path) -> BuildContext:
 
 def builder(cli: ModuleType, context: BuildContext, rel: Release) -> Any:
     """The fixture project's builder of hello-app for rel."""
-    gpg = cli.GpgInfo(
-        context, FIXTURE_PROJECT / 'key.gpg', 'ABCDEF0123456789', FIXTURE_PASSPHRASE, 'Test <t@t>'
-    )
-    family = (
-        cli.DebPackageBuilder if cli.targets.is_deb(rel.distribution) else cli.RpmPackageBuilder
-    )
-    return family(context, rel, FIXTURE_PROJECT, gpg, 'hello-app')
+    key = FIXTURE_PROJECT / 'key.gpg'
+    if cli.targets.is_deb(rel.distribution):
+        return cli.DebPackageBuilder(
+            context, rel, FIXTURE_PROJECT, Signer.load(key, FIXTURE_PASSPHRASE), 'hello-app'
+        )
+    gpg = cli.GpgInfo(context, key, 'ABCDEF0123456789', FIXTURE_PASSPHRASE, 'Test <t@t>')
+    return cli.RpmPackageBuilder(context, rel, FIXTURE_PROJECT, gpg, 'hello-app')
 
 
 def build(cli: ModuleType, context: BuildContext, rel: Release) -> None:
@@ -196,7 +198,9 @@ def run_main(
         prepare(project)
         monkeypatch.chdir(project)
         monkeypatch.setattr(
-            sys, 'argv', ['distropack-build', 'run', '-j', '2', '-p', 'x', *args, 'build.conf']
+            sys,
+            'argv',
+            ['distropack-build', 'run', '-j', '2', '-p', FIXTURE_PASSPHRASE, *args, 'build.conf'],
         )
         try:
             cli.main(runner=runner, connect=lambda host: cast(Any, None))
@@ -213,7 +217,7 @@ def test_local_repository_is_the_closure(run_main: Callable[..., int]) -> None:
     included = [
         c
         for c in runner.calls
-        if 'include' in c.args
+        if c.args[2:4] == ('repo', 'add')
         and c.targets['/aptlyout'].source.parent.name.startswith('hello-app.')
     ]
     # hello-app's own output directory, empty yet, is included as well, as master did
@@ -399,3 +403,58 @@ def test_orig_named_after_upstream_version(run_main: Callable[..., int]) -> None
     runner = FakeRunner(respond)
     assert run_main(runner, {'debian': ['trixie', 'forky']}, ['hello-lib']) == 0
     assert sources == [['hello-lib-1.0', 'hello-lib_1.0.orig.tar.gz']] * 2
+
+
+def test_aptly_adds_without_changes(run_main: Callable[..., int]) -> None:
+    runner = FakeRunner(tools_respond)
+    assert run_main(runner, {'debian': ['trixie']}, ['hello-undeclared']) == 0
+    aptly = [c for c in runner.calls if 'aptly' in c.args]
+    assert aptly and not [c for c in aptly if 'include' in c.args]
+    assert [c for c in aptly if c.args[2:4] == ('repo', 'add')]
+    assert not [c for c in runner.calls if any(a.endswith('.changes') for a in c.args)]
+    assert not [c for c in runner.calls if 'debsign' in c.args or '/gnupghome' in c.targets]
+
+
+def test_publish_skips_signing(run_main: Callable[..., int]) -> None:
+    runner = FakeRunner(tools_respond)
+    assert run_main(runner, {'debian': ['trixie']}, ['hello-undeclared']) == 0
+    publish = [c for c in runner.calls if 'publish' in c.args]
+    assert publish and all('-skip-signing' in c.args for c in publish)
+    assert not [c for c in publish if any(a.startswith('-gpg-key') for a in c.args)]
+
+
+def test_release_signed(run_main: Callable[..., int], tmp_path: Path) -> None:
+    """Each published Release is signed both ways, trailing spaces dropped from all three."""
+    runner = FakeRunner(tools_respond)
+    assert run_main(runner, {'debian': ['trixie']}, ['hello-undeclared']) == 0
+    dists = tmp_path / 'project' / 'repositories' / 'debian' / 'dists'
+    names = sorted(d.name for d in dists.iterdir())
+    assert names == ['stable', 'trixie']
+    cert = pysequoia.Cert.from_file(str(FIXTURE_PROJECT / 'key.gpg'))
+    for name in names:
+        release = (dists / name / 'Release').read_bytes()
+        assert release == f'Origin: hello\nCodename: {name}\n'.encode()
+        detached = pysequoia.Sig.from_bytes((dists / name / 'Release.gpg').read_bytes())
+        assert pysequoia.verify(bytes=release, store=lambda ids: [cert], signature=detached)
+        inline = pysequoia.verify(
+            bytes=(dists / name / 'InRelease').read_bytes(), store=lambda ids: [cert]
+        )
+        # the final newline, part of the signature's framing, is not in what sequoia reads back
+        assert inline.valid_sigs and inline.bytes == release.removesuffix(b'\n')
+
+
+def test_local_repository_unsigned(run_main: Callable[..., int]) -> None:
+    """hello-app's builder reads a local repository holding hello-lib, with no signature."""
+    seen: list[list[str]] = []
+
+    def respond(call: Call) -> RunResult | None:
+        if call.build_of('hello-app'):
+            local = call.targets['/localrepo'].source
+            seen.append(sorted(p.name for p in local.rglob('*') if p.is_file()))
+        return tools_respond(call)
+
+    runner = FakeRunner(respond)
+    assert run_main(runner, {'debian': ['trixie']}, ['hello-lib', 'hello-app']) == 0
+    (files,) = seen
+    assert 'Release' in files
+    assert 'Release.gpg' not in files and 'InRelease' not in files

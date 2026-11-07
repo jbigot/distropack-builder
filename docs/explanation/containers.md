@@ -9,7 +9,7 @@ declares and the host needs nothing but a container engine.
 |---|---|---|
 | the builders | `<distribution>_builder:<release>` | the target release's own `dpkg-buildpackage` or `rpmbuild`, after installing the build dependencies |
 | GPG | `gpg2` | key import and listing, signatures |
-| deb tools | `deb_tools` | `mk-build-deps`, `debsign`, `aptly` |
+| aptly | `aptly` | `aptly`, which publishes deb repositories unsigned: the builder signs them itself |
 | rpm tools | `rpm_tools` | `rpmspec`, `createrepo_c`, `rpmsign` |
 
 Later versions move the signatures and the repository metadata out of containers, into Python

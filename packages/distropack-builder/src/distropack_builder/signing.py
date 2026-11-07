@@ -100,8 +100,14 @@ class Signer:
 
         As RFC 9580 (7.2) requires, the trailing spaces and tabs of every line are dropped from the
         signed text: a file whose clear-signed copy must be identical to it has none.
+
+        The line ending before the signature belongs to the signature (RFC 9580, 7.1). Signing a
+        text that ends with one, sequoia keeps it as an empty line, which gpg, and apt reading an
+        InRelease, would read back as an extra newline: the text is signed without its final line
+        ending, which gives the form gpg itself writes, and what gpg reads back is data.
         """
-        return pysequoia.sign(self._signer, data, mode=pysequoia.SignatureMode.CLEAR)
+        text = data.removesuffix(b'\n')
+        return pysequoia.sign(self._signer, text, mode=pysequoia.SignatureMode.CLEAR)
 
 
 def _fingerprint(key: pysequoia.Tsk) -> str:

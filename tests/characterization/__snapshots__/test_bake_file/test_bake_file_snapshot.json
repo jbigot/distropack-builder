@@ -5,7 +5,7 @@
         "almalinux_builder-10",
         "almalinux_builder-8",
         "almalinux_builder-9",
-        "deb_tools",
+        "aptly",
         "debian_builder-forky",
         "debian_builder-rc-buggy",
         "debian_builder-sid",
@@ -68,11 +68,11 @@
         "ghcr.io/jbigot/distropack-builder/almalinux_builder:9-p2"
       ]
     },
-    "deb_tools": {
-      "context": "/images/deb_tools",
+    "aptly": {
+      "context": "/images/aptly",
       "tags": [
-        "ghcr.io/jbigot/distropack-builder/deb_tools:latest",
-        "ghcr.io/jbigot/distropack-builder/deb_tools:p2"
+        "ghcr.io/jbigot/distropack-builder/aptly:latest",
+        "ghcr.io/jbigot/distropack-builder/aptly:p2"
       ]
     },
     "debian_builder-forky": {

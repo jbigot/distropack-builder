@@ -58,12 +58,17 @@ def recorded_images(registry: str, protocol: int) -> dict[str, Image]:
     - the registry, ghcr.io/jbigot/pkg_builder/ before;
     - a tag build left implicit is spelled out as latest;
     - each image gains its protocol tag: <release>-p<N> on a builder, p<N> on a tool;
-    - build's --force-rm has no bake equivalent, and building in CI leaves nothing behind anyway.
+    - build's --force-rm has no bake equivalent, and building in CI leaves nothing behind anyway;
+    - the tool images shrink (Phase 6): deb_tools, whose aptly alone remains, is the aptly image.
     """
+    tools = {'deb_tools': 'aptly'}
 
     def rename(image: str) -> str:
         image = registry + image.removeprefix('ghcr.io/jbigot/pkg_builder/')
-        return image if ':' in image.rsplit('/', 1)[-1] else image + ':latest'
+        image = image if ':' in image.rsplit('/', 1)[-1] else image + ':latest'
+        repository, tag = image.rsplit(':', 1)
+        name = repository.rsplit('/', 1)[-1]
+        return f'{registry}{tools.get(name, name)}:{tag}'
 
     images: dict[str, Image] = {}
     blocks: dict[str, list[list[str]]] = json.loads(RECORDED_CALLS.read_text())
@@ -78,7 +83,7 @@ def recorded_images(registry: str, protocol: int) -> dict[str, Image]:
         protocol_tag = f'p{protocol}' if tag == 'latest' else f'{tag}-p{protocol}'
         tags = {primary, f'{repository}:{protocol_tag}'}
         tags |= {rename(cmd[3]) for cmd in others if cmd[1] == 'tag'}
-        images[primary] = (build[-1], frozenset(tags), args)
+        images[primary] = (tools.get(build[-1], build[-1]), frozenset(tags), args)
     return images
 
 

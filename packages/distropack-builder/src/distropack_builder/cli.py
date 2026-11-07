@@ -45,6 +45,7 @@ from distropack_builder.graph import closure, dependencies
 from distropack_builder.publication import published
 from distropack_builder.report import Reporter, build_logger, github_mode
 from distropack_builder.scheduler import Succeeded, schedule
+from distropack_builder.signing import Signer
 from distropack_builder.versions import deb_version
 
 
@@ -222,30 +223,11 @@ class GpgInfo(DockerContainer):
         return self._home_dir
 
 
-class DebTools(DockerContainer):
-    def __init__(self, context: BuildContext, gpg: GpgInfo, logger: logging.Logger | None = None):
-        super().__init__(context, tool_image('deb_tools'), logger)
-        self._gpg = gpg
+class Aptly(DockerContainer):
+    """aptly, alone in its image: it publishes unsigned, the Signer signs."""
 
-    def __call__(
-        self, *args, gpgmount: bool = True, mounts: Iterable[DockerBindMount] = [], **kwargs
-    ):
-        return super().__call__(
-            *args,
-            mounts=([DockerBindMount('/gnupghome', self._gpg.gnupghome())] if gpgmount else [])
-            + mounts,
-            **kwargs,
-        )
-
-    def debsign(self, pkg_src_dir: Path, key_id: str):
-        return self(
-            'debsign',
-            '--no-conf',
-            '-k',
-            key_id,
-            workdir=Path('/data') / pkg_src_dir.name,
-            mounts=[DockerBindMount('/data', pkg_src_dir.parent)],
-        )
+    def __init__(self, context: BuildContext, logger: logging.Logger | None = None):
+        super().__init__(context, tool_image('aptly'), logger)
 
 
 class RpmTools(DockerContainer):
@@ -345,7 +327,9 @@ class PackageBuilder:
 
     def _local_repository(self, family, localrepo: Path, deps):
         """The repository of the outputs of deps, at localrepo, for the builder container."""
-        failures = family(self._context, localrepo, self._gpg, logger=self.logger).build(deps)
+        failures = family(
+            self._context, localrepo, self._gpg, logger=self.logger, sign=False
+        ).build(deps)
         for error in failures.values():
             raise error
 
@@ -365,7 +349,6 @@ class DebPackageBuilder(PackageBuilder):
         super().__init__(context, dist_release, base_dir, gpg, name)
         self._debian_dir = base_dir / name / 'debian'
         self._orig_url = orig_url
-        self._deb_tools = DebTools(context, gpg, self.logger)
         self._format = source_format(self._debian_dir)
         with (self._debian_dir / 'changelog').open() as raw_changelog:
             self._changelog = Changelog(raw_changelog)
@@ -433,7 +416,7 @@ class DebPackageBuilder(PackageBuilder):
             distributions=self.dist_release.codename,
             urgency=changelog.urgency,
             changes=['  * Rebuild for ' + str(self.dist_release)],
-            author=self._gpg.uid(),
+            author=self._gpg.uid,
             date=format_date(),
         )
         with (debian_dir / 'changelog').open('w') as raw_changelog:
@@ -473,8 +456,9 @@ class DebPackageBuilder(PackageBuilder):
 
         rmtree(localrepo)
 
-        # Signing the generated packages
-        self._deb_tools.debsign(pkg_src_dir, self._gpg.keyid())
+        # Sign the source package: nothing reads the .changes, aptly adds the .dsc as it is
+        for dsc in pkg_dir.glob('*.dsc'):
+            dsc.write_bytes(self._gpg.clearsign(dsc.read_bytes()))
 
         # Moving the generated packages to the output directory
         for file in pkg_dir.iterdir():
@@ -494,6 +478,7 @@ class DebRepoBuilder:
         description: str = None,
         readme_tpl: Path = None,
         logger: logging.Logger | None = None,
+        sign: bool = True,
     ):
         self._context = context
         self._output_dir = output_dir
@@ -504,7 +489,8 @@ class DebRepoBuilder:
             self._name = name if name is not None else Path(str(urlparse(self._url).path)).name
             self._description = description if description is not None else self._name
         self._readme_tpl = readme_tpl
-        self._deb_tools = DebTools(context, gpg, logger)
+        self._aptly = Aptly(context, logger)
+        self._sign = sign
 
     def has_repository(self, dist_release: Release) -> bool:
         """Whether the output directory has a repository of dist_release already."""
@@ -549,7 +535,7 @@ class DebRepoBuilder:
             self._output_dir.mkdir(parents=True, exist_ok=True)
 
             def aptly(*args, data=None):
-                self._deb_tools(
+                self._aptly(
                     'aptly',
                     '-config=/aptlyroot/aptly.conf',
                     *args,
@@ -589,13 +575,8 @@ class DebRepoBuilder:
                     )
 
         if self._url is not None:
-            (self._output_dir / (self._name + '-archive-keyring.gpg')).unlink(missing_ok=True)
-            self._gpg(
-                '--export',
-                '--output',
-                str(self._name + '-archive-keyring.gpg'),
-                mounts=[DockerBindMount('/data', self._output_dir)],
-            )
+            keyring = self._output_dir / (self._name + '-archive-keyring.gpg')
+            keyring.write_bytes(self._gpg.public_key(armored=False))
         if self._readme_tpl is not None:
             with open(self._output_dir / 'index.html', mode='w') as readme_file:
                 with open(self._readme_tpl / 'README.tpl.html') as template_file:
@@ -609,22 +590,8 @@ class DebRepoBuilder:
     def _publish(self, aptly, dist_release: Release, pkgs):
         aptly('repo', 'create', dist_release.uid)
         for pkg in pkgs:
-            aptly(
-                'repo',
-                'include',
-                '-keyring=/gnupghome/keyring.pgp',
-                '-no-remove-files',
-                '-repo=' + dist_release.uid,
-                '/data',
-                data=pkg.outdir,
-            )
-        publish_repo = [
-            'publish',
-            'repo',
-            '-batch',
-            '-force-overwrite',
-            '-gpg-key=' + self._gpg.keyid8(),
-        ]
+            aptly('repo', 'add', dist_release.uid, '/data', data=pkg.outdir)
+        publish_repo = ['publish', 'repo', '-force-overwrite', '-skip-signing']
         if self._url is not None:
             publish_repo += ['-label=' + self._description, '-origin=' + self._name]
 
@@ -642,6 +609,19 @@ class DebRepoBuilder:
                     dist_release.uid,
                     'filesystem:default:',
                 )
+                if self._sign:
+                    self._sign_release(self._output_dir / 'dists' / distribution / 'Release')
+
+    def _sign_release(self, release: Path):
+        """Release.gpg and InRelease beside release, whose trailing spaces go first.
+
+        A clear signature drops them (RFC 9580), so that InRelease's text would otherwise differ
+        from Release: apt reads either.
+        """
+        text = b'\n'.join(line.rstrip(b' \t') for line in release.read_bytes().split(b'\n'))
+        release.write_bytes(text)
+        (release.parent / 'Release.gpg').write_bytes(self._gpg.detached(text))
+        (release.parent / 'InRelease').write_bytes(self._gpg.clearsign(text))
 
 
 class RpmPackageBuilder(PackageBuilder):
@@ -728,11 +708,13 @@ class RpmRepoBuilder:
         description: str = None,
         readme_tpl: Path = None,
         logger: logging.Logger | None = None,
+        sign: bool = True,
     ):
         self._context = context
         self._output_dir = output_dir
         self._gpg = gpg
         self._url = url
+        self._sign = sign
         self._rpm_tools = RpmTools(context, gpg, logger)
         if url is not None:
             # a trailing slash, so that urljoin appends to the URL rather than replace its end
@@ -824,7 +806,10 @@ class RpmRepoBuilder:
         release_dir = self._output_dir / dist_release.version
         self._rpm_tools.createrepo(release_dir)
         (release_dir / 'repodata' / 'repomd.xml.asc').unlink(missing_ok=True)
-        self._gpg('-b', '-a', 'repodata/repomd.xml', mounts=[DockerBindMount('/data', release_dir)])
+        if self._sign:
+            self._gpg(
+                '-b', '-a', 'repodata/repomd.xml', mounts=[DockerBindMount('/data', release_dir)]
+            )
         if self._url is not None:
             repo_data = ConfigParser()
             repo_data.add_section(self._name)
@@ -1066,7 +1051,10 @@ def run_builds(context: BuildContext, reporter: Reporter, cfg, base_dir, selecte
         keyfile = base_dir / distrib_cfg.get('gpg', {}).get('file', 'key.gpg')
         keyid = distrib_cfg.get('gpg', {}).get('id', None)
         uid = distrib_cfg.get('gpg', {}).get('uid', None)
-        gpg = GpgInfo(context, keyfile, keyid, args.passphrase, uid)
+        if targets.is_deb(targets.target(dist_id)):
+            gpg = Signer.load(keyfile, args.passphrase, keyid=keyid, uid=uid)
+        else:  # until rpm signs without gpg2
+            gpg = GpgInfo(context, keyfile, keyid, args.passphrase, uid)
 
         dist_builders = []
         family = DebPackageBuilder if targets.is_deb(targets.target(dist_id)) else RpmPackageBuilder

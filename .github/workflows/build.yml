@@ -105,8 +105,8 @@ jobs:
           check='dpkg-buildpackage --version && test -x /entrypoint' ;;
         rpm_builder)
           check='rpmbuild --version && dnf builddep --help > /dev/null && test -x /entrypoint' ;;
-        deb_tools)
-          check='aptly version && debsign --help > /dev/null && gpg --version' ;;
+        aptly)
+          check='aptly version' ;;
         rpm_tools)
           check='createrepo_c --version && rpm --version && gpg --version' ;;
         gpg2)

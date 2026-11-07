@@ -49,7 +49,9 @@ def test_clearsign_verifies(signer: Signer) -> None:
     cert = certificate(signer)
     result = pysequoia.verify(bytes=signed, store=lambda ids: [cert])
     assert result.valid_sigs
-    assert result.bytes == TEXT.replace(b'trailing   \n', b'trailing\n')
+    # what gpg and apt read back as the text is all that precedes the signature's line ending
+    assert result.bytes == TEXT.replace(b'trailing   \n', b'trailing\n').removesuffix(b'\n')
+    assert b'\nlast\n-----BEGIN PGP SIGNATURE-----' in signed
 
 
 def test_wrong_passphrase() -> None:

@@ -232,8 +232,7 @@ def verify(signature: Path, key: Path | None, signed: Path | None = None) -> str
                 *([str(signed)] if signed is not None else []),
             ],
             capture_output=True,
-            text=True,
-        ).stdout
+        ).stdout.decode(errors='replace')  # a notation value, sequoia's salt, may be binary
         fingerprints = [
             line.split()[2] for line in status.splitlines() if line.startswith('[GNUPG:] VALIDSIG ')
         ]
