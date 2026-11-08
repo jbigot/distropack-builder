@@ -326,3 +326,18 @@ def test_releases_list_writes_releases(
     output.unlink()
     assert invoke('releases', 'list', env={'GITHUB_OUTPUT': str(output)}).exit_code == 0
     assert read_outputs(output) == {'releases': expected}
+
+
+def test_run_error_writes_failed_true(project: Path, tmp_path: Path) -> None:
+    output = tmp_path / 'output'
+    result = invoke('run', env={PASSPHRASE_ENV: SECRET, 'GITHUB_OUTPUT': str(output)})
+    assert result.exit_code == 1
+    assert read_outputs(output) == {'failed': 'true', 'output-dirs': '{}'}
+
+
+def test_usage_error_writes_failed_true(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    output = tmp_path / 'output'
+    result = invoke('run', env={'GITHUB_OUTPUT': str(output)})
+    assert result.exit_code == 2
+    assert read_outputs(output) == {'failed': 'true', 'output-dirs': '{}'}

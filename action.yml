@@ -31,8 +31,8 @@ inputs:
 outputs:
   failed:
     description: >-
-      `true` when a build or a publication failed, `false` otherwise; the step fails too, so read
-      it with `continue-on-error`.
+      `true` when the run did not succeed (a build or a publication failed, or an error stopped
+      it), `false` otherwise; the step fails too, so read it with `continue-on-error`.
     value: ${{ steps.run.outputs.failed }}
   output-dirs:
     description: >-

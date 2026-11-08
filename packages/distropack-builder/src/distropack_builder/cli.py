@@ -14,7 +14,7 @@ import json
 import os
 import signal
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, suppress
 from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -153,6 +153,12 @@ def _compact(value: object) -> str:
     return json.dumps(value, separators=(',', ':'))
 
 
+def _write_outputs_once_stopped(outputs: Mapping[str, str]) -> None:
+    """Write outputs for a command already ending on an error, which says why it ended."""
+    with suppress(GithubOutputError):
+        write_outputs(os.environ, outputs)
+
+
 def _release_name(release: Release) -> str:
     """A release as its image tag names it: its codename in the Debian family, else its version."""
     name = release.codename if targets.is_deb(release.distribution) else release.version
@@ -184,8 +190,8 @@ def make_app(
         verbose: bool,
         passphrase: str | None,
         docker_host: str | None,
-    ) -> bool:
-        """Build and publish; whether anything failed."""
+    ) -> tuple[bool, dict[str, str]]:
+        """Build and publish; whether anything failed, and the repositories by distribution id."""
         # One date for the whole run, so that a run crossing midnight sees one list of releases.
         on = date.today()
         # The configuration's errors, the release data and the images available come before any
@@ -200,8 +206,7 @@ def make_app(
         }
         if not output_dirs:
             typer.echo(f'{PROG}: nothing to build: {build_conf} selects no release', err=True)
-            write_outputs(os.environ, {'failed': 'false', 'output-dirs': '{}'})
-            return False
+            return False, output_dirs
         disabled = disabled_releases(loaded, selected, on)
         try:
             engine = connect(docker_host)
@@ -229,10 +234,7 @@ def make_app(
                 )
             )
             failed = run_builds(context, reporter, loaded, selected, disabled, signer_for)
-        write_outputs(
-            os.environ, {'failed': str(failed).lower(), 'output-dirs': _compact(output_dirs)}
-        )
-        return failed
+        return failed, output_dirs
 
     @app.command()
     def run(
@@ -278,9 +280,11 @@ def make_app(
         # SIGTERM (kill, timeout, a CI job cancelled) takes the path of Ctrl-C: the builds are
         # cancelled, their containers killed, nothing is published, the work directory removed.
         previous = signal.signal(signal.SIGTERM, _interrupt)
+        # Under GitHub Actions, a run that an error or an interruption stops is a failed one too.
+        stopped = {'failed': 'true', 'output-dirs': '{}'}
         try:
             with _errors():
-                failed = build(
+                failed, output_dirs = build(
                     build_conf,
                     distributions or [],
                     jobs or (os.cpu_count() or 1) + 1,
@@ -288,11 +292,19 @@ def make_app(
                     read_passphrase(passphrase_file, os.environ),
                     docker_host,
                 )
+        except typer.Exit:
+            _write_outputs_once_stopped(stopped)
+            raise
         except KeyboardInterrupt:
             typer.echo(f'{PROG}: interrupted', err=True)
+            _write_outputs_once_stopped(stopped)
             raise typer.Exit(INTERRUPTED) from None
         finally:
             signal.signal(signal.SIGTERM, previous)
+        with _errors():
+            write_outputs(
+                os.environ, {'failed': str(failed).lower(), 'output-dirs': _compact(output_dirs)}
+            )
         if failed:
             raise typer.Exit(1)
 
