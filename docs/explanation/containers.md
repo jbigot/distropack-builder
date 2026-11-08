@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+
+SPDX-License-Identifier: MIT
+-->
+
 # Containers and engines
 
 distropack-builder runs every tool in a container, so that a build sees only what its packaging

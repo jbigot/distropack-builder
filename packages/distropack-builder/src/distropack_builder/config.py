@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """build.conf: the distributions to build for, their repositories, and the packages to build.
 
 Every path in it is relative to its own directory. The top-level keys that start with a dot are

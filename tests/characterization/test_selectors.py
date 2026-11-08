@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """Characterize pkgbuild's release selectors, release filters and deb build order."""
 
 import importlib

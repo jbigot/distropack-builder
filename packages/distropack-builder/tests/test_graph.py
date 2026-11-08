@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 from dataclasses import dataclass, field
 
 from distro_releases import Release

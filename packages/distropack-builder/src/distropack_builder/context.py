@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """What every container of a run shares: the engine, the runner, the cancellation, the work tree."""
 
 import logging

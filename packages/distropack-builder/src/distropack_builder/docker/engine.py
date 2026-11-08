@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """The connected engine, and the container user its rootlessness implies."""
 
 import os

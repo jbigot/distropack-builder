@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """The page of a repository: how to install from it, for each of its releases.
 
 The page is `README.html.j2`, a Jinja template: the project's own, from its `README.tpl/`

@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+
+SPDX-License-Identifier: MIT
+-->
+
 # The images
 
 The builder runs every tool in an image from `ghcr.io/jbigot/distropack-builder/`, all public and

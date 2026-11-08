@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """The sources of release data, one module each."""
 
 from distro_releases.sources.bodhi import Bodhi

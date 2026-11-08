@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """The helpers the packaging tests rely on refuse what would make them pass vacuously."""
 
 from pathlib import Path

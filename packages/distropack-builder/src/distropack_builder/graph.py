@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """Which builds depend on which: the build dependencies one package's builds provide to another's.
 
 A build depends on another of the same release when the other's binary packages provide one of

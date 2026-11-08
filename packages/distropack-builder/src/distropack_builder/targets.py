@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """The distributions the builder builds for, and the base image of their builders.
 
 distro-releases knows more distributions than these (Red Hat Enterprise Linux): a distribution is a

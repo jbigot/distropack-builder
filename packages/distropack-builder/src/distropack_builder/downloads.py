@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """The download phase: every source file of the run fetched once, before any build starts.
 
 A failure is known before the first build: it fails the builds that need the file, and spares the

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2020-2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 ARG DIST_ID=fedora
 ARG DIST_IMAGE=${DIST_ID}
 ARG DIST_RELEASE=latest

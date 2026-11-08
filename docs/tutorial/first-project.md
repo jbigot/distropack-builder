@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+
+SPDX-License-Identifier: MIT
+-->
+
 # Package a first project
 
 This tutorial packages `hello-greeting`, a package that installs one file, for Debian 13 and Fedora 44:

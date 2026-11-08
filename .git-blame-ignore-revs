@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 # ruff format of the whole tree, with no other change
 626fd7c8bab753c9a906f001aa028d0a17f38315
 # the builders moved from cli.py to builders.py, with no other change

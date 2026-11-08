@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """The built repositories install in clean containers, with their signatures checked.
 
 This checks that apt and dnf accept the repositories as their users configure them, signatures

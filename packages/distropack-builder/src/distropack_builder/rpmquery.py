@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """What the specs of a release say, read by the release's own rpm, in one container.
 
 rpmspec runs in the target's builder image, so that its macros (`%{?rhel}`, `%{?dist}`) expand as

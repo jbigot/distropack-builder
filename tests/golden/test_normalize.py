@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """Unit tests of the normalization kept from the golden master, on synthetic repositories."""
 
 import gzip

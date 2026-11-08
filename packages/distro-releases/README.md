@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+
+SPDX-License-Identifier: MIT
+-->
+
 # distro-releases
 
 The releases of Linux distributions, with their dates, their archive suites and their support

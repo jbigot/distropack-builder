@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """The signing key of a run, and every signature the builder makes with it but rpm's.
 
 The only module that uses pysequoia: its API still moves, so it is wrapped here rather than pinned.

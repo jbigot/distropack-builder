@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """The catalog: the six distributions, their releases loaded lazily, as of a date."""
 
 from datetime import date

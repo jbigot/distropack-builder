@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """Running one container: its output streamed to the log, its end awaited, the container removed.
 
 Every container is created with the engine quirks handled once: SELinux labelling disabled, so

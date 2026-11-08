@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """Fixtures shared by every test layer of the characterization suite.
 
 The suite runs the code moved into the packages, unchanged in behaviour, and compares it with what

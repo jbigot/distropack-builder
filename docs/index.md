@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+
+SPDX-License-Identifier: MIT
+-->
+
 # distropack-builder
 
 distropack-builder builds deb and rpm packages, and the signed repositories that serve them, for

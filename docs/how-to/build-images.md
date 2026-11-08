@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+
+SPDX-License-Identifier: MIT
+-->
+
 # Build the images locally
 
 The images are defined by a Docker bake file that distropack-builder writes; the `Docker images`

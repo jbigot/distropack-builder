@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+
+SPDX-License-Identifier: MIT
+-->
+
 # Add or drop a distribution release
 
 A distribution's `versions` in `build.conf` lists release tokens; each adds releases to what the

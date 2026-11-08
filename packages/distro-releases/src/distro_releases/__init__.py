@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """Distribution releases and their support status, from the distributions' own data."""
 
 from distro_releases.catalog import distribution, distributions

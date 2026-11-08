@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """The metadata of rpm repositories, written by the createrepo_c bindings.
 
 The only module that imports createrepo_c. Its wheel bundles a librpm that reads its configuration

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """Distributions and their releases, as immutable values.
 
 The status of a release is a function of a date, `on`, which is today when it is not given: nothing

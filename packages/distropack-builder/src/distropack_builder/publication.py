@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """Which releases a run publishes: those all of whose builds succeeded.
 
 A release with a failed, skipped or interrupted build keeps the repository of its previous run, so

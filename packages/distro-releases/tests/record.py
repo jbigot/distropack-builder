@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """Record the release data the sources of distro-releases fetch, for the tests.
 
 Run by hand, with the network: it is never collected by pytest. The URLs must stay byte-identical

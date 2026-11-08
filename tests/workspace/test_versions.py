@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """Each package takes its version from its own tag family, from a checkout and from an archive."""
 
 from pathlib import Path

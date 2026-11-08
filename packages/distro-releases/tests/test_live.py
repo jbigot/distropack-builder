@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """The live canary: the real sources still answer, and still parse into sensible releases.
 
 Run nightly by the `Live canary` workflow, never by the default test run (marker `live`).

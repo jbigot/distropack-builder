@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025-2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 FROM debian:stable-slim
 
 VOLUME /aptlyroot

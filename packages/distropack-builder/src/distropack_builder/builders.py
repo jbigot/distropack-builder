@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2020-2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """The builds of the packages, in their release's builder image, and their repositories.
 
 A package builder builds one package for one release; a repository builder publishes the

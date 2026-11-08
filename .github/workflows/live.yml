@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 # The live canary: reads the real release sources of distro-releases every night, and reports a
 # failure in an issue labelled live-canary (opened, or commented on while one is open). Nothing
 # depends on it: a source changing its format must not block any other work.

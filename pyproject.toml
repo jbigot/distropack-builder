@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 # The uv workspace of distro-releases and distropack-builder; not a package itself.
 
 [tool.uv.workspace]

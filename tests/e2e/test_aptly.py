@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """aptly, in its real image, reads what the Signer signs, whichever user it runs as."""
 
 import json

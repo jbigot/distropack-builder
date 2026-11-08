@@ -1,3 +1,7 @@
+.. SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+..
+.. SPDX-License-Identifier: MIT
+
 ..
    reStructuredText rather than MyST: inside MyST's eval-rst block, sphinx-jsonschema's
    references to its own definitions do not resolve.

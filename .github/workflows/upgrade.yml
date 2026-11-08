@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 # Runs the checks on the latest releases of every dependency and hook, without committing anything:
 # a failure here is an upgrade that breaks the code, fixed in the code, not by a pin.
 name: Upgrade

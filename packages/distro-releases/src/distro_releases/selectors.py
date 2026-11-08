@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """Which releases a configuration names.
 
 `select` reads a distribution's list of release tokens, as `build.conf` gives it; `matches` reads a

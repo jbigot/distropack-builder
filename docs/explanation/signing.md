@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+
+SPDX-License-Identifier: MIT
+-->
+
 # How packages and repositories are signed
 
 A run signs with one key per distribution, the `gpg` section of `build.conf` names it: the key

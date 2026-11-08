@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """The Docker bake definition of the images the builder runs.
 
 The definition is the one place where the images get their names and tags. A builder image is

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """Whether a registry publishes an image, asked anonymously with one manifest request.
 
 The registry's answer must be clear: an error is never read as a missing image, which would

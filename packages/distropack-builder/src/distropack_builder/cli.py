@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2020-2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """The command line of distropack-build: run, images, config and releases.
 
 Every expected error ends the command with one `distropack-build: error:` line on stderr: status 2

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """Serve recorded release data to the builder when the tests run it as a subprocess.
 
 Python imports this module at startup when its directory is on PYTHONPATH, before the builder makes

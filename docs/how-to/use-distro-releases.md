@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+
+SPDX-License-Identifier: MIT
+-->
+
 # Use distro-releases from Python
 
 `distro_releases` answers which releases a distribution has and which are supported, on a given

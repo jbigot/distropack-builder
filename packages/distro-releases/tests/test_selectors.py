@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """Selectors: build.conf's release tokens, and the distribution:release patterns."""
 
 from datetime import date

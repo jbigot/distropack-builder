@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2021-2026 Julien Bigot <julien@julien-bigot.fr>
+
+SPDX-License-Identifier: MIT
+-->
+
 # distropack-builder
 
 Tools to build deb and rpm packages & repositories.

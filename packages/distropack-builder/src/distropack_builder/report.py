@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """What a run tells: one line per build, each build's output kept together.
 
 Every build logs through its own logger (build_logger), whose records the Reporter buffers per

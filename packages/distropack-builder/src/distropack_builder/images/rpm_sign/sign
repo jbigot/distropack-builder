@@ -1,4 +1,9 @@
 #!/bin/sh
+
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 # sign <fingerprint> <rpm>...: sign the rpms with the key of /secret/key, which /secret/passphrase
 # unlocks. Both are mounted read-only for this container alone; the key is imported into a keyring
 # of the container's own, and gpg reads the passphrase from its file, never from a command line.

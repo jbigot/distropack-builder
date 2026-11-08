@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2020-2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 ARG DIST_ID=debian
 ARG DIST_RELEASE=stable-slim
 

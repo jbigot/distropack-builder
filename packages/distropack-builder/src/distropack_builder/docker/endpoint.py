@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """Which container engine to talk to.
 
 In order: the builder's own option, `DOCKER_HOST`, the current Docker context, Docker's default

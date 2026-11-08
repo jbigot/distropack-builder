@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+
+SPDX-License-Identifier: MIT
+-->
+
 # Run with rootless Docker or Podman
 
 Nothing in a run needs root on the host: under a rootless engine the whole run, containers

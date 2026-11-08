@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+
+SPDX-License-Identifier: MIT
+-->
+
 # Add a package
 
 1. Make a directory named after the package beside `build.conf`, with its packaging: `debian/`

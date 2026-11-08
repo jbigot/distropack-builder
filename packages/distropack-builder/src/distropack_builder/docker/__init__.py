@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """The containers the builder runs, through the Docker Engine API of Docker or Podman."""
 
 from distropack_builder.docker.engine import Engine

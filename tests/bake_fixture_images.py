@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 """Bake the images the golden and end-to-end tests run, from this checkout, into the local engine.
 
 The images the registry publishes are those of `main`: a branch that changes an image would

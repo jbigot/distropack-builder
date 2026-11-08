@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2020-2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
 # Builds the Docker images from the bake definition distropack-build writes, one job per image, and
 # pushes them to ghcr.io/jbigot/distropack-builder/* from main only. A release whose base image its
 # registry does not publish (yet) gets no image, by design: it is left out of the definition and
