@@ -9,6 +9,23 @@ description = "Build deb and rpm packages and their signed repositories in conta
 requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSES/MIT.txt"]
+readme = "README.md"
+authors = [{name = "Julien Bigot", email = "julien@julien-bigot.fr"}]
+keywords = ["deb", "rpm", "packaging", "apt", "dnf", "repository", "docker", "podman"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: System :: Software Distribution",
+    "Typing :: Typed",
+]
 dependencies = [
     "createrepo-c",
     "distro-releases",
@@ -24,6 +41,12 @@ dependencies = [
     "stamina",
     "typer",
 ]
+
+[project.urls]
+Homepage = "https://jbigot.github.io/distropack-builder/"
+Documentation = "https://jbigot.github.io/distropack-builder/"
+Source = "https://github.com/jbigot/distropack-builder"
+Issues = "https://github.com/jbigot/distropack-builder/issues"
 
 [project.scripts]
 distropack-build = "distropack_builder.cli:main"

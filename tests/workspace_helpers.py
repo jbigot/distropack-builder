@@ -91,6 +91,14 @@ def git_archive(repo: Path, dest: Path) -> Path:
 
 def build_wheel(tree: Path, package: str, out: Path) -> Path:
     """Build the wheel of the workspace member package from tree into out; the wheel's path."""
+    return build(tree, package, out, 'wheel')
+
+
+def build(tree: Path, package: str | None, out: Path, kind: str) -> Path:
+    """Build the `kind` distribution (sdist or wheel) of package from tree into out; its path.
+
+    With package None, tree is the project to build (an unpacked sdist).
+    """
     env = {
         k: v
         for k, v in os.environ.items()
@@ -98,14 +106,16 @@ def build_wheel(tree: Path, package: str, out: Path) -> Path:
     }
     # A configuration field setuptools-scm deprecates fails the build, before a release drops it.
     deprecated = 'error:Configuration field'
+    selection = [] if package is None else ['--package', package]
     subprocess.run(
-        ['uv', 'build', '-q', '--wheel', '--package', package, '--out-dir', str(out)],
+        ['uv', 'build', '-q', f'--{kind}', *selection, '--out-dir', str(out)],
         cwd=tree,
         env=env | GIT_ENV | {'PYTHONWARNINGS': deprecated},
         check=True,
     )
-    (wheel,) = out.glob(f'{package.replace("-", "_")}-*.whl')
-    return wheel
+    stem = '*' if package is None else package.replace('-', '_')
+    (built,) = out.glob(f'{stem}-*.whl' if kind == 'wheel' else f'{stem}-*.tar.gz')
+    return built
 
 
 def wheel_version(wheel: Path) -> str:

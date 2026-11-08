@@ -10,7 +10,27 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSES/MIT.txt"]
+authors = [{name = "Julien Bigot", email = "julien@julien-bigot.fr"}]
+keywords = ["linux", "distribution", "release", "debian", "ubuntu", "fedora", "end of life"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Operating System",
+    "Typing :: Typed",
+]
 dependencies = ["httpx", "stamina", "typer"]
+
+[project.urls]
+Homepage = "https://jbigot.github.io/distropack-builder/"
+Documentation = "https://jbigot.github.io/distropack-builder/"
+Source = "https://github.com/jbigot/distropack-builder"
+Issues = "https://github.com/jbigot/distropack-builder/issues"
 
 [project.scripts]
 distro-releases = "distro_releases.cli:app"

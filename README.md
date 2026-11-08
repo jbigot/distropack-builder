@@ -6,18 +6,18 @@ SPDX-License-Identifier: MIT
 
 # distropack-builder
 
-Tools to build deb and rpm packages & repositories.
+Build deb and rpm packages, and the signed repositories that serve them, for every supported
+release of several Linux distributions, in containers.
 
-This repository is a uv workspace of two packages:
+This repository is a uv workspace of two Python packages, released together:
 
-- `packages/distro-releases/`: the releases of each Linux distribution and their support status;
-- `packages/distropack-builder/`: the builder itself, with its Docker images under
-  `src/distropack_builder/images/`.
+- [`distropack-builder`](packages/distropack-builder/README.md), the builder, with the Docker
+  images of its builders and tools under `packages/distropack-builder/src/distropack_builder/images/`;
+- [`distro-releases`](packages/distro-releases/README.md), the releases of each Linux
+  distribution and their support status, which the builder relies on.
 
-Run the builder from a project directory holding a `build.conf`:
+The documentation is at https://jbigot.github.io/distropack-builder/, built from `docs/`;
+[CONTRIBUTING.md](CONTRIBUTING.md) says how to work on the repository, test it and release it.
 
-```sh
-uv run --project <path to this repository> distropack-build run build.conf
-```
-
-`python -m distropack_builder` is equivalent. `distropack-build images bake-file` writes the Docker bake definition of the images.
+Both packages are under the MIT license, following the [REUSE](https://reuse.software/)
+specification: `LICENSES/` holds the texts, each file its SPDX header or an entry of `REUSE.toml`.

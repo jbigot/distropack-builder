@@ -6,13 +6,14 @@
 
 import stat
 import subprocess
+import tarfile
 import zipfile
 from pathlib import Path
 
 import pytest
 
 from support import REPO_ROOT
-from workspace_helpers import build_wheel, git
+from workspace_helpers import build, build_wheel, git, tag, wheel_version
 
 pytestmark = pytest.mark.packaging
 
@@ -53,6 +54,27 @@ def test_wheel_declares_and_ships_the_license(tmp_path: Path, package: str) -> N
         metadata = archive.read(next(n for n in names if n.endswith('.dist-info/METADATA')))
     assert b'License-Expression: MIT' in metadata
     assert any(n.endswith('.dist-info/licenses/LICENSES/MIT.txt') for n in names)
+
+
+@pytest.mark.parametrize('package', ['distro-releases', 'distropack-builder'])
+def test_distributions_pass_twine_check(tmp_path: Path, package: str) -> None:
+    files = [build(REPO_ROOT, package, tmp_path / kind, kind) for kind in ('sdist', 'wheel')]
+    result = subprocess.run(
+        ['uvx', 'twine', 'check', '--strict', *map(str, files)], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_wheel_from_unpacked_sdist_keeps_version_and_license(repo: Path, tmp_path: Path) -> None:
+    tag(repo, 'distropack-builder-v1.2.3')
+    sdist = build(repo, 'distropack-builder', tmp_path / 'sdist', 'sdist')
+    with tarfile.open(sdist) as archive:
+        archive.extractall(tmp_path / 'unpacked', filter='data')
+    (tree,) = (tmp_path / 'unpacked').iterdir()
+    wheel = build(tree, None, tmp_path / 'wheel', 'wheel')
+    assert wheel_version(wheel) == '1.2.3'
+    with zipfile.ZipFile(wheel) as archive:
+        assert any(n.endswith('.dist-info/licenses/LICENSES/MIT.txt') for n in archive.namelist())
 
 
 @pytest.fixture(scope='module')
