@@ -6,3 +6,5 @@
 626fd7c8bab753c9a906f001aa028d0a17f38315
 # the builders moved from cli.py to builders.py, with no other change
 72c2318363f10f1baebdb8feae443f357bd1acdb
+# SPDX headers added to every file that takes a comment, with no other change
+3acf2b6956d04d41871ba87996aad162ca3364d4
