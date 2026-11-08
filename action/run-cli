@@ -1,0 +1,26 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
+# Runs distropack-build from the sources of the repository holding this script, as the GitHub
+# Actions do: only the third-party dependencies are installed, at the versions uv.lock pins, and
+# nothing is built, neither the two packages nor anything else (--no-build). The build
+# requirements, which uv.lock does not lock, are thus never involved, and no version is computed.
+#
+#     action/run-cli ARGS...
+#
+# The environment is $DISTROPACK_ACTION_VENV, by default distropack-builder-venv in $RUNNER_TEMP
+# (or $TMPDIR, or /tmp).
+
+set -euo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+venv=${DISTROPACK_ACTION_VENV:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/distropack-builder-venv}
+
+UV_PROJECT_ENVIRONMENT=$venv uv sync -q --project "$root" --locked --no-build \
+    --no-install-workspace --no-default-groups --package distropack-builder
+
+PYTHONPATH=$root/packages/distropack-builder/src:$root/packages/distro-releases/src${PYTHONPATH:+:$PYTHONPATH}
+export PYTHONPATH
+exec "$venv/bin/python" -m distropack_builder "$@"

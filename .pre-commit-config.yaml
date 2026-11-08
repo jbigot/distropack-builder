@@ -44,11 +44,11 @@ repos:
     require_serial: true
   - id: shellcheck
     name: shellcheck
-    # The release scripts only, until Phase 10 rewrites the builder entrypoints.
+    # The release scripts and the action's, until Phase 10 rewrites the builder entrypoints.
     entry: uv run --frozen shellcheck
     language: system
     types: [shell]
-    files: ^\.github/scripts/
+    files: ^(\.github/scripts|action)/
 - repo: https://github.com/astral-sh/uv-pre-commit
   rev: 0.13.7
   hooks:
