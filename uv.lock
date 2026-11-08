@@ -36,6 +36,7 @@ docs = [
     { name = "myst-parser" },
     { name = "sphinx" },
     { name = "sphinx-jsonschema" },
+    { name = "sphinx-polyversion" },
     { name = "sphinxcontrib-typer" },
 ]
 
@@ -1619,6 +1620,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/66/7e/c6632d91066e2d68ae12f5ef78fa369a8ad77c6498f2ceed8aa766616758/sphinx_jsonschema-1.20.1.tar.gz", hash = "sha256:56d84e2051d7221d9089f11d113abe45581aa5e1a3e9c2bf99f96f5e5696b4f2", size = 29681, upload-time = "2026-10-25T20:08:28.138Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6f/f0/deaa6acea49c5faefd7ffea0cde0eeebf3635d5393d3aaecc7b9baacb5a6/sphinx_jsonschema-1.20.1-py3-none-any.whl", hash = "sha256:cc78a68213be2e13c7d4c4bff3231c6389c8f53e3fedd0016d047d4f41821e5c", size = 28584, upload-time = "2026-10-25T20:08:26.937Z" },
+]
+
+[[package]]
+name = "sphinx-polyversion"
+version = "3.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/63/b3/4192a156c9970ab903e1bc297f98820b2fe482554bf6807b89a7be35a51d/sphinx_polyversion-3.0.0.tar.gz", hash = "sha256:b716098fb7971c14ce117d85af1f3e09c37bdddc83f37f857a489bf7dd030050", size = 32881, upload-time = "2026-07-29T13:12:02.5Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/19/e6/d0423fc188fc584257131618d82efa950afa4697397a32b0c4eb6440c3e2/sphinx_polyversion-3.0.0-py3-none-any.whl", hash = "sha256:5774b16a5f05b539d396da9f1aea0130b862790d6735f7321a4cb021749dfe44", size = 36727, upload-time = "2026-07-29T13:12:03.736Z" },
 ]
 
 [[package]]

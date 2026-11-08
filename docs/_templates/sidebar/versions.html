@@ -1,0 +1,19 @@
+{#-
+SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+
+SPDX-License-Identifier: MIT
+
+The versions of the site, in Furo's sidebar; empty outside sphinx-polyversion.
+-#}
+{%- if versions %}
+<div class="sidebar-tree sidebar-versions">
+  <p class="caption" role="heading"><span class="caption-text">Versions</span></p>
+  <ul>
+    {%- for name in versions %}
+    <li class="toctree-l1{% if name == current %} current current-page{% endif %}">
+      <a class="reference" href="{{ pathto(root_doc) | replace('index.html', '') }}../{{ name }}/index.html">{{ name }}</a>
+    </li>
+    {%- endfor %}
+  </ul>
+</div>
+{%- endif %}

@@ -30,6 +30,7 @@ docs = [
     "myst-parser",
     "sphinx",
     "sphinx-jsonschema",
+    "sphinx-polyversion",
     "sphinxcontrib-typer",
 ]
 
