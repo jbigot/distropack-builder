@@ -17,7 +17,8 @@ import respx
 from typer.testing import CliRunner, Result
 
 from distropack_builder import cli, config
-from fake_runner import FakeRunner, tools_respond
+from distropack_builder.docker import RunResult
+from fake_runner import Call, FakeRunner, tools_respond
 from support import FIXTURE_PASSPHRASE, make_project
 
 PASSPHRASE_ENV = 'DISTROPACK_GPG_PASSPHRASE'
@@ -245,3 +246,83 @@ def test_nothing_to_build(
     result = CliRunner().invoke(app, ['run'], env={'COLUMNS': '200'})
     assert result.exit_code == 0, result.output
     assert result.stderr == 'distropack-build: nothing to build: build.conf selects no release\n'
+
+
+def read_outputs(path: Path) -> dict[str, str]:
+    """The name=value lines of a GITHUB_OUTPUT file."""
+    return dict(line.split('=', 1) for line in path.read_text().splitlines())
+
+
+def fail_builds(call: Call) -> RunResult | None:
+    """The tools answer, every build fails."""
+    if call.is_build:
+        raise RuntimeError('the build failed')
+    return tools_respond(call)
+
+
+def test_run_writes_outputs(project: Path, tmp_path: Path) -> None:
+    output = tmp_path / 'output'
+    env = {PASSPHRASE_ENV: FIXTURE_PASSPHRASE, 'GITHUB_OUTPUT': str(output)}
+    result = invoke('run', runner=FakeRunner(tools_respond), env=env)
+    assert result.exit_code == 0, result.output
+    outputs = read_outputs(output)
+    assert outputs['failed'] == 'false'
+    assert json.loads(outputs['output-dirs']) == {'debian': str(project / 'repositories/debian')}
+
+
+def test_failed_run_writes_failed_true(project: Path, tmp_path: Path) -> None:
+    output = tmp_path / 'output'
+    env = {PASSPHRASE_ENV: FIXTURE_PASSPHRASE, 'GITHUB_OUTPUT': str(output)}
+    result = invoke('run', runner=FakeRunner(fail_builds), env=env)
+    assert result.exit_code == 1, result.output
+    assert read_outputs(output)['failed'] == 'true'
+
+
+def test_output_dirs_are_absolute(
+    project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(project.parent)
+    output = tmp_path / 'output'
+    env = {PASSPHRASE_ENV: FIXTURE_PASSPHRASE, 'GITHUB_OUTPUT': str(output)}
+    result = invoke('run', 'project/build.conf', runner=FakeRunner(tools_respond), env=env)
+    assert result.exit_code == 0, result.output
+    (directory,) = json.loads(read_outputs(output)['output-dirs']).values()
+    assert Path(directory).is_absolute()
+    assert Path(directory) == project.resolve() / 'repositories/debian'
+
+
+def test_unwritable_github_output(project: Path, tmp_path: Path) -> None:
+    env = {PASSPHRASE_ENV: FIXTURE_PASSPHRASE, 'GITHUB_OUTPUT': str(tmp_path / 'no' / 'output')}
+    result = invoke('run', runner=FakeRunner(tools_respond), env=env)
+    assert result.exit_code == 1
+    (line,) = result.stderr.splitlines()
+    assert line.startswith('distropack-build: error: cannot write the outputs to')
+
+
+def test_nothing_selected_writes_outputs(
+    recorded_http: respx.MockRouter, frozen: date, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_conf(tmp_path, 'distribs: {debian: {versions: [trixie, available]}}\npackages: {}\n')
+    manifest = 'https://ghcr.io/v2/jbigot/distropack-builder/debian_builder/manifests/trixie-p2'
+    recorded_http.head(manifest).respond(404)
+    output = tmp_path / 'output'
+    result = invoke('run', env={'GITHUB_OUTPUT': str(output)})
+    assert result.exit_code == 0, result.output
+    assert read_outputs(output) == {'failed': 'false', 'output-dirs': '{}'}
+
+
+def test_releases_list_writes_releases(
+    recorded_http: respx.MockRouter, frozen: date, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_conf(tmp_path, 'distribs: {debian: {versions: [bookworm, trixie]}}\npackages: {}\n')
+    output = tmp_path / 'output'
+    result = invoke('releases', 'list', '--json', env={'GITHUB_OUTPUT': str(output)})
+    assert result.exit_code == 0, result.output
+    expected = json.dumps(json.loads(result.stdout), separators=(',', ':'))
+    assert read_outputs(output) == {'releases': expected}
+    # the plain text listing writes the same output
+    output.unlink()
+    assert invoke('releases', 'list', env={'GITHUB_OUTPUT': str(output)}).exit_code == 0
+    assert read_outputs(output) == {'releases': expected}

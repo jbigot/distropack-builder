@@ -35,6 +35,7 @@ from distropack_builder.docker import Cancellation, Engine
 from distropack_builder.docker import run as run_container
 from distropack_builder.docker.endpoint import EngineNotFound, RemoteEndpoint
 from distropack_builder.downloads import new_client
+from distropack_builder.github import GithubOutputError, write_outputs
 from distropack_builder.report import Reporter, github_mode
 from distropack_builder.selection import configured_releases, disabled_releases
 from distropack_builder.signing import Signer, SigningKeyError
@@ -60,7 +61,7 @@ _USAGE_ERRORS = (
     UnknownDistribution,
     targets.NotATarget,
 )
-_RUN_ERRORS = (AvailabilityError, SigningKeyError, SourceError)
+_RUN_ERRORS = (AvailabilityError, GithubOutputError, SigningKeyError, SourceError)
 
 
 def _fail(status: int, error: Exception) -> NoReturn:
@@ -147,6 +148,11 @@ def _write(text: str, output: Path | None) -> None:
         output.write_text(text)
 
 
+def _compact(value: object) -> str:
+    """The JSON of value, on one line, as a GitHub Actions output."""
+    return json.dumps(value, separators=(',', ':'))
+
+
 def _release_name(release: Release) -> str:
     """A release as its image tag names it: its codename in the Debian family, else its version."""
     name = release.codename if targets.is_deb(release.distribution) else release.version
@@ -186,8 +192,15 @@ def make_app(
         # work; then the engine, before any container.
         loaded, selected = _selection(build_conf, patterns, on)
         readme.check(readme.project_dir(loaded.root))
-        if not any(selected.values()):
+        # The repositories this run publishes, for the step running it under GitHub Actions.
+        output_dirs = {
+            dist_id: str(loaded.root / distrib.repository.path)
+            for dist_id, distrib in loaded.distribs.items()
+            if selected[dist_id]
+        }
+        if not output_dirs:
             typer.echo(f'{PROG}: nothing to build: {build_conf} selects no release', err=True)
+            write_outputs(os.environ, {'failed': 'false', 'output-dirs': '{}'})
             return False
         disabled = disabled_releases(loaded, selected, on)
         try:
@@ -215,7 +228,11 @@ def make_app(
                     summary=Path(summary) if summary else None,
                 )
             )
-            return run_builds(context, reporter, loaded, selected, disabled, signer_for)
+            failed = run_builds(context, reporter, loaded, selected, disabled, signer_for)
+        write_outputs(
+            os.environ, {'failed': str(failed).lower(), 'output-dirs': _compact(output_dirs)}
+        )
+        return failed
 
     @app.command()
     def run(
@@ -313,8 +330,11 @@ def make_app(
             for dist_id in loaded.distribs
             for release in sorted(selected[dist_id])
         ]
+        listed = [{'distrib': d, 'release': r} for d, r in found]
+        with _errors():
+            write_outputs(os.environ, {'releases': _compact(listed)})
         if as_json:
-            typer.echo(json.dumps([{'distrib': d, 'release': r} for d, r in found], indent=2))
+            typer.echo(json.dumps(listed, indent=2))
         else:
             for dist_id, release in found:
                 typer.echo(f'{dist_id}:{release}')
