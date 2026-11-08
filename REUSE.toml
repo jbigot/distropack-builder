@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
+# The files that take no comment, or whose bytes the tests compare, are annotated here. The
+# third-party data come last: when several annotations match a file, the last one applies.
+version = 1
+
+[[annotations]]
+path = [
+    "**/__snapshots__/**",
+    "**/py.typed",
+    "**/.git_archival.txt",
+    ".python-version",
+    "uv.lock",
+    "packages/*/tests/data/**",
+    "packages/distropack-builder/src/distropack_builder/rpm_config/**",
+    "tests/characterization/data/**",
+    "tests/e2e/project/**",
+    "tests/golden/data/**",
+]
+SPDX-FileCopyrightText = "2026 Julien Bigot <julien@julien-bigot.fr>"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = ["packages/distro-releases/tests/data/debian.csv", "packages/distro-releases/tests/data/ubuntu.csv"]
+SPDX-FileCopyrightText = ["2009-2024 Benjamin Drung <bdrung@debian.org>", "2009-2021 Stefano Rivera <stefanor@debian.org>"]
+SPDX-License-Identifier = "ISC"
+
+[[annotations]]
+path = "packages/distro-releases/tests/data/endoflife-*.json"
+SPDX-FileCopyrightText = "endoflife.date contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "packages/distro-releases/tests/data/bodhi-releases-1.json"
+SPDX-FileCopyrightText = "Fedora Project contributors"
+SPDX-License-Identifier = "CC-BY-SA-4.0"
+
+[[annotations]]
+path = "packages/distropack-builder/tests/data/pdidev-build.conf"
+SPDX-FileCopyrightText = "2013-2026 Julien Bigot - CEA"
+SPDX-License-Identifier = "MIT"

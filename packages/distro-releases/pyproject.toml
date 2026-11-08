@@ -8,6 +8,8 @@ dynamic = ["version"]
 description = "Release data of Linux distributions: which releases exist and which are supported"
 readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSES/MIT.txt"]
 dependencies = ["httpx", "stamina", "typer"]
 
 [project.scripts]

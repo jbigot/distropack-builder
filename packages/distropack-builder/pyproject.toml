@@ -7,6 +7,8 @@ name = "distropack-builder"
 dynamic = ["version"]
 description = "Build deb and rpm packages and their signed repositories in containers"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSES/MIT.txt"]
 dependencies = [
     "createrepo-c",
     "distro-releases",

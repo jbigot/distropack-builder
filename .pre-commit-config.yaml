@@ -54,3 +54,7 @@ repos:
   rev: v1.32.0
   hooks:
   - id: zizmor
+- repo: https://github.com/fsfe/reuse-tool
+  rev: v6.3.0
+  hooks:
+  - id: reuse

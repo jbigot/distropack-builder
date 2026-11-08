@@ -45,6 +45,16 @@ def test_wheel_ships_the_templates(tmp_path: Path) -> None:
         assert 'distropack_builder/templates/README.html.j2' in archive.namelist()
 
 
+@pytest.mark.parametrize('package', ['distro-releases', 'distropack-builder'])
+def test_wheel_declares_and_ships_the_license(tmp_path: Path, package: str) -> None:
+    wheel = build_wheel(REPO_ROOT, package, tmp_path)
+    with zipfile.ZipFile(wheel) as archive:
+        names = archive.namelist()
+        metadata = archive.read(next(n for n in names if n.endswith('.dist-info/METADATA')))
+    assert b'License-Expression: MIT' in metadata
+    assert any(n.endswith('.dist-info/licenses/LICENSES/MIT.txt') for n in names)
+
+
 @pytest.fixture(scope='module')
 def installed(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """A fresh venv with both wheels installed, outside the workspace; its bin directory."""
