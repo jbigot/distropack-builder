@@ -69,3 +69,10 @@ def test_patterns() -> None:
     assert options('  \n ') == []
     # a pattern is never expanded as a file name
     assert options('*') == ['-D', '*']
+
+
+@pytest.mark.parametrize('path', ACTIONS, ids=['build', 'plan'])
+def test_uv_ignores_the_callers_settings(path: Path) -> None:
+    # setup-uv looks for a required uv version in its working directory, the caller's by default
+    (setup,) = (s for s in steps(path) if s.get('uses', '').startswith('astral-sh/setup-uv@'))
+    assert setup['with']['working-directory'] == '${{ github.action_path }}'
