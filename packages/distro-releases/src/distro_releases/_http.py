@@ -4,7 +4,7 @@
 
 """The only module of distro-releases that reaches the network."""
 
-from importlib.metadata import version
+import importlib.metadata
 
 import httpx
 import stamina
@@ -14,12 +14,20 @@ from distro_releases.errors import SourceError
 ATTEMPTS = 5
 
 
+def _version() -> str:
+    """The installed version of distro-releases, or `unknown` when it runs from its sources."""
+    try:
+        return importlib.metadata.version('distro-releases')
+    except importlib.metadata.PackageNotFoundError:
+        return 'unknown'
+
+
 def new_client() -> httpx.Client:
     """An HTTP client for the sources: 30 s timeout, redirects followed, a User-Agent of ours."""
     return httpx.Client(
         timeout=30,
         follow_redirects=True,
-        headers={'User-Agent': f'distro-releases/{version("distro-releases")}'},
+        headers={'User-Agent': f'distro-releases/{_version()}'},
     )
 
 

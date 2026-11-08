@@ -4,6 +4,7 @@
 
 import _thread
 import gzip
+import importlib.metadata
 import lzma
 import time
 from collections.abc import Iterator
@@ -15,6 +16,7 @@ import pytest
 import respx
 import stamina
 
+from distropack_builder import downloads
 from distropack_builder.docker import Cancellation, Cancelled
 from distropack_builder.downloads import DownloadFailed, fetch_all, orig_name, source_name
 
@@ -149,3 +151,13 @@ def test_cancel_stops_retries(tmp_path: Path) -> None:
     with pytest.raises(Cancelled):
         fetch(URL, directory=tmp_path, cancellation=cancellation)
     assert route.call_count == 1
+
+
+def test_user_agent_without_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Run from the sources, as the GitHub Action does, no distribution metadata is installed.
+    def missing(name: str) -> str:
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(importlib.metadata, 'version', missing)
+    with downloads.new_client() as client:
+        assert client.headers['User-Agent'] == 'distropack-builder/unknown'

@@ -8,10 +8,10 @@ A failure is known before the first build: it fails the builds that need the fil
 others. Transient failures (transport errors, timeouts, server errors) are retried.
 """
 
+import importlib.metadata
 from collections.abc import Iterable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from hashlib import sha256
-from importlib.metadata import version
 from pathlib import Path, PurePosixPath
 from urllib.parse import parse_qsl, urlparse
 
@@ -35,12 +35,20 @@ class DownloadFailed(Exception):
         self.url = url
 
 
+def _version() -> str:
+    """The installed version of distropack-builder, or `unknown` when it runs from its sources."""
+    try:
+        return importlib.metadata.version('distropack-builder')
+    except importlib.metadata.PackageNotFoundError:
+        return 'unknown'
+
+
 def new_client() -> httpx.Client:
     """The client of the downloads: 30 s timeout, redirects followed, a User-Agent of ours."""
     return httpx.Client(
         timeout=30,
         follow_redirects=True,
-        headers={'User-Agent': f'distropack-builder/{version("distropack-builder")}'},
+        headers={'User-Agent': f'distropack-builder/{_version()}'},
     )
 
 
