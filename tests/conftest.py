@@ -16,6 +16,10 @@ import os
 os.environ.pop('FORCE_COLOR', None)
 os.environ.pop('GITHUB_ACTIONS', None)
 os.environ.pop('PY_COLORS', None)
+# The files of the CI step running the tests: the commands they run would write the step's outputs
+# and append their tables to its summary page.
+os.environ.pop('GITHUB_OUTPUT', None)
+os.environ.pop('GITHUB_STEP_SUMMARY', None)
 
 import importlib
 import json
