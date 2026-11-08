@@ -34,7 +34,7 @@ those lists only shrink.
 | `live` | `uv run pytest -m live` | the network: it reads the real release sources of distro-releases (the nightly `Live canary` workflow, which opens an issue labelled `live-canary` when it fails) |
 
 `.python-version` makes 3.13 the default interpreter, the one CI's `e2e` and `packaging` jobs use;
-`uv run --python 3.12 pytest` runs the unit tests on another one, as the CI matrix does.
+`uv run --python 3.14 pytest` runs the unit tests on another one, as the CI matrix does.
 
 `e2e` runs the images of the checkout, not those the registry publishes from `main`:
 bake them into the local engine first, with `uv run python tests/bake_fixture_images.py` (the
@@ -92,7 +92,7 @@ workflow:
    tag's version (`.github/scripts/check-tag-version`); a tag whose commit builds another version
    stops there;
 2. `test` installs both packages from their wheels, then from their sdists, in fresh virtual
-   environments on Python 3.12 and 3.14, and runs the unit suite against them
+   environments on Python 3.13 and 3.14, and runs the unit suite against them
    (`.github/scripts/test-installed`, which first checks that the modules come from the
    installation, not from the checkout);
 3. `publish` uploads the tagged package to PyPI through trusted publishing, from the `pypi`

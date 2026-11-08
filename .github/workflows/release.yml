@@ -62,7 +62,7 @@ jobs:
       fail-fast: false
       matrix:
         kind: [wheel, sdist]
-        python: ["3.12", "3.14"]
+        python: ["3.13", "3.14"]
     env:
       UV_PYTHON: ${{ matrix.python }}
     steps:

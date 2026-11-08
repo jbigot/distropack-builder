@@ -7,7 +7,7 @@ name = "distro-releases"
 dynamic = ["version"]
 description = "Release data of Linux distributions: which releases exist and which are supported"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 license = "MIT"
 license-files = ["LICENSES/MIT.txt"]
 authors = [{name = "Julien Bigot", email = "julien@julien-bigot.fr"}]
@@ -17,7 +17,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
