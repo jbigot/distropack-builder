@@ -71,6 +71,14 @@ def test_patterns() -> None:
     assert options('*') == ['-D', '*']
 
 
+def test_dependabot_updates_every_action() -> None:
+    config = load(REPO_ROOT / '.github' / 'dependabot.yml')
+    (entry,) = (u for u in config['updates'] if u['package-ecosystem'] == 'github-actions')
+    directories = set(entry.get('directories', [entry.get('directory')]))
+    for path in ACTIONS:
+        assert '/' + str(path.parent.relative_to(REPO_ROOT)).removeprefix('.') in directories
+
+
 @pytest.mark.parametrize('path', ACTIONS, ids=['build', 'plan'])
 def test_uv_ignores_the_callers_settings(path: Path) -> None:
     # setup-uv looks for a required uv version in its working directory, the caller's by default

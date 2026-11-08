@@ -18,7 +18,8 @@ updates:
   groups:
     uv: { patterns: ["*"] }
 - package-ecosystem: github-actions
-  directory: /
+  # / covers the workflows and the root action.yml only, not plan/action.yml.
+  directories: [/, /plan]
   schedule: { interval: weekly }
   cooldown: { default-days: 7 }
   groups:
