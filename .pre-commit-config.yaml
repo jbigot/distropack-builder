@@ -65,3 +65,7 @@ repos:
   rev: v6.3.0
   hooks:
   - id: reuse
+- repo: https://github.com/python-jsonschema/check-jsonschema
+  rev: 0.39.0
+  hooks:
+  - id: check-dependabot

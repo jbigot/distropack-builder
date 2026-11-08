@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
+# Weekly pull requests updating what this repository pins: uv.lock, the workflow actions (pinned by
+# commit) and the pre-commit hooks, one pull request per ecosystem. The Upgrade workflow keeps
+# running the checks on the latest versions of everything, Dependabot or not.
+#
+# No `docker` entry: the images' base images are floating tags (debian:stable-slim, fedora:latest)
+# or chosen per release through build arguments (FROM ${DIST_IMAGE}:${DIST_RELEASE}), and the
+# Docker images workflow rebuilds them every night; Dependabot can bump neither kind.
+version: 2
+updates:
+- package-ecosystem: uv
+  directory: /
+  schedule: { interval: weekly }
+  cooldown: { default-days: 7 }
+  groups:
+    uv: { patterns: ["*"] }
+- package-ecosystem: github-actions
+  directory: /
+  schedule: { interval: weekly }
+  cooldown: { default-days: 7 }
+  groups:
+    github-actions: { patterns: ["*"] }
+- package-ecosystem: pre-commit
+  directory: /
+  schedule: { interval: weekly }
+  cooldown: { default-days: 7 }
+  groups:
+    pre-commit: { patterns: ["*"] }
