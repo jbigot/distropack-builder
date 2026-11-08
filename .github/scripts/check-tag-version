@@ -1,0 +1,51 @@
+#!/bin/bash
+
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
+# check-tag-version TAG [DIST_DIR]
+#
+# With TAG alone, prints the package a version tag releases (distro-releases-v<version> or
+# distropack-builder-v<version>), and exits 2 for a tag of no such family. With DIST_DIR, exits 0
+# when every distribution there is one of that package at exactly the tag's version, and 1 naming
+# each one that is not. Tags carry the version as the build writes it (PEP 440, normalized).
+
+set -euo pipefail
+
+tag=$1
+case "$tag" in
+  distro-releases-v?*) package=distro-releases ;;
+  distropack-builder-v?*) package=distropack-builder ;;
+  *)
+    echo "$tag is not a version tag of distro-releases or distropack-builder"
+    exit 2
+    ;;
+esac
+version=${tag#"$package"-v}
+
+if [ $# -lt 2 ]; then
+  echo "$package"
+  exit 0
+fi
+
+expected=${package//-/_}-$version
+found=0
+status=0
+for file in "$2"/*.whl "$2"/*.tar.gz; do
+  [ -e "$file" ] || continue
+  found=1
+  name=$(basename "$file")
+  case "$name" in
+    "$expected"-*.whl | "$expected".tar.gz) ;;
+    *)
+      echo "$name is not $expected, which $tag releases"
+      status=1
+      ;;
+  esac
+done
+if [ "$found" = 0 ]; then
+  echo "no distribution in $2 for $tag"
+  exit 1
+fi
+exit "$status"

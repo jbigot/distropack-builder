@@ -1,0 +1,54 @@
+#!/bin/bash
+
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
+# test-installed DIST_DIR wheel|sdist
+#
+# Runs the unit suite of this checkout against both packages installed, in a fresh virtual
+# environment, from the wheels or from the sdists found under DIST_DIR, never from the workspace.
+# Run from the checkout's root. UV_PYTHON chooses the interpreter, as for any uv command.
+
+set -euo pipefail
+
+dist=$(realpath "$1")
+case "$2" in
+  wheel) pattern='*.whl' ;;
+  sdist) pattern='*.tar.gz' ;;
+  *)
+    echo "usage: $0 DIST_DIR wheel|sdist" >&2
+    exit 2
+    ;;
+esac
+mapfile -t files < <(find "$dist" -name "$pattern" | sort)
+if [ "${#files[@]}" -ne 2 ]; then
+  echo "expected the $2 of both packages under $1, found: ${files[*]:-nothing}" >&2
+  exit 1
+fi
+
+scratch=$(mktemp -d)
+trap 'rm -rf "$scratch"' EXIT
+uv venv -q "$scratch/venv"
+python=$scratch/venv/bin/python
+# The test requirements, without the workspace members: those come from the distributions.
+uv export -q --frozen --only-group dev --no-emit-workspace --no-hashes -o "$scratch/requirements.txt"
+uv pip install -q --python "$python" "${files[@]}" -r "$scratch/requirements.txt"
+
+"$python" - "$scratch/venv" <<'EOF'
+import sys
+from pathlib import Path
+
+import distro_releases
+import distropack_builder
+
+venv = Path(sys.argv[1]).resolve()
+for module in (distro_releases, distropack_builder):
+    path = Path(module.__file__).resolve()
+    if venv not in path.parents or 'site-packages' not in path.parts:
+        sys.exit(f'{module.__name__} is imported from {path}, not from the installed {sys.argv[1]}')
+    print(f'{module.__name__} from {path}')
+EOF
+
+# Not `uv run`, which would sync the workspace into its own environment.
+"$python" -m pytest -p no:cacheprovider

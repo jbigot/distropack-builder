@@ -42,6 +42,13 @@ repos:
     types_or: [python, pyi, toml]
     pass_filenames: false
     require_serial: true
+  - id: shellcheck
+    name: shellcheck
+    # The release scripts only, until Phase 10 rewrites the builder entrypoints.
+    entry: uv run --frozen shellcheck
+    language: system
+    types: [shell]
+    files: ^\.github/scripts/
 - repo: https://github.com/astral-sh/uv-pre-commit
   rev: 0.13.7
   hooks:

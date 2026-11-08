@@ -80,6 +80,45 @@ repository's tags.
 `ghcr.io/jbigot/distropack-builder/`; nothing else is published from this repository (packages,
 tags or documentation) before the initial release.
 
+## Releasing
+
+A version tag releases one package: `distro-releases-v<X.Y.Z>` releases `distro-releases`,
+`distropack-builder-v<X.Y.Z>` releases `distropack-builder`. The tag carries the version as the
+build writes it (PEP 440, normalized: `1.2.0rc1`, not `1.2.0-rc1`). Pushing it runs the `Release`
+workflow:
+
+1. `build` builds both packages, each sdist then its wheel from that sdist, checks them with
+   `twine check --strict`, and checks that the tagged package's distributions carry exactly the
+   tag's version (`.github/scripts/check-tag-version`); a tag whose commit builds another version
+   stops there;
+2. `test` installs both packages from their wheels, then from their sdists, in fresh virtual
+   environments on Python 3.12 and 3.14, and runs the unit suite against them
+   (`.github/scripts/test-installed`, which first checks that the modules come from the
+   installation, not from the checkout);
+3. `publish` uploads the tagged package to PyPI through trusted publishing, from the `pypi`
+   environment, the only job with `id-token: write`.
+
+Running the workflow by hand, on any branch, is the dry run: `build` and `test` run, `publish`
+never does. Locally:
+
+```sh
+uv build --all-packages --out-dir /tmp/dist
+.github/scripts/test-installed /tmp/dist wheel   # or sdist
+```
+
+Nothing is tagged before the initial release (Phase 10 of the modernization plan), which also
+configures the PyPI side: the `pypi` environment of this repository and a trusted publisher per
+package naming this repository, `release.yml` and that environment.
+
+## Licensing
+
+Both packages are under the MIT license and the repository follows the
+[REUSE specification](https://reuse.software/spec/), which the `reuse` pre-commit hook checks: a
+new file starts with the two SPDX lines (`reuse annotate --copyright "Julien Bigot
+<julien@julien-bigot.fr>" --license MIT --year 2026 <file>` writes them), and a file that takes
+no comment, or whose bytes a test compares, gets an entry in `REUSE.toml` instead. Third-party
+data keep their own notice there.
+
 ## Dependencies
 
 Nothing is pinned: `uv.lock` makes runs reproducible, and the weekly `Upgrade` workflow runs the

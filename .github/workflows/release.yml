@@ -1,0 +1,90 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
+# Builds both packages (sdist, then the wheel from it), checks them, and runs the unit suite against
+# each installed distribution. A version tag (distro-releases-v<version> or
+# distropack-builder-v<version>) also publishes its package to PyPI, through trusted publishing,
+# once the build reproduces the tag's version. A manual run never publishes: it is the dry run.
+# The PyPI side (the trusted publishers and the `pypi` environment) is configured at the initial
+# release, in Phase 10 of the modernization; nothing is tagged before.
+name: Release
+on:
+  push:
+    tags:
+    - distro-releases-v*
+    - distropack-builder-v*
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  UV_LOCKED: 1
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    outputs:
+      package: ${{ steps.tag.outputs.package }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The versions come from the tags and the history.
+      with: { persist-credentials: false, fetch-depth: 0 }
+    # No cache in a workflow that publishes.
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with: { enable-cache: false }
+    - name: The package the tag releases
+      id: tag
+      if: github.ref_type == 'tag'
+      shell: bash
+      env:
+        TAG: ${{ github.ref_name }}
+      run: echo "package=$(.github/scripts/check-tag-version "$TAG")" >> "$GITHUB_OUTPUT"
+    # Both packages, even for a tag: the builder's tests need the distro-releases it depends on.
+    - name: Build
+      shell: bash
+      run: |
+        for package in distro-releases distropack-builder; do
+          uv build --package "$package" --out-dir "dist/$package"
+        done
+    - run: uvx twine check --strict dist/*/*
+    - name: The tag's version
+      if: github.ref_type == 'tag'
+      shell: bash
+      env:
+        TAG: ${{ github.ref_name }}
+        PACKAGE: ${{ steps.tag.outputs.package }}
+      run: .github/scripts/check-tag-version "$TAG" "dist/$PACKAGE"
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with: { name: dist, path: dist/, if-no-files-found: error }
+  test:
+    needs: build
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [wheel, sdist]
+        python: ["3.12", "3.14"]
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with: { persist-credentials: false }
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with: { enable-cache: false }
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with: { name: dist, path: dist }
+    - run: .github/scripts/test-installed dist "${{ matrix.kind }}"
+  publish:
+    needs: [build, test]
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/project/${{ needs.build.outputs.package }}/
+    permissions:
+      id-token: write
+    steps:
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with: { name: dist, path: dist }
+    - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+      with:
+        packages-dir: dist/${{ needs.build.outputs.package }}/
