@@ -43,7 +43,8 @@ def test_without_tag_builds_main_alone(repo: Path, tmp_path: Path) -> None:
 
 def test_root_opens_the_highest_version(repo: Path, tmp_path: Path) -> None:
     tag(repo, 'distropack-builder-v1.9.0', 'HEAD~1')
-    tag(repo, 'distropack-builder-v1.10.0')
+    # annotated, as a release may be: its links must still reach the files
+    git(repo, 'tag', '-a', '-m', 'Release 1.10.0', 'distropack-builder-v1.10.0')
     tag(repo, 'distro-releases-v5.0.0')
     tag(repo, 'v9.0.0')
     site = build_site(repo, tmp_path / 'site')
@@ -52,6 +53,8 @@ def test_root_opens_the_highest_version(repo: Path, tmp_path: Path) -> None:
     switcher = (site / '1.9.0' / 'index.html').read_text()
     for name in ('main', '1.9.0', '1.10.0'):
         assert f'../{name}/index.html' in switcher, name
+    why = (site / '1.10.0' / 'explanation' / 'why.html').read_text()
+    assert 'blob/distropack-builder-v1.10.0/tests/e2e/test_install.py' in why
 
 
 def test_a_failing_version_fails_the_build(repo: Path, tmp_path: Path) -> None:

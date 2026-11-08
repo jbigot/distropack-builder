@@ -54,3 +54,11 @@ def test_link_pattern() -> None:
         (None, 'a.py'),
         ('test_x', 'b/c.py'),
     ]
+
+
+def test_departures_name_those_of_the_code() -> None:
+    # The builder passes -P<distrib>,<codename> to dpkg-buildpackage and apt-get build-dep, and
+    # downloads rpm sources itself (builders.py): goal 6 lists every departure.
+    departures = goals(PAGE.read_text())[6]
+    assert 'build profiles' in departures
+    assert 'spectool' in departures

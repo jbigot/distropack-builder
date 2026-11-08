@@ -152,4 +152,4 @@ uv run --group docs sphinx-polyversion docs/poly.py <output directory>
 It reads the local `main`, or `origin`'s when there is no local one, and fails when any version
 fails to build. The `Docs` workflow builds it on every push to `main` and leaves it as the run's
 `site` artifact; nothing deploys it before the initial release. In a page, ``{source}`<path>` ``
-links a file of the repository at the commit that version is built from.
+links a file of the repository as of that version: its tag, or `main`'s commit.

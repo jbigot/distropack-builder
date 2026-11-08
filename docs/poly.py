@@ -104,11 +104,15 @@ class UvEnvironment(VirtualPythonEnvironment):
 def data(
     driver: DefaultDriver[GitRef, UvEnvironment, Any], ref: GitRef, env: Any
 ) -> dict[str, Any]:
-    """What a version's pages know: every version, theirs, and the commit they are built from."""
+    """What a version's pages know: every version, theirs, and the git ref their links name.
+
+    A release's links name its tag: an annotated tag's object, which sphinx-polyversion gives,
+    is not a commit, and GitHub resolves no file under it.
+    """
     return {
         'versions': ordered(driver.targets),
         'current': version_name(ref),
-        'commit': ref.obj,
+        'source_ref': ref.name if ref.type_ == GitRefType.TAG else ref.obj,
     }
 
 
