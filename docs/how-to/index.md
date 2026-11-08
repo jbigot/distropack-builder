@@ -6,7 +6,7 @@ SPDX-License-Identifier: MIT
 
 # How-to guides
 
-One guide per task; using the GitHub Action and its release matrix is to come.
+One guide per task.
 
 - [Add a package](add-package.md)
 - [Add or drop a distribution release](releases.md)

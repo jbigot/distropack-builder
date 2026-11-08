@@ -62,3 +62,13 @@ def test_departures_name_those_of_the_code() -> None:
     departures = goals(PAGE.read_text())[6]
     assert 'build profiles' in departures
     assert 'spectool' in departures
+
+
+def test_indexes_list_their_pages_and_promise_nothing() -> None:
+    for section in ('how-to', 'reference', 'explanation', 'tutorial'):
+        directory = REPO_ROOT / 'docs' / section
+        index = (directory / 'index.md').read_text()
+        assert 'to come' not in index, section
+        for page in directory.glob('*.*'):
+            if page.stem != 'index' and page.suffix in ('.md', '.rst'):
+                assert f'({page.name})' in index, page
