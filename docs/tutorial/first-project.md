@@ -188,3 +188,37 @@ EOF
 
 Both refuse a repository whose signatures do not check. Once the repositories are served, the
 `index.html` of each gives your users the same instructions, with the real URLs.
+
+## Build in CI
+
+The same build runs in a GitHub Actions workflow with the action. Store the content of `key.gpg`
+(armored, as exported above) as the repository secret `HELLO_KEY`, the passphrase as
+`HELLO_PASSPHRASE`, and add `.github/workflows/packages.yml`:
+
+```yaml
+name: Packages
+on:
+  push: { branches: [main] }
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@<commit hash> # v7.0.1
+      with: { persist-credentials: false }
+    - env: { KEY: "${{ secrets.HELLO_KEY }}" }
+      run: printf '%s\n' "$KEY" > key.gpg
+    - id: build
+      uses: jbigot/distropack-builder@<commit hash> # v1.0.0
+      with:
+        passphrase: ${{ secrets.HELLO_PASSPHRASE }}
+    - uses: actions/upload-artifact@<commit hash> # v7.0.2
+      with:
+        name: repositories
+        path: repositories
+```
+
+Each push to `main` then builds the packages for Debian 13 and Fedora 44 and keeps the two signed
+repositories as the run's `repositories` artifact. [Use the GitHub Action](../how-to/github-action.md)
+says how to pin the action, and how to give each distribution or each release a job of its own.

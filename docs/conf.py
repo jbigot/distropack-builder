@@ -5,6 +5,7 @@
 """Sphinx configuration of the documentation of distro-releases and distropack-builder."""
 
 import json
+import sys
 from pathlib import Path
 
 from sphinx_polyversion.api import LoadError, load
@@ -15,6 +16,14 @@ from distropack_builder import config
 _GENERATED = Path(__file__).parent / 'reference' / '_generated'
 _GENERATED.mkdir(exist_ok=True)
 (_GENERATED / 'build-conf.schema.json').write_text(json.dumps(config.schema(), indent=2) + '\n')
+
+# The reference of the two actions, from their action.yml.
+sys.path.insert(0, str(Path(__file__).parent))
+from action_reference import action_reference  # noqa: E402
+
+_REPO = Path(__file__).parent.parent
+(_GENERATED / 'action.md').write_text(action_reference(_REPO / 'action.yml'))
+(_GENERATED / 'plan-action.md').write_text(action_reference(_REPO / 'plan' / 'action.yml'))
 
 # Under sphinx-polyversion, the versions of the site and the git ref this one's links name (its
 # tag, or main's commit); a plain sphinx-build builds main's working tree.
@@ -39,6 +48,8 @@ intersphinx_mapping = {'python': ('https://docs.python.org/3', None)}
 default_role = 'code'
 html_theme = 'furo'
 templates_path = ['_templates']
+# The generated pages are included by those of reference/, not documents of their own.
+exclude_patterns = ['reference/_generated']
 # Furo's default sidebar (its theme.conf), with the versions after the search box.
 html_sidebars = {
     '**': [

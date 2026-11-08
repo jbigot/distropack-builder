@@ -16,6 +16,9 @@ This repository is a uv workspace of two Python packages, released together:
 - [`distro-releases`](packages/distro-releases/README.md), the releases of each Linux
   distribution and their support status, which the builder relies on.
 
+At its root, `action.yml` and `plan/action.yml` are the builder's GitHub Actions, which run the
+builder from the sources through `action/run-cli`.
+
 The documentation is at https://jbigot.github.io/distropack-builder/, built from `docs/`;
 [CONTRIBUTING.md](CONTRIBUTING.md) says how to work on the repository, test it and release it.
 

@@ -10,6 +10,7 @@ One guide per task; using the GitHub Action and its release matrix is to come.
 
 - [Add a package](add-package.md)
 - [Add or drop a distribution release](releases.md)
+- [Use the GitHub Action](github-action.md)
 - [Build the images locally](build-images.md)
 - [Use distro-releases from Python](use-distro-releases.md)
 - [Run with rootless Docker or Podman](rootless.md)
@@ -20,6 +21,7 @@ One guide per task; using the GitHub Action and its release matrix is to come.
 
 add-package
 releases
+github-action
 build-images
 use-distro-releases
 rootless

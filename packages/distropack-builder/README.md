@@ -53,4 +53,12 @@ distropack-build run --passphrase-file ~/.hello-passphrase
 builds `hello` for every supported Debian and Fedora release, and publishes the signed
 repositories under `repositories/`.
 
+In a GitHub Actions workflow, the action does the same:
+
+```yaml
+- uses: jbigot/distropack-builder@<commit hash>
+  with:
+    passphrase: ${{ secrets.HELLO_PASSPHRASE }}
+```
+
 The documentation, a tutorial included, is at https://jbigot.github.io/distropack-builder/.
