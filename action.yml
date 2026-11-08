@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
+name: distropack-builder
+description: >-
+  Builds the deb and rpm packages of a project in containers, and publishes their signed apt and
+  dnf repositories, as `distropack-build run` does.
+branding: { icon: package, color: blue }
+inputs:
+  config:
+    description: The build configuration, relative to `working-directory`.
+    default: build.conf
+  working-directory:
+    description: The directory the builder runs from.
+    default: .
+  distributions:
+    description: >-
+      Only the releases these patterns name, separated by spaces or line breaks: a distribution
+      (`debian`) or one of its releases (`debian:trixie`, `fedora:44`); all those of `config`
+      when empty.
+    default: ''
+  jobs:
+    description: >-
+      How many builds run at once, and how many jobs each one runs (default: the number of
+      processors, plus one).
+    default: ''
+  passphrase:
+    description: The passphrase of the signing key; pass it from a secret.
+    default: ''
+outputs:
+  failed:
+    description: >-
+      `true` when a build or a publication failed, `false` otherwise; the step fails too, so read
+      it with `continue-on-error`.
+    value: ${{ steps.run.outputs.failed }}
+  output-dirs:
+    description: >-
+      The JSON object of the repositories published, their absolute path by distribution id, for
+      the distributions with a release selected: read it with `fromJSON`.
+    value: ${{ steps.run.outputs.output-dirs }}
+runs:
+  using: composite
+  steps:
+  # Before anything prints: GitHub masks only secrets by itself.
+  - if: inputs.passphrase != ''
+    shell: bash
+    env: { PASSPHRASE: "${{ inputs.passphrase }}" }
+    run: echo "::add-mask::$PASSPHRASE"
+  # No cache: it would be keyed on the calling repository, and could poison a publishing workflow.
+  - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+    with: { enable-cache: false }
+  - id: run
+    shell: bash
+    working-directory: ${{ inputs.working-directory }}
+    env:
+      CONFIG: ${{ inputs.config }}
+      DISTRIBUTIONS: ${{ inputs.distributions }}
+      JOBS: ${{ inputs.jobs }}
+      DISTROPACK_GPG_PASSPHRASE: ${{ inputs.passphrase }}
+    run: |
+      . "$GITHUB_ACTION_PATH/action/patterns.sh"
+      distribution_options "$DISTRIBUTIONS"
+      if [ -n "$JOBS" ]; then options+=(-j "$JOBS"); fi
+      "$GITHUB_ACTION_PATH/action/run-cli" run "${options[@]}" "$CONFIG"

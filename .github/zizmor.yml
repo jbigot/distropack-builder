@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
+rules:
+  # The Action workflow runs this repository's actions as `uses: ./` and `uses: ./plan`, not with
+  # the self-repository syntax `uses: $/...` (GitHub, 2026-07-30): actionlint 1.7.12 rejects it,
+  # while with `./` it reads the local action.yml and checks the inputs and outputs the workflow
+  # uses. Both resolve to the running commit here, which the jobs check out first.
+  self-repository:
+    disable: true

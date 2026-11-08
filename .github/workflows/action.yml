@@ -1,0 +1,128 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
+# Runs the two actions of this repository, `uses: ./plan` and `uses: ./`, on the fixture project of
+# the end-to-end tests, as a workflow of another repository would, and checks their outputs.
+name: Action
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  UV_LOCKED: 1
+  # The upstream tarballs of the fixture, served by each job that builds hello-lib.
+  BASE_URL: http://127.0.0.1:8765
+jobs:
+  plan:
+    # A pull request from this repository is already covered by its push run.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with: { persist-credentials: false }
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+    - run: >-
+        uv run python tests/fixture_project.py "$RUNNER_TEMP/work" "$BASE_URL"
+        --releases debian:trixie ubuntu:noble fedora:44 rocky:10 --packages hello-lib hello-app
+    - id: plan
+      uses: ./plan
+      with: { working-directory: "${{ runner.temp }}/work", config: project/build.conf }
+    - name: the matrix lists the four releases
+      env: { MATRIX: "${{ steps.plan.outputs.matrix }}" }
+      run: |
+        expected='[{"distrib":"debian","release":"trixie"},{"distrib":"fedora","release":"44"},{"distrib":"rocky","release":"10"},{"distrib":"ubuntu","release":"noble"}]'
+        [ "$(jq -cS . <<< "$MATRIX")" = "$(jq -cS . <<< "$expected")" ]
+  build:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { release: "debian:trixie", distrib: debian, index: "dists/trixie/InRelease" }
+        - { release: "fedora:44", distrib: fedora, index: "44/repodata/repomd.xml" }
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with: { persist-credentials: false }
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+    # the images of this checkout, which the registry only has once main publishes them
+    - run: uv run python tests/bake_fixture_images.py
+    - env: { RELEASE: "${{ matrix.release }}" }
+      run: |
+        uv run python tests/fixture_project.py "$RUNNER_TEMP/work" "$BASE_URL" \
+          --releases "$RELEASE" --packages hello-lib hello-app
+        python3 -m http.server 8765 -d "$RUNNER_TEMP/work/served" > /dev/null 2>&1 &
+    - id: build
+      uses: ./
+      with:
+        working-directory: ${{ runner.temp }}/work
+        config: project/build.conf
+        distributions: ${{ matrix.release }}
+        # The fixture's, not a secret: the masked job checks that it shows nowhere.
+        passphrase: test-passphrase
+    - name: the outputs name the published repository
+      env:
+        FAILED: ${{ steps.build.outputs.failed }}
+        OUTPUT_DIRS: ${{ steps.build.outputs.output-dirs }}
+        DISTRIB: ${{ matrix.distrib }}
+        INDEX: ${{ matrix.index }}
+      run: |
+        [ "$FAILED" = false ]
+        [ "$(jq -r 'keys | join(" ")' <<< "$OUTPUT_DIRS")" = "$DISTRIB" ]
+        dir=$(jq -r --arg d "$DISTRIB" '.[$d]' <<< "$OUTPUT_DIRS")
+        [ "$dir" = "$RUNNER_TEMP/work/project/repositories/$DISTRIB" ]
+        test -f "$dir/$INDEX"
+  failing:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with: { persist-credentials: false }
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+    - run: uv run python tests/bake_fixture_images.py
+    # hello-undeclared uses a tool its packaging does not declare: its build fails
+    - run: >-
+        uv run python tests/fixture_project.py "$RUNNER_TEMP/work" "$BASE_URL"
+        --releases debian:trixie --packages hello-undeclared
+    - id: build
+      uses: ./
+      continue-on-error: true
+      with:
+        working-directory: ${{ runner.temp }}/work
+        config: project/build.conf
+        passphrase: test-passphrase
+    - name: the step failed and says so
+      env:
+        OUTCOME: ${{ steps.build.outcome }}
+        FAILED: ${{ steps.build.outputs.failed }}
+      run: |
+        [ "$OUTCOME" = failure ]
+        [ "$FAILED" = true ]
+  masked:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions: { actions: read }
+    steps:
+    - name: the passphrase shows only where GitHub prints the inputs, before the action masks it
+      env:
+        GH_TOKEN: ${{ github.token }}
+        API: ${{ github.api_url }}/repos/${{ github.repository }}/actions
+        RUN_ID: ${{ github.run_id }}
+        ATTEMPT: ${{ github.run_attempt }}
+      run: |
+        ids=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" \
+          "$API/runs/$RUN_ID/attempts/$ATTEMPT/jobs?per_page=100" |
+          jq -r '.jobs[] | select(.name | startswith("build")) | .id')
+        [ -n "$ids" ]
+        for id in $ids; do
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$API/jobs/$id/logs" > log
+          grep -q 'hello-app on' log
+          # a timestamp, then a `name: value` line of an input or env listing
+          if grep -F test-passphrase log | grep -Ev '^\S+ +[A-Za-z_-]+: test-passphrase$'; then
+            echo "job $id shows the passphrase" >&2
+            exit 1
+          fi
+        done

@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
+name: distropack-builder plan
+description: >-
+  Lists the releases a build configuration selects, as a matrix for the jobs running the
+  distropack-builder action, as `distropack-build releases list` does.
+branding: { icon: list, color: blue }
+inputs:
+  config:
+    description: The build configuration, relative to `working-directory`.
+    default: build.conf
+  working-directory:
+    description: The directory the builder runs from.
+    default: .
+  distributions:
+    description: >-
+      Only the releases these patterns name, separated by spaces or line breaks, as the action's
+      input of the same name.
+    default: ''
+outputs:
+  matrix:
+    description: >-
+      The JSON list of `{distrib, release}` objects, one per release: give it to
+      `strategy.matrix.include` with `fromJSON`.
+    value: ${{ steps.plan.outputs.releases }}
+runs:
+  using: composite
+  steps:
+  # No cache: it would be keyed on the calling repository, and could poison a publishing workflow.
+  - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+    with: { enable-cache: false }
+  - id: plan
+    shell: bash
+    working-directory: ${{ inputs.working-directory }}
+    env:
+      CONFIG: ${{ inputs.config }}
+      DISTRIBUTIONS: ${{ inputs.distributions }}
+    run: |
+      . "$GITHUB_ACTION_PATH/../action/patterns.sh"
+      distribution_options "$DISTRIBUTIONS"
+      "$GITHUB_ACTION_PATH/../action/run-cli" releases list "${options[@]}" "$CONFIG"

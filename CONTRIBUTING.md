@@ -32,6 +32,7 @@ those lists only shrink.
 | `e2e` | `uv run pytest -m e2e` | a Docker engine and the images the checkout bakes (below): it builds the fixture project and installs from its repositories |
 | `docker` | `uv run pytest -m docker` | a container engine (Docker or Podman, rootful or rootless) and `docker.io/library/alpine`: it runs containers through the runner; CI runs it on rootful Docker, rootless Docker and rootless Podman |
 | `live` | `uv run pytest -m live` | the network: it reads the real release sources of distro-releases (the nightly `Live canary` workflow, which opens an issue labelled `live-canary` when it fails) |
+| the actions | the `Action` workflow, on every push | GitHub Actions: it runs `uses: ./plan` and `uses: ./` on the fixture project, as another repository's workflow would, and checks their outputs, that a failed build fails the step, and that the passphrase shows nowhere in the logs |
 
 `.python-version` makes 3.13 the default interpreter, the one CI's `e2e` and `packaging` jobs use;
 `uv run --python 3.14 pytest` runs the unit tests on another one, as the CI matrix does.
