@@ -2,8 +2,9 @@
 #
 # SPDX-License-Identifier: MIT
 
-# Runs the checks on the latest releases of every dependency and hook, without committing anything:
-# a failure here is an upgrade that breaks the code, fixed in the code, not by a pin.
+# Runs the checks on the latest releases of every dependency and hook, and on the latest uv, without
+# committing anything: a failure here is an upgrade that breaks the code, to fix in the code. The uv
+# job proposes moving the pinned uv to the latest, as a pull request.
 name: Upgrade
 on:
   schedule:
@@ -18,9 +19,53 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with: { persist-credentials: false }
     - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with: { version: latest }
     - run: uv lock --upgrade
     - run: uv run pre-commit autoupdate
     - run: git diff --stat
     - run: uv run pre-commit run --all-files --show-diff-on-failure
     - run: uv run --python 3.13 pytest
     - run: uv run --group docs sphinx-build -W --keep-going -n -b html docs "$RUNNER_TEMP/html"
+  uv:
+    # The uv of CI and of the actions is pinned in .tool-versions, which Dependabot cannot bump: this
+    # job opens the pull request it would, once per release of uv. A pull request opened with the
+    # workflow's token starts no workflow, so the job starts CI and Action on the branch itself.
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with: { persist-credentials: false }
+    - id: uv
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with: { version: latest }
+    - name: Propose the latest uv
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+        LATEST: ${{ steps.uv.outputs.uv-version }}
+      run: |
+        pinned=$(awk '$1 == "uv" { print $2 }' .tool-versions)
+        if [ "$pinned" = "$LATEST" ]; then
+          echo "uv $pinned is the latest"
+          exit 0
+        fi
+        branch=upgrade/uv-$LATEST
+        if git ls-remote --exit-code origin "refs/heads/$branch" > /dev/null; then
+          echo "$branch is already proposed"
+          exit 0
+        fi
+        printf 'uv %s\n' "$LATEST" > .tool-versions
+        # the same dependencies, in the lock format of the new uv
+        uv lock
+        git switch -c "$branch"
+        git -c user.name='github-actions[bot]' \
+          -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+          commit -q -am "Run uv $LATEST"
+        git push -q "https://x-access-token:$GH_TOKEN@github.com/$GH_REPO.git" "$branch"
+        gh pr create --head "$branch" --title "Run uv $LATEST" \
+          --body "Moves the uv of CI and of the actions from $pinned to $LATEST (.tool-versions), with uv.lock rewritten by it. CI and Action run on the branch."
+        gh workflow run ci.yml --ref "$branch"
+        gh workflow run action.yml --ref "$branch"

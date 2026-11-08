@@ -24,6 +24,7 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with: { persist-credentials: false }
     - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with: { version-file: .tool-versions }
     - run: >-
         uv run python tests/fixture_project.py "$RUNNER_TEMP/work" "$BASE_URL"
         --releases debian:trixie ubuntu:noble fedora:44 rocky:10 --packages hello-lib hello-app
@@ -48,6 +49,7 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with: { persist-credentials: false }
     - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with: { version-file: .tool-versions }
     # the images of this checkout, which the registry only has once main publishes them
     - run: uv run python tests/bake_fixture_images.py
     - env: { RELEASE: "${{ matrix.release }}" }
@@ -82,6 +84,7 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with: { persist-credentials: false }
     - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with: { version-file: .tool-versions }
     - run: uv run python tests/bake_fixture_images.py
     # hello-undeclared uses a tool its packaging does not declare: its build fails
     - run: >-

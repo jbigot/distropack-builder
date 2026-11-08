@@ -3,8 +3,9 @@
 # SPDX-License-Identifier: MIT
 
 # Weekly pull requests updating what this repository pins: uv.lock, the workflow actions (pinned by
-# commit) and the pre-commit hooks, one pull request per ecosystem. The Upgrade workflow keeps
-# running the checks on the latest versions of everything, Dependabot or not.
+# commit) and the pre-commit hooks, one pull request per ecosystem. uv itself, pinned in
+# .tool-versions, gets its pull requests from the uv job of the Upgrade workflow, which also keeps
+# running the checks on the latest versions of everything.
 #
 # No `docker` entry: the images' base images are floating tags (debian:stable-slim, fedora:latest)
 # or chosen per release through build arguments (FROM ${DIST_IMAGE}:${DIST_RELEASE}), and the

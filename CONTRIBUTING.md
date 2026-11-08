@@ -122,10 +122,21 @@ data keep their own notice there.
 
 ## Dependencies
 
-Nothing is pinned: `uv.lock` makes runs reproducible, and the weekly `Upgrade` workflow runs the
-checks on the latest release of every dependency and pre-commit hook, without committing. When it
-fails, an upgrade broke something: fix the code, or the wrapper around the dependency, rather than
-pinning it, and run `uv lock --upgrade` in the same change.
+What CI and the actions run is pinned, and every upgrade comes as a pull request, which CI checks
+before it is merged:
+
+- the Python dependencies, in `uv.lock`, the workflow actions, by commit hash, and the pre-commit
+  hooks, by revision: Dependabot proposes their upgrades every week;
+- uv itself, in `.tool-versions`, which every `astral-sh/setup-uv` step reads: Dependabot cannot
+  bump it, so the `uv` job of the weekly `Upgrade` workflow opens that pull request, on a branch
+  `upgrade/uv-<version>`, and starts `CI` and `Action` on it. It needs the repository setting
+  *Allow GitHub Actions to create and approve pull requests*. Locally, any recent uv works: uv
+  itself does not read `.tool-versions`.
+
+The packages' own dependencies stay unbounded in their `pyproject.toml`: the pins are the lock's,
+not their users'. The `Upgrade` workflow also runs the checks on the latest release of every
+dependency and hook, without committing: when it fails, an upgrade broke something, which the
+code, or the wrapper around the dependency, is fixed for.
 
 The build requirements of the two packages (hatchling, hatch-vcs, setuptools-scm) are not in
 `uv.lock`: a fresh environment builds the packages with their latest releases. A release of one of

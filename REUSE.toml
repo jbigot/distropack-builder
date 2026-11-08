@@ -12,6 +12,7 @@ path = [
     "**/py.typed",
     "**/.git_archival.txt",
     ".python-version",
+    ".tool-versions",
     "uv.lock",
     "packages/*/tests/data/**",
     "packages/distropack-builder/src/distropack_builder/rpm_config/**",

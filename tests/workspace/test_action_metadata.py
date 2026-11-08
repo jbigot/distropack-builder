@@ -79,8 +79,29 @@ def test_dependabot_updates_every_action() -> None:
         assert '/' + str(path.parent.relative_to(REPO_ROOT)).removeprefix('.') in directories
 
 
-@pytest.mark.parametrize('path', ACTIONS, ids=['build', 'plan'])
-def test_uv_ignores_the_callers_settings(path: Path) -> None:
-    # setup-uv looks for a required uv version in its working directory, the caller's by default
-    (setup,) = (s for s in steps(path) if s.get('uses', '').startswith('astral-sh/setup-uv@'))
-    assert setup['with']['working-directory'] == '${{ github.action_path }}'
+def setup_uv_steps(path: Path) -> list[dict[str, Any]]:
+    """The setup-uv steps of a workflow or an action."""
+    data = load(path)
+    if 'runs' in data:
+        all_steps = data['runs']['steps']
+    else:
+        all_steps = [step for job in data['jobs'].values() for step in job.get('steps', [])]
+    return [s for s in all_steps if str(s.get('uses', '')).startswith('astral-sh/setup-uv@')]
+
+
+def test_uv_is_pinned_once() -> None:
+    (line,) = (REPO_ROOT / '.tool-versions').read_text().splitlines()
+    assert re.fullmatch(r'uv \d+\.\d+\.\d+', line)
+    expected = {
+        ACTIONS[0]: '${{ github.action_path }}/.tool-versions',
+        ACTIONS[1]: '${{ github.action_path }}/../.tool-versions',
+    }
+    paths = [*ACTIONS, *(REPO_ROOT / '.github' / 'workflows').glob('*.yml')]
+    for path in paths:
+        for step in setup_uv_steps(path):
+            settings = step.get('with', {})
+            if settings.get('version') == 'latest':
+                # the Upgrade workflow, which checks the next uv
+                assert path.name == 'upgrade.yml', path
+                continue
+            assert settings.get('version-file') == expected.get(path, '.tool-versions'), path

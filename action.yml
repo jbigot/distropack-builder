@@ -48,9 +48,9 @@ runs:
     env: { PASSPHRASE: "${{ inputs.passphrase }}" }
     run: echo "::add-mask::$PASSPHRASE"
   # No cache: it would be keyed on the calling repository, and could poison a publishing workflow.
-  # Run from the action's directory, setup-uv ignores the uv version the caller's files may require.
+  # The uv this repository pins, not one the caller's files may require.
   - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-    with: { enable-cache: false, working-directory: "${{ github.action_path }}" }
+    with: { enable-cache: false, version-file: "${{ github.action_path }}/.tool-versions" }
   - id: run
     shell: bash
     working-directory: ${{ inputs.working-directory }}
