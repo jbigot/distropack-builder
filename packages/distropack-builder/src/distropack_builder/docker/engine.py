@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import docker
+import docker.errors
 
 from distropack_builder.docker import endpoint
 
@@ -60,6 +61,14 @@ class Engine:
         )
         client = docker.DockerClient(base_url=url)
         return cls(client, is_rootless(client.info()))
+
+    def has_image(self, reference: str) -> bool:
+        """Whether the engine has the image reference locally (baked or pulled)."""
+        try:
+            self.client.images.get(reference)
+        except docker.errors.ImageNotFound:
+            return False
+        return True
 
     def user(self, as_root: bool) -> str | None:
         """The user a container runs as on this engine (see `container_user`)."""

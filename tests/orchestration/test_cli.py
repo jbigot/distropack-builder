@@ -425,3 +425,30 @@ def test_unpublished_release_stays_on_the_page(
     assert result.exit_code == 1, result.output
     page = (project / 'repositories' / 'debian' / 'index.html').read_text()
     assert 'Bookworm' in page and 'Trixie' in page
+
+
+class LocalImages:
+    """An engine that has some images locally, as after `images bake` or a pull."""
+
+    def __init__(self, *references: str) -> None:
+        self.references = set(references)
+
+    def has_image(self, reference: str) -> bool:
+        return reference in self.references
+
+
+def test_image_the_engine_has_is_not_missing(
+    project: Path, unpublished: set[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An image baked locally builds its release, though the registry does not publish it."""
+    unpublished.add('bookworm-p2')
+    conf = yaml.safe_load((project / 'build.conf').read_text())
+    conf['distribs']['debian']['versions'] = ['bookworm', 'trixie']
+    (project / 'build.conf').write_text(yaml.safe_dump(conf))
+    local = LocalImages('ghcr.io/jbigot/distropack-builder/debian_builder:bookworm-p2')
+    app = cli.make_app(runner=FakeRunner(tools_respond), connect=lambda host: cast(Any, local))
+    result = CliRunner().invoke(
+        app, ['run'], env={'COLUMNS': '200', PASSPHRASE_ENV: FIXTURE_PASSPHRASE}
+    )
+    assert result.exit_code == 0, result.output
+    assert 'no builder image' not in result.output

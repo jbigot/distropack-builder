@@ -151,3 +151,9 @@ def test_image_pulled_when_missing(engine: Engine) -> None:
         assert run(engine, image, ['echo', 'pulled']).stdout == 'pulled\n'
     finally:
         engine.client.images.remove(image)
+
+
+def test_engine_knows_its_images(engine: Engine) -> None:
+    run(engine, ALPINE, ['true'])  # pulled if missing
+    assert engine.has_image(ALPINE)
+    assert not engine.has_image('docker.io/library/alpine:no-such-tag-distropack')

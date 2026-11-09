@@ -116,11 +116,15 @@ def _selection(
 
 
 def _unpublished(
-    loaded: BuildConfig, selected: Mapping[str, frozenset[Release]], on: date
+    loaded: BuildConfig,
+    selected: Mapping[str, frozenset[Release]],
+    on: date,
+    has_local: Callable[[str], bool],
 ) -> dict[Release, str]:
-    """The selected releases whose builder image the registry does not publish, and why.
+    """The selected releases whose builder image neither the engine has nor the registry publishes.
 
-    The distributions whose versions hold `available` already kept only the published ones.
+    The distributions whose versions hold `available` already kept only the published ones. An
+    image the engine has (baked locally, or pulled) is not asked of the registry.
 
     Raises:
         AvailabilityError: the registry did not tell whether it publishes an image.
@@ -131,7 +135,8 @@ def _unpublished(
             if AVAILABLE in distrib.versions:
                 continue
             for release in sorted(selected[dist_id]):
-                if not image_available(bake.REGISTRY + builder_image(release), client):
+                image = bake.REGISTRY + builder_image(release)
+                if not has_local(image) and not image_available(image, client):
                     missing[release] = _why_unpublished(release, on)
     return missing
 
@@ -239,17 +244,18 @@ def make_app(
         if not output_dirs:
             typer.echo(f'{PROG}: nothing to build: {build_conf} selects no release', err=True)
             return False, output_dirs
+        try:
+            engine = connect(docker_host)
+        except (EngineNotFound, docker.errors.DockerException) as error:
+            _fail(1, error)
         # a release whose builder image is missing fails once, here, and builds nothing
-        unpublished = _unpublished(loaded, selected, on)
+        has_local = engine.has_image if engine is not None else (lambda image: False)
+        unpublished = _unpublished(loaded, selected, on, has_local)
         selected = {
             dist_id: frozenset(r for r in releases if r not in unpublished)
             for dist_id, releases in selected.items()
         }
         disabled = disabled_releases(loaded, selected, on)
-        try:
-            engine = connect(docker_host)
-        except (EngineNotFound, docker.errors.DockerException) as error:
-            _fail(1, error)
 
         def signer_for(distrib: Distrib) -> Signer:
             return Signer.load(
