@@ -78,7 +78,9 @@ def bake_definition(images_dir: Path, base_image_exists: Callable[[str], bool]) 
     for distrib in targets.targets():
         releases = distrib.releases(on)
         supported = [r for r in releases if r.is_supported(on)]
-        for release in (r for r in releases if not r.is_eol(on)):
+        # every release a project may name: not at its end of life yet (unreleased ones
+        # included), or past it but still maintained for free (Debian's LTS)
+        for release in (r for r in releases if not r.is_eol(on) or r.is_maintained(on)):
             release_tag = str(release.version)
             builder = 'rpm_builder'
             if targets.is_deb(distrib):

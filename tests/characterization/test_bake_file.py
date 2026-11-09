@@ -39,6 +39,15 @@ def test_bake_file_snapshot(bake: ModuleType, snapshot: object) -> None:
     assert bake.bake_definition(Path('/images'), everything_exists) == snapshot
 
 
+def test_extended_release_gets_a_builder_image(bake: ModuleType) -> None:
+    """Bookworm, past its end of life (2026-07-11) but in Debian's LTS until 2028-06-30."""
+    definition = bake.bake_definition(Path('/images'), everything_exists)
+    bookworm = definition['target']['debian_builder-bookworm']
+    assert f'{bake.REGISTRY}debian_builder:bookworm-p{bake.PROTOCOL}' in bookworm['tags']
+    assert f'{bake.REGISTRY}debian_builder:oldstable' in bookworm['tags']
+    assert f'{bake.REGISTRY}debian_builder:latest' not in bookworm['tags']
+
+
 def test_bake_file_matches_the_recorded_build_calls(bake: ModuleType) -> None:
     definition = bake.bake_definition(Path('/images'), everything_exists)
     generated = {
@@ -47,7 +56,10 @@ def test_bake_file_matches_the_recorded_build_calls(bake: ModuleType) -> None:
             frozenset(target['tags']),
             target.get('args', {}),
         )
-        for target in definition['target'].values()
+        for name, target in definition['target'].items()
+        # the releases in free extended support are new (Phase 10a): master built the supported
+        # ones only
+        if name != 'debian_builder-bookworm'
     }
     recorded = recorded_images(bake.REGISTRY, bake.PROTOCOL)
     assert len(recorded) == 20

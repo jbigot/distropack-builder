@@ -17,7 +17,7 @@ from distro_releases.selectors import select
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 
-COLUMNS = ('DISTRIBUTION', 'VERSION', 'CODENAME', 'SUITE', 'RELEASED', 'EOL', 'STATUS')
+COLUMNS = ('DISTRIBUTION', 'VERSION', 'CODENAME', 'SUITE', 'RELEASED', 'EOL', 'EXTENDED', 'STATUS')
 
 
 @app.callback()
@@ -26,9 +26,9 @@ def main() -> None:
 
 
 def status(release: Release, on: date) -> str:
-    """`eol`, `supported` or `unreleased`, as of on."""
+    """`unreleased`, `supported`, `extended` (past its end of life, still maintained) or `eol`."""
     if release.is_eol(on):
-        return 'eol'
+        return 'extended' if release.is_maintained(on) else 'eol'
     return 'supported' if release.is_supported(on) else 'unreleased'
 
 
@@ -66,6 +66,7 @@ def as_json(release: Release, on: date) -> dict[str, str | None]:
         'suite': release.suite,
         'release_date': iso(release.release_date),
         'eol_date': iso(release.eol_date),
+        'extended_eol_date': iso(release.extended_eol_date),
         'status': status(release, on),
     }
 
@@ -82,6 +83,7 @@ def table(releases: list[Release], on: date) -> str:
                 r.suite,
                 r.release_date and r.release_date.isoformat(),
                 r.eol_date and r.eol_date.isoformat(),
+                r.extended_eol_date and r.extended_eol_date.isoformat(),
                 status(r, on),
             )
         )

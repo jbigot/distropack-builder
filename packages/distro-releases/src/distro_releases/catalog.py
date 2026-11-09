@@ -139,6 +139,7 @@ def releases(distribution: Distribution, on: date | None = None) -> tuple[Releas
             release_date=row.release_date,
             eol_date=row.eol_date,
             cpe=row.cpe,
+            extended_eol_date=row.extended_eol_date,
         )
         for row in _rows(distribution)
         if row.created is None or row.created <= on

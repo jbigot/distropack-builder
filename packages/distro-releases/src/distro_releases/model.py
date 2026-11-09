@@ -90,6 +90,8 @@ class Row:
         cpe: the release's CPE, if its distribution has one.
         suite: the archive's alias of the release when the source states it (Fedora's `rawhide`),
             whatever the date; the aliases that move with time are the catalog's.
+        extended_eol_date: the end of the extended support the distribution's own archive gives
+            for free (Debian's LTS), `None` when it has none or it is not scheduled.
     """
 
     version: str | None
@@ -101,6 +103,7 @@ class Row:
     eol_date: date | None
     cpe: str | None
     suite: str | None = None
+    extended_eol_date: date | None = None
 
 
 @total_ordering
@@ -124,6 +127,8 @@ class Release:
         release_date: the day of its release, `None` when not scheduled.
         eol_date: the first day of its end of life, `None` when not scheduled.
         cpe: the release's CPE, if its distribution has one.
+        extended_eol_date: the end of the extended support the distribution's own archive gives
+            for free, after its end of life (Debian's LTS), `None` when it has none.
     """
 
     distribution: Distribution
@@ -136,6 +141,7 @@ class Release:
     release_date: date | None
     eol_date: date | None
     cpe: str | None
+    extended_eol_date: date | None = None
 
     @property
     def uid(self) -> str:
@@ -155,6 +161,16 @@ class Release:
         """Whether the release is out and not at its end of life on `on`, today by default."""
         on = on or date.today()
         return self.is_released(on) and not self.is_eol(on)
+
+    def is_maintained(self, on: date | None = None) -> bool:
+        """Whether the release is out and its regular or free extended support goes on, on `on`.
+
+        Today by default. A release past its end of life is still maintained while the
+        distribution's archive extends its support for free (Debian's LTS).
+        """
+        on = on or date.today()
+        ends = [day for day in (self.eol_date, self.extended_eol_date) if day is not None]
+        return self.is_released(on) and (not ends or max(ends) > on)
 
     def __eq__(self, other: object) -> bool:
         """Whether other is the same release."""

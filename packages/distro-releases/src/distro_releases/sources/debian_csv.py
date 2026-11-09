@@ -17,8 +17,11 @@ from distro_releases.model import Distribution, Row
 from distro_releases.sources._common import cpe, parsing
 
 URL = 'https://debian.pages.debian.net/distro-info-data/{id}.csv'
-# The first columns, in this order; the others are not read.
+# The first columns, in this order.
 TITLES = ('version', 'codename', 'series', 'created', 'release', 'eol')
+# The column of the extended support the archive gives for free, whichever the CSV has: Debian's
+# LTS, Ubuntu's server support. Not Debian's ELTS nor Ubuntu's ESM, which need a subscription.
+EXTENDED = ('eol-lts', 'eol-server')
 
 
 def _date(columns: list[str], index: int) -> date | None:
@@ -29,10 +32,11 @@ def _date(columns: list[str], index: int) -> date | None:
 
 
 def _rows(text: str, distribution: Distribution) -> tuple[Row, ...]:
-    """The rows of the CSV text: version, codename, series, created, release, eol columns."""
+    """The rows of the CSV text, from its first six columns and its extended support's."""
     titles, *lines = csv.reader(io.StringIO(text), dialect='unix')
     if titles[: len(TITLES)] != list(TITLES):
         raise ValueError(f'the titles are {titles}, not {TITLES}...')
+    extended = next((titles.index(title) for title in EXTENDED if title in titles), None)
     result = []
     for order, columns in enumerate(lines):
         number, codename, series = columns[0], columns[1], columns[2]
@@ -48,6 +52,7 @@ def _rows(text: str, distribution: Distribution) -> tuple[Row, ...]:
                 release_date=_date(columns, 4),
                 eol_date=_date(columns, 5),
                 cpe=cpe(distribution.cpe_prefix, version),
+                extended_eol_date=None if extended is None else _date(columns, extended),
             )
         )
     return tuple(result)

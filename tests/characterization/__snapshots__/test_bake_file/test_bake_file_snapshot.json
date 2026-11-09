@@ -6,6 +6,7 @@
         "almalinux_builder-8",
         "almalinux_builder-9",
         "aptly",
+        "debian_builder-bookworm",
         "debian_builder-forky",
         "debian_builder-rc-buggy",
         "debian_builder-sid",
@@ -72,6 +73,20 @@
       "tags": [
         "ghcr.io/jbigot/distropack-builder/aptly:latest",
         "ghcr.io/jbigot/distropack-builder/aptly:p2"
+      ]
+    },
+    "debian_builder-bookworm": {
+      "args": {
+        "DIST_CODENAME": "bookworm",
+        "DIST_ID": "debian",
+        "DIST_IMAGE": "debian",
+        "DIST_RELEASE": "bookworm-slim"
+      },
+      "context": "/images/deb_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/debian_builder:bookworm",
+        "ghcr.io/jbigot/distropack-builder/debian_builder:bookworm-p2",
+        "ghcr.io/jbigot/distropack-builder/debian_builder:oldstable"
       ]
     },
     "debian_builder-forky": {

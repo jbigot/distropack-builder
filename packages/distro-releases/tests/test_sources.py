@@ -52,6 +52,29 @@ def test_debian_csv_rows(recorded: respx.MockRouter) -> None:
     assert [row.order for row in debian] == list(range(len(debian)))
 
 
+UBUNTU = Distribution('ubuntu', 'Ubuntu', ('ubuntu',), ('debian',), None, DebianCsv())
+
+
+def test_debian_extended_eol(recorded: respx.MockRouter) -> None:
+    """Debian's LTS, which the archive gives for free; not its ELTS."""
+    debian = rows(DEBIAN)
+    assert by_codename(debian, 'bookworm').extended_eol_date == date(2028, 6, 30)
+    assert by_codename(debian, 'trixie').extended_eol_date == date(2030, 6, 30)
+    assert by_codename(debian, 'forky').extended_eol_date is None
+
+
+def test_ubuntu_extended_eol(recorded: respx.MockRouter) -> None:
+    """Ubuntu's eol-server; not ESM, which needs a subscription."""
+    ubuntu = rows(UBUNTU)
+    assert by_codename(ubuntu, 'jammy').extended_eol_date == date(2027, 6, 1)
+    assert by_codename(ubuntu, 'questing').extended_eol_date is None
+
+
+def test_fedora_and_rhel_have_no_extended_eol(recorded: respx.MockRouter) -> None:
+    assert {row.extended_eol_date for row in rows(FEDORA)} == {None}
+    assert {row.extended_eol_date for row in rows(RHEL)} == {None}
+
+
 def test_bodhi_rows(recorded: respx.MockRouter) -> None:
     fedora = {row.version: row for row in rows(FEDORA)}
     assert fedora['44'].cpe == 'cpe:/o:fedoraproject:fedora:44'

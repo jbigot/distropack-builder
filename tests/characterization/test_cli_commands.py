@@ -67,7 +67,8 @@ def test_bake_file_command(
     monkeypatch.setattr(bake, 'registry_has', lambda image: True)
     assert main('images', 'bake-file', '-o', str(tmp_path / 'b.json')).exit_code == 0
     definition = json.loads((tmp_path / 'b.json').read_text())
-    assert len(definition['target']) == 21
+    # bookworm, in free extended support, is new (Phase 10a)
+    assert len(definition['target']) == 22
     for target in definition['target'].values():
         assert (Path(target['context']) / 'Dockerfile').is_file()
 

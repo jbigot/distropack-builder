@@ -72,6 +72,31 @@ def test_unscheduled_dates() -> None:
     assert not sid.is_supported(date.max)
 
 
+def test_is_maintained() -> None:
+    bookworm = release(
+        version='12',
+        codename='bookworm',
+        name='12 (Bookworm)',
+        order=12,
+        release_date=date(2023, 6, 10),
+        eol_date=date(2026, 7, 11),
+        extended_eol_date=date(2028, 6, 30),
+    )
+    assert bookworm.is_eol(date(2026, 11, 9))
+    assert bookworm.is_maintained(date(2026, 11, 9))
+    assert bookworm.is_maintained(date(2028, 6, 29))
+    assert not bookworm.is_maintained(date(2028, 6, 30))
+    assert not bookworm.is_maintained(date(2023, 6, 9))  # not released yet
+    trixie = release()
+    assert trixie.extended_eol_date is None
+    assert trixie.is_maintained(date(2026, 11, 9))
+    assert not trixie.is_maintained(date(2028, 8, 9))
+    sid = release(version=None, codename='sid', name='Sid', release_date=None, eol_date=None)
+    assert not sid.is_maintained(date.max)
+    # the later of both dates, whichever it is
+    assert release(extended_eol_date=date(2027, 1, 1)).is_maintained(date(2028, 1, 1))
+
+
 def test_order_within_a_distribution() -> None:
     bookworm = release(version='12', codename='bookworm', name='12 (Bookworm)', order=12)
     trixie = release()
