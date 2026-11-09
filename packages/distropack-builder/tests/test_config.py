@@ -54,7 +54,6 @@ def test_load_pdidev(tmp_path: Path) -> None:
     assert loaded.distribs['fedora'].repository.path == Path('fedora')
     assert loaded.distribs['fedora'].gpg.file == Path('key.gpg')
     assert loaded.packages['pdidev-archive-keyring'].disable == {'fedora': ('all',)}
-    assert loaded.packages['pdi'].orig is not None
     assert loaded.root == tmp_path
 
 
@@ -75,9 +74,7 @@ def test_load_fixture(fixture_project: Path) -> None:
 
     assert loaded.distribs['fedora'].versions == ('44',)
     assert loaded.packages['hello-app'] == Package()
-    assert (
-        loaded.packages['hello-lib'].orig == 'http://localhost/hello-lib-{upstream_version}.tar.gz'
-    )
+    assert loaded.packages['hello-lib'] == Package()
 
 
 @pytest.mark.parametrize(
@@ -116,9 +113,14 @@ def test_load_fixture(fixture_project: Path) -> None:
         ),
         pytest.param('distribs: {\npackages: [}\n', 'line 2', id='yaml-syntax'),
         pytest.param(
-            'distribs: {}\npackages: {spec-only: {orig: "http://x/{upstream_version}"}}\n',
-            'packages.spec-only.orig',
-            id='orig-without-debian',
+            'distribs: {}\npackages: {quilt: {orig: "http://x/{upstream_version}"}}\n',
+            'packages.quilt.orig: Extra inputs are not permitted',
+            id='orig-is-unknown',
+        ),
+        pytest.param(
+            'distribs: {}\npackages: {quilt-unwatched: {}}\n',
+            'packages.quilt-unwatched: a 3.0 (quilt) source needs a debian/watch',
+            id='quilt-without-watch',
         ),
         pytest.param(
             'distribs: {}\npackages: {nothing: {}}\n', 'packages.nothing', id='no-packaging'
@@ -129,6 +131,12 @@ def test_load_fixture(fixture_project: Path) -> None:
 def test_load_rejects(tmp_path: Path, text: str, expected: str) -> None:
     package_dir(tmp_path, 'spec-only', deb=False)
     package_dir(tmp_path, 'nothing', deb=False, spec=False)
+    for name, watched in (('quilt', True), ('quilt-unwatched', False)):
+        package_dir(tmp_path, name, spec=False)
+        (tmp_path / name / 'debian' / 'source').mkdir()
+        (tmp_path / name / 'debian' / 'source' / 'format').write_text('3.0 (quilt)\n')
+        if watched:
+            (tmp_path / name / 'debian' / 'watch').write_text('version=4\n')
     conf = tmp_path / 'build.conf'
     conf.write_text(text)
 

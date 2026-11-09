@@ -45,7 +45,7 @@ markers = [
     "e2e: builds the fixture project in containers (needs a rootful Docker engine)",
     "packaging: builds the packages from synthetic repositories and archives (needs git, uv and PyPI, for the build requirements and the wheels' dependencies)",
     "docker: runs containers (needs a container engine and docker.io/library/alpine)",
-    "live: reads the real release sources of distro-releases (needs the network; nightly, non-blocking)",
+    "live: reads real sources, the release data of distro-releases and an upstream on GitHub (needs the network, and a container engine for uscan; nightly, non-blocking)",
 ]
 addopts = "--import-mode=importlib -m 'not e2e and not packaging and not live and not docker' --disable-socket --allow-hosts=127.0.0.1"
 

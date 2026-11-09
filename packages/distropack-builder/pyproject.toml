@@ -30,7 +30,6 @@ dependencies = [
     "cryptography",
     "distro-releases",
     "docker",
-    "filetype",
     "httpx",
     "jinja2",
     "pydantic",

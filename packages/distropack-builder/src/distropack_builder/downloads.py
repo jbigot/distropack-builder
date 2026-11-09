@@ -15,7 +15,6 @@ from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from urllib.parse import parse_qsl, urlparse
 
-import filetype
 import httpx
 import stamina
 
@@ -142,17 +141,3 @@ def source_name(url: str) -> str:
     parsed = urlparse(url)
     query = parse_qsl(parsed.query)
     return PurePosixPath(query[-1][1] if query else parsed.path).name
-
-
-def orig_name(package: str, upstream: str, url: str, file: Path) -> str:
-    """The name of the upstream tarball file, downloaded from url, in a deb source package.
-
-    That is `<package>_<upstream>.orig.tar.<compression>`, the compression read from the file.
-
-    Raises:
-        DownloadFailed: the file is not of a type that names a compression.
-    """
-    kind = filetype.guess(str(file))
-    if kind is None:
-        raise DownloadFailed(url, 'not a compressed tarball')
-    return f'{package}_{upstream}.orig.tar.{kind.extension}'

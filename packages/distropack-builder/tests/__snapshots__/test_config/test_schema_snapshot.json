@@ -98,7 +98,7 @@
     },
     "Package": {
       "additionalProperties": false,
-      "description": "A package to build, keyed by the name of its directory.\n\nThe directory holds ``debian/`` for the Debian family, ``<name>.spec`` for the Fedora family,\nor both.",
+      "description": "A package to build, keyed by the name of its directory.\n\nThe directory holds ``debian/`` for the Debian family, ``<name>.spec`` for the Fedora family,\nor both. A 3.0 (quilt) deb source downloads its upstream tarball as ``debian/watch`` says; an\nrpm, as its spec's ``Source:`` lines say.",
       "properties": {
         "disable": {
           "additionalProperties": {
@@ -127,19 +127,6 @@
           "description": "The releases, per distribution id, not to build this package for (release tokens).",
           "title": "Disable",
           "type": "object"
-        },
-        "orig": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "The URL of the upstream tarball of a 3.0 (quilt) deb source package, where\n``{upstream_version}`` and ``{package}`` are replaced from debian/changelog; rpm builds use\nthe spec's own Source: lines.",
-          "title": "Orig"
         }
       },
       "title": "Package",

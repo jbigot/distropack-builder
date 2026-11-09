@@ -3,9 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 import _thread
-import gzip
 import importlib.metadata
-import lzma
 import time
 from collections.abc import Iterator
 from hashlib import sha256
@@ -18,7 +16,7 @@ import stamina
 
 from distropack_builder import downloads
 from distropack_builder.docker import Cancellation, Cancelled
-from distropack_builder.downloads import DownloadFailed, fetch_all, orig_name, source_name
+from distropack_builder.downloads import DownloadFailed, fetch_all, source_name
 
 URL = 'https://orig.test/a/p-1.0.tar.gz'
 OTHER = 'https://orig.test/a/q-1.0.tar.gz'
@@ -106,18 +104,6 @@ def test_cancelled_download_stops(tmp_path: Path) -> None:
 def test_source_name() -> None:
     assert source_name('https://x/a/b.tar.gz') == 'b.tar.gz'
     assert source_name('https://x/dl?id=3&file=dir/c.tar.xz') == 'c.tar.xz'
-
-
-def test_orig_name(tmp_path: Path) -> None:
-    gz, xz, text = tmp_path / 'gz', tmp_path / 'xz', tmp_path / 'text'
-    gz.write_bytes(gzip.compress(b'data'))
-    xz.write_bytes(lzma.compress(b'data'))
-    text.write_text('not an archive\n')
-    assert orig_name('p', '1.0', URL, gz) == 'p_1.0.orig.tar.gz'
-    assert orig_name('p', '1.0', URL, xz) == 'p_1.0.orig.tar.xz'
-    with pytest.raises(DownloadFailed) as failure:
-        orig_name('p', '1.0', URL, text)
-    assert failure.value.url == URL
 
 
 @respx.mock

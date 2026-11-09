@@ -35,16 +35,20 @@ directly or not.
 
 Every file the builds need from the network is downloaded before the first build starts:
 
-- each URL is fetched once, however many builds need it: the `orig:` tarball of a deb package is
-  the same for all its releases;
+- each URL is fetched once, however many builds need it, and each deb upstream tarball once per
+  watch file and upstream version: the same for all the releases of a package, and for every
+  package sharing them;
 - a URL that cannot be fetched is known before any build: it fails the builds that need it, which
   then skip their dependents, and spares the others;
 - timeouts, transport errors and server errors (5xx) are retried, five attempts in all; a client
   error, such as a 404, fails at once.
 
-The `orig:` URL of a deb package is used only for the `3.0 (quilt)` format, which
-`debian/source/format` gives. The downloaded tarball is named
-`<package>_<upstream version>.orig.tar.<compression>`, the compression read from its content.
+The upstream tarball of a deb package of the `3.0 (quilt)` format (`debian/source/format`) is
+downloaded by `uscan`, in the Debian tools image, as the package's `debian/watch` says; the
+project is mounted read-only. uscan writes the tarball as downloaded and
+`<package>_<upstream version>.orig.tar.<compression>` beside it, a symbolic link, or a repacked
+tarball when `debian/copyright` excludes files. Another package with the same watch file and
+upstream version gets its own name for it from `mk-origtargz`, run in its directory.
 
 ## Builds
 

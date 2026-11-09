@@ -149,13 +149,9 @@ class Package(_Model):
     """A package to build, keyed by the name of its directory.
 
     The directory holds ``debian/`` for the Debian family, ``<name>.spec`` for the Fedora family,
-    or both.
+    or both. A 3.0 (quilt) deb source downloads its upstream tarball as ``debian/watch`` says; an
+    rpm, as its spec's ``Source:`` lines say.
     """
-
-    orig: str | None = None
-    """The URL of the upstream tarball of a 3.0 (quilt) deb source package, where
-    ``{upstream_version}`` and ``{package}`` are replaced from debian/changelog; rpm builds use
-    the spec's own Source: lines."""
 
     disable: Mapping[TargetId, Annotated[Tokens, AfterValidator(_not_available)]] = Field(
         default_factory=dict
@@ -215,8 +211,8 @@ def load(path: Path) -> BuildConfig:
     except ValidationError as error:
         raise ConfigError(f'{path}: {_describe(error)}') from error
     root = path.parent.resolve()
-    for name, package in parsed.packages.items():
-        _check_packaging(path, root, name, package)
+    for name in parsed.packages:
+        _check_packaging(path, root, name)
     return BuildConfig(distribs=parsed.distribs, packages=parsed.packages, root=root)
 
 
@@ -237,7 +233,7 @@ def _describe(error: ValidationError) -> str:
     return f'{where}: {first["msg"]}{more}' if where else f'{first["msg"]}{more}'
 
 
-def _check_packaging(path: Path, root: Path, name: str, package: Package) -> None:
+def _check_packaging(path: Path, root: Path, name: str) -> None:
     """Raise ConfigError if the directory of a package has no packaging for what it asks."""
     directory = root / name
     deb = (directory / 'debian').is_dir()
@@ -245,8 +241,17 @@ def _check_packaging(path: Path, root: Path, name: str, package: Package) -> Non
         raise ConfigError(
             f'{path}: packages.{name}: {directory} has neither debian/ nor {name}.spec'
         )
-    if package.orig is not None and not deb:
+    debian = directory / 'debian'
+    if deb and _quilt(debian) and not (debian / 'watch').is_file():
         raise ConfigError(
-            f'{path}: packages.{name}.orig: orig: names the upstream tarball of a deb source'
-            f' package, and {directory} has no debian/'
+            f'{path}: packages.{name}: a 3.0 (quilt) source needs a debian/watch, to download its'
+            f' upstream tarball with, and {debian} has none'
         )
+
+
+def _quilt(debian: Path) -> bool:
+    """Whether the deb source of debian is in 3.0 (quilt) format."""
+    try:
+        return (debian / 'source' / 'format').read_text().strip() == '3.0 (quilt)'
+    except FileNotFoundError:
+        return False

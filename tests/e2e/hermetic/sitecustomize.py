@@ -6,7 +6,8 @@
 
 Python imports this module at startup when its directory is on PYTHONPATH, before the builder makes
 any request. Recorded URLs (DISTROPACK_TEST_RECORDINGS/urls.json) are served from their recording,
-the local test server (127.0.0.1) is reached for real, and any other URL fails, naming it: the
+the local test server (127.0.0.1) is reached for real, the registry publishes every builder image
+(the tests bake those they run), and any other URL fails, naming it: the
 builder runs unchanged, with neither network nor date-dependent data. The builder fetches everything
 with httpx, served by respx.
 """
@@ -31,4 +32,6 @@ else:
             return_value=httpx.Response(200, content=(_RECORDINGS / _name).read_bytes())
         )
     _router.route(host='127.0.0.1').pass_through()
+    # the builder images the tests run are baked into the engine beforehand: published
+    _router.head(url__regex=r'^https://ghcr\.io/v2/.*/manifests/').respond(200)
     _router.start()

@@ -5,6 +5,7 @@
 """What the builders ask of the engine: images, mounts, users; no container runs."""
 
 import importlib
+import shutil
 import signal
 import sys
 import tempfile
@@ -19,6 +20,7 @@ import httpx
 import pysequoia
 import pytest
 import respx
+import yaml
 from typer.testing import CliRunner
 
 from distro_releases import Release, distribution
@@ -254,11 +256,10 @@ def test_failed_download_fails_only_dependents(
     recorded_http: respx.MockRouter,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """An rpm Source: that cannot be downloaded (the deb sources are uscan's)."""
     recorded_http.routes['orig'].return_value = httpx.Response(404)
-    runner = FakeRunner(tools_respond)
-    status = run_main(
-        runner, {'debian': ['trixie']}, ['hello-lib', 'hello-app', 'hello-undeclared']
-    )
+    runner = FakeRunner(rpm_builds())
+    status = run_main(runner, {'fedora': ['44']}, ['hello-lib', 'hello-app', 'hello-undeclared'])
     assert status == 1
     built = {
         p
@@ -268,11 +269,8 @@ def test_failed_download_fails_only_dependents(
     }
     assert built == {'hello-undeclared'}
     out = capsys.readouterr().out
-    assert (
-        f'failed hello-lib on Debian GNU/Linux 13 (Trixie): while downloading {HELLO_LIB_ORIG}'
-        in out
-    )
-    assert 'skipped hello-app on Debian GNU/Linux 13 (Trixie): hello-lib failed' in out
+    assert f'failed hello-lib on Fedora 44: while downloading {HELLO_LIB_ORIG}' in out
+    assert 'skipped hello-app on Fedora 44: hello-lib failed' in out
 
 
 @pytest.mark.parametrize('outcome', ['success', 'failure'])
@@ -638,3 +636,128 @@ def test_broken_template_fails_before_builds(
     assert line.startswith('distropack-build: error: ')
     assert 'README.tpl/README.html.j2' in line and expected in line
     assert runner.calls == []
+
+
+def add_quilt_package(project: Path, name: str, version: str) -> None:
+    """A copy of hello-lib named name, at upstream version, with the same debian/watch."""
+    target = project / name
+    shutil.copytree(project / 'hello-lib', target)
+    for path in (target / 'debian').rglob('*'):
+        if path.is_file():
+            path.write_text(path.read_text().replace('hello-lib', name))
+    changelog = target / 'debian' / 'changelog'
+    changelog.write_text(changelog.read_text().replace('(1.0-1)', f'({version}-1)', 1))
+    (target / 'debian' / 'watch').write_text((project / 'hello-lib/debian/watch').read_text())
+    for spec in target.glob('*.spec'):
+        spec.unlink()
+    conf = yaml.safe_load((project / 'build.conf').read_text())
+    conf['packages'][name] = {}
+    (project / 'build.conf').write_text(yaml.safe_dump(conf))
+
+
+def uscan_calls(runner: FakeRunner) -> list[Call]:
+    return [c for c in runner.calls if c.args[:1] == ('uscan',)]
+
+
+def test_shared_watch_downloads_once(run_main: Callable[..., int]) -> None:
+    """Two packages with the same watch file and upstream version: one uscan, one renaming."""
+    runner = FakeRunner(tools_respond)
+
+    def prepare(project: Path) -> None:
+        add_quilt_package(project, 'hello-lib2', '1.0')
+
+    assert run_main(runner, {'debian': ['trixie']}, ['hello-lib'], prepare=prepare) == 0
+    assert len(uscan_calls(runner)) == 1
+    renamed = [c for c in runner.calls if c.args[:1] == ('mk-origtargz',)]
+    assert len(renamed) == 1
+    # uscan runs for one of them, mk-origtargz names the tarball for the other
+    assert {uscan_calls(runner)[0].workdir, renamed[0].workdir} == {
+        '/project/hello-lib',
+        '/project/hello-lib2',
+    }
+    built = {c.targets['/src'].source.parent.name.split('.')[0] for c in runner.calls if c.is_build}
+    assert built == {'hello-lib', 'hello-lib2'}
+
+
+def test_different_versions_download_twice(run_main: Callable[..., int]) -> None:
+    runner = FakeRunner(tools_respond)
+
+    def prepare(project: Path) -> None:
+        add_quilt_package(project, 'hello-lib2', '2.0')
+
+    assert run_main(runner, {'debian': ['trixie']}, ['hello-lib'], prepare=prepare) == 0
+    assert sorted(c.workdir or '' for c in uscan_calls(runner)) == [
+        '/project/hello-lib',
+        '/project/hello-lib2',
+    ]
+    assert not [c for c in runner.calls if c.args[:1] == ('mk-origtargz',)]
+
+
+def test_uscan_failure_fails_the_package_and_descendants(
+    run_main: Callable[..., int], capsys: pytest.CaptureFixture[str]
+) -> None:
+    def respond(call: Call) -> RunResult | None:
+        if call.args[:1] == ('uscan',):
+            raise ContainerFailed(
+                1,
+                [call.image, *call.args],
+                output='uscan info: Scan watch files in .\nuscan error: no matching tag v1.0\n',
+            )
+        return tools_respond(call)
+
+    runner = FakeRunner(respond)
+    status = run_main(
+        runner, {'debian': ['trixie']}, ['hello-lib', 'hello-app', 'hello-undeclared']
+    )
+    assert status == 1
+    built = {
+        p
+        for p in ('hello-lib', 'hello-app', 'hello-undeclared')
+        if any(c.build_of(p) for c in runner.calls)
+    }
+    assert built == {'hello-undeclared'}
+    out = capsys.readouterr().out
+    assert (
+        'failed hello-lib on Debian GNU/Linux 13 (Trixie): while downloading with'
+        ' hello-lib/debian/watch: uscan error: no matching tag v1.0' in out
+    )
+    assert 'skipped hello-app on Debian GNU/Linux 13 (Trixie): hello-lib failed' in out
+
+
+def uscan_failing(output: str, times: int) -> Callable[[Call], RunResult | None]:
+    """The tools answer, uscan failing times times with output first."""
+    failures = [times]
+
+    def respond(call: Call) -> RunResult | None:
+        if call.args[:1] == ('uscan',) and failures[0]:
+            failures[0] -= 1
+            raise ContainerFailed(25, [call.image, *call.args], output=output)
+        return tools_respond(call)
+
+    return respond
+
+
+GATEWAY_TIMEOUT = (
+    'uscan warn: In watchfile debian/watch, reading webpage\n'
+    '  https://github.com/pdidev/paraconf/tags failed: 504 Gateway Time-out\n'
+)
+
+
+def test_uscan_transient_failure_is_retried(run_main: Callable[..., int]) -> None:
+    runner = FakeRunner(uscan_failing(GATEWAY_TIMEOUT, 2))
+    assert run_main(runner, {'debian': ['trixie']}, ['hello-lib']) == 0
+    assert len(uscan_calls(runner)) == 3
+
+
+def test_uscan_failure_keeps_its_reason(
+    run_main: Callable[..., int], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The reason is on the indented line after uscan's warning; retries end, and it shows."""
+    runner = FakeRunner(uscan_failing(GATEWAY_TIMEOUT, 99))
+    assert run_main(runner, {'debian': ['trixie']}, ['hello-lib']) == 1
+    assert len(uscan_calls(runner)) == 5
+    assert (
+        'while downloading with hello-lib/debian/watch: uscan warn: In watchfile debian/watch,'
+        ' reading webpage https://github.com/pdidev/paraconf/tags failed: 504 Gateway Time-out'
+        in capsys.readouterr().out
+    )

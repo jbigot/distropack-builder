@@ -16,7 +16,6 @@ SPDX-License-Identifier: MIT
    ```yaml
    packages:
      example:
-       orig: "https://example.org/releases/example-{upstream_version}.tar.gz"
        disable: {fedora: [rawhide], ubuntu: all}
    ```
 
@@ -25,15 +24,31 @@ SPDX-License-Identifier: MIT
 - A deb package of format `3.0 (native)` (`debian/source/format`) is built from its own
   directory, which holds the sources beside `debian/`.
 - A deb package of format `3.0 (quilt)` holds `debian/` alone, and its upstream tarball is
-  downloaded from `orig`, where `{upstream_version}` and `{package}` are replaced from
-  `debian/changelog`. The builder names the file `<package>_<version>.orig.tar.<compression>`,
-  the compression read from the file itself. `orig` needs `debian/`: it is a deb setting, and an
-  rpm build of the same package ignores it.
+  downloaded as its `debian/watch` says, by Debian's own `uscan`, at the upstream version of
+  `debian/changelog`: with its version mangling, its upstream signature check, and its
+  `Files-Excluded` repacking (from a machine-readable `debian/copyright`). A quilt package without
+  `debian/watch` is an error. uscan can download only a version the watch page lists. Packages
+  whose watch file and upstream version are the same share one download, which `mk-origtargz`
+  names (and repacks, after its own `Files-Excluded`) for each of them. A project on GitHub:
+
+  ```text
+  version=4
+  opts="searchmode=plain, \
+    downloadurlmangle=s%api.github.com/repos/([^/]+)/([^/]+)/tarball/refs/tags/%github.com/$1/$2/archive/refs/tags/%;s%$%.tar.gz%, \
+    filenamemangle=s%.*/v?@ANY_VERSION@%@PACKAGE@-$1.tar.gz%" \
+    https://api.github.com/repos/<owner>/<repository>/tags?per_page=100 \
+    https://api.github.com/repos/<owner>/<repository>/tarball/refs/tags/v?@ANY_VERSION@
+  ```
+
+  It lists the tags through GitHub's API (its HTML tags page is slow to the point of timing out),
+  and downloads each one from `github.com/<owner>/<repository>/archive/`, the tarball GitHub
+  serves for a tag. GitHub's API answers 60 anonymous requests an hour per address.
 - An rpm package downloads what its spec's `Source:` lines name, as `rpmspec` expands them in each
   release's own builder image.
 
 Every source is downloaded once, before the first build: a download that fails fails the builds
-that need it, and spares the others.
+that need it, and spares the others. A transient failure (a server error, a timeout) is retried,
+uscan's included.
 
 ## Its dependencies
 

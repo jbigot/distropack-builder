@@ -6,8 +6,12 @@
 
 import gzip
 import io
+import os
+import re
 import shutil
+import subprocess
 import tarfile
+import tempfile
 from datetime import date
 from pathlib import Path
 
@@ -76,16 +80,52 @@ def write_tarball(source: Path, target: Path) -> None:
         gz.write(data.getvalue())
 
 
+def write_git_upstream(source: Path, target: Path, tag: str) -> None:
+    """A bare git repository at target, holding source's files in one commit, tagged tag.
+
+    The commit is reproducible: fixed author, committer and dates.
+    """
+    when = '2026-01-01T00:00:00+00:00'
+    env = {
+        'GIT_AUTHOR_NAME': 'upstream',
+        'GIT_AUTHOR_EMAIL': 'upstream@example.invalid',
+        'GIT_AUTHOR_DATE': when,
+        'GIT_COMMITTER_NAME': 'upstream',
+        'GIT_COMMITTER_EMAIL': 'upstream@example.invalid',
+        'GIT_COMMITTER_DATE': when,
+        'GIT_CONFIG_GLOBAL': '/dev/null',
+        'GIT_CONFIG_NOSYSTEM': '1',
+        'PATH': os.environ['PATH'],
+    }
+    with tempfile.TemporaryDirectory() as scratch:
+        work = Path(scratch) / 'work'
+        shutil.copytree(source, work)
+
+        def git(*args: str, cwd: Path = work) -> None:
+            subprocess.run(['git', *args], cwd=cwd, env=env, check=True, capture_output=True)
+
+        git('init', '-q', '-b', 'main')
+        git('add', '-A')
+        git('commit', '-q', '-m', 'upstream')
+        git('tag', tag)
+        git('clone', '-q', '--bare', str(work), str(target), cwd=Path(scratch))
+
+
 def make_project(
     target: Path, orig_base: str, versions: dict[str, list[str]], packages: list[str]
 ) -> Path:
     """Copy the fixture project to target, limited to some releases and packages.
 
-    Every *.in file of the copy is rendered with @ORIG_BASE@ set to orig_base.
+    Every *.in file of the copy is rendered with @ORIG_BASE@ set to orig_base. Each upstream
+    tree <name>-<version> becomes the bare git repository upstream/<name>.git, tagged v<version>,
+    which the deb packages' watch files read.
     """
     project_dir = Path(
         shutil.copytree(FIXTURE_PROJECT, target, ignore=shutil.ignore_patterns('upstream'))
     )
+    for upstream in (FIXTURE_PROJECT / 'upstream').iterdir():
+        name, _, version = upstream.name.rpartition('-')
+        write_git_upstream(upstream, project_dir / 'upstream' / f'{name}.git', f'v{version}')
     for template in project_dir.rglob('*.in'):
         template.with_suffix('').write_text(template.read_text().replace('@ORIG_BASE@', orig_base))
         template.unlink()
@@ -97,3 +137,11 @@ def make_project(
     conf['packages'] = {name: conf['packages'][name] for name in packages}
     conf_path.write_text(yaml.safe_dump(conf))
     return project_dir
+
+
+def source0(spec: Path) -> str:
+    """The URL of the spec's Source0, its %{version} expanded."""
+    text = spec.read_text()
+    version: str = re.findall(r'^Version:\s*(\S+)', text, re.M)[0]
+    url: str = re.findall(r'^Source0:\s*(\S+)', text, re.M)[0]
+    return url.replace('%{version}', version)

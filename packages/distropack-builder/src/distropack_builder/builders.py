@@ -30,14 +30,15 @@ from distropack_builder import readme, repodata, rpmquery, targets
 from distropack_builder.bake import DEB_TOOLS, PROTOCOL, REGISTRY, tool_image
 from distropack_builder.config import BuildConfig, Distrib
 from distropack_builder.context import BuildContext
-from distropack_builder.docker import Mount
-from distropack_builder.downloads import DownloadFailed, fetch_all, orig_name, source_name
+from distropack_builder.docker import Mount, RunResult
+from distropack_builder.downloads import DownloadFailed, fetch_all, source_name
 from distropack_builder.graph import closure, dependencies
 from distropack_builder.publication import published
 from distropack_builder.report import Reporter, build_logger
 from distropack_builder.rpmquery import SpecFailed, SpecInfo
 from distropack_builder.scheduler import Succeeded, schedule
 from distropack_builder.signing import Signer
+from distropack_builder.uscan import OrigFiles, fetch_origs
 from distropack_builder.versions import deb_version
 
 # The files a build needs downloaded: each URL's file, or why it could not be.
@@ -102,14 +103,16 @@ class Container:
         shm_size: str | None = None,
         as_root: bool = False,
         env: Mapping[str, str] | None = None,
-    ) -> None:
+        workdir: str | None = None,
+    ) -> RunResult:
         """Run the image with args; raises ContainerFailed if it fails."""
-        self._context.run(
+        return self._context.run(
             self._context.engine,
             self._image,
             args,
             mounts=mounts,
             env=env,
+            workdir=workdir,
             shm_size=shm_size,
             as_root=as_root,
             cancellation=self._context.cancellation,
@@ -245,13 +248,13 @@ class DebPackageBuilder(PackageBuilder):
         base_dir: Path,
         gpg: Signer,
         name: str,
-        orig_url: str | None = None,
     ) -> None:
-        """The build of base_dir/name/debian; orig_url, build.conf's orig:, for 3.0 (quilt)."""
+        """The build of base_dir/name/debian."""
         super().__init__(context, dist_release, base_dir, gpg, name)
         self._debian_dir = base_dir / name / 'debian'
-        self._orig_url = orig_url
         self._format = source_format(self._debian_dir)
+        # the upstream tarball of a 3.0 (quilt) source, which run_builds downloads with uscan
+        self.orig: OrigFiles | DownloadFailed | None = None
         with (self._debian_dir / 'changelog').open() as raw_changelog:
             self._changelog = Changelog(raw_changelog)
 
@@ -272,18 +275,10 @@ class DebPackageBuilder(PackageBuilder):
         """Whether the package has a debian/ directory."""
         return (base_dir / name / 'debian').is_dir()
 
-    def _orig(self) -> str | None:
-        """The URL of the upstream tarball, for a 3.0 (quilt) package that names one."""
-        if self._format != '3.0 (quilt)' or self._orig_url is None:
-            return None
-        return self._orig_url.format(
-            upstream_version=self._changelog.upstream_version, package=self._changelog.package
-        )
-
-    def sources(self) -> list[str]:
-        """The upstream tarball, if the package has one."""
-        orig = self._orig()
-        return [] if orig is None else [orig]
+    @property
+    def needs_orig(self) -> bool:
+        """Whether the source holds an upstream tarball, which its debian/watch downloads."""
+        return self._format == '3.0 (quilt)'
 
     def _build(self, wk_dir: Path, outdir: Path, deps: Set[PackageBuilder], files: Files) -> None:
         pkg_dir = wk_dir / 'pkg'
@@ -294,9 +289,11 @@ class DebPackageBuilder(PackageBuilder):
         with (self._debian_dir / 'changelog').open() as raw_changelog:
             changelog = Changelog(raw_changelog)
         source_dir = pkg_dir / f'{changelog.package}-{changelog.upstream_version}'
-        if self._format == '3.0 (quilt)':
-            if self._orig_url is None:
-                raise ValueError('a 3.0 (quilt) package needs an orig: URL in build.conf')
+        if self.needs_orig:
+            if self.orig is None:
+                raise ValueError(f'the upstream tarball of {self.name} was not downloaded')
+            if isinstance(self.orig, DownloadFailed):
+                raise self.orig
             debian_dir = Path(copytree(self._debian_dir, source_dir / 'debian'))
         elif self._format == '3.0 (native)':
             debian_dir = Path(copytree(self._debian_dir.parent, source_dir)) / 'debian'
@@ -318,13 +315,9 @@ class DebPackageBuilder(PackageBuilder):
         with (debian_dir / 'changelog').open('w') as raw_changelog:
             changelog.write_to_open_file(raw_changelog)
 
-        orig = self._orig()
-        if orig is not None:
-            file = files[orig]
-            assert isinstance(file, Path)  # build raised the download's failure
-            # the upstream version of the entry packaged, not of the rebuild's new one
-            name = orig_name(changelog.package, self._changelog.upstream_version, orig, file)
-            link_or_copy(file, pkg_dir / name)
+        if isinstance(self.orig, OrigFiles):
+            # named after the upstream version of the entry packaged, not the rebuild's new one
+            link_or_copy(self.orig.orig.resolve(), pkg_dir / self.orig.orig.name)
 
         localrepo = wk_dir / 'repo'
         self._local_repository(DebRepoBuilder, localrepo, deps)
@@ -691,9 +684,7 @@ def run_builds(
         for dist_release in sorted(selected[dist_id], key=lambda release: release.uid):
             if deb:
                 dist_builders += [
-                    DebPackageBuilder(
-                        context, dist_release, root, gpg, name, config.packages[name].orig
-                    )
+                    DebPackageBuilder(context, dist_release, root, gpg, name)
                     for name in config.packages
                     if dist_release not in disabled[name] and DebPackageBuilder.applies(root, name)
                 ]
@@ -728,6 +719,10 @@ def run_builds(
         repo_builders.append((dist_id, repo_builder, dist_builders))
         builders += dist_builders
 
+    debs = [b for b in builders if isinstance(b, DebPackageBuilder) and b.needs_orig]
+    origs = fetch_origs(context, root, sorted({b.name for b in debs}), context.workdir / 'origs')
+    for deb_builder in debs:
+        deb_builder.orig = origs[deb_builder.name]
     downloads = context.workdir / 'downloads'
     downloads.mkdir()
     files = fetch_all(

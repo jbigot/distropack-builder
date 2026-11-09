@@ -1,5 +1,7 @@
-# The fixture project of the end-to-end and golden-master tests; @ORIG_BASE@ is the URL of the
-# local server the tests start, and the tests narrow distribs.*.versions and packages per test.
+# The fixture project of the end-to-end and golden-master tests; the tests narrow distribs.*.versions
+# and packages per test. hello-lib's deb source comes from upstream/hello-lib.git, which the tests
+# make (debian/watch), its rpm source from the local server the tests start (@ORIG_BASE@ in
+# hello-lib.spec.in).
 distribs:
   debian:
     versions: [trixie]
@@ -18,7 +20,7 @@ distribs:
     repository: {path: repositories/rocky, url: "http://repo.example.invalid/rocky", name: hello, description: Hello test}
     gpg: {file: key.gpg}
 packages:
-  hello-lib: {orig: "@ORIG_BASE@/hello-lib-{upstream_version}.tar.gz"}
+  hello-lib: {}
   hello-app: {}
   hello-undeclared: {}
   hello-needs-root: {}

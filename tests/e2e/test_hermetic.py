@@ -10,9 +10,9 @@ from collections.abc import Callable
 from pathlib import Path
 
 import respx
-import yaml
 
 from distro_releases import distribution
+from support import source0
 
 Project = Callable[[dict[str, list[str]], list[str]], Path]
 
@@ -43,10 +43,8 @@ def test_subprocess_refuses_unrecorded_http(pkgbuild_env: dict[str, str]) -> Non
 def test_subprocess_reaches_the_local_server(
     project: Project, pkgbuild_env: dict[str, str]
 ) -> None:
-    conf = yaml.safe_load(
-        (project({'debian': ['trixie']}, ['hello-lib']) / 'build.conf').read_text()
-    )
-    url = conf['packages']['hello-lib']['orig'].format(upstream_version='1.0', package='hello-lib')
+    project_dir = project({'fedora': ['44']}, ['hello-lib'])
+    url = source0(project_dir / 'hello-lib' / 'hello-lib.spec')
     result = run_python(
         f'import httpx\nprint(len(httpx.get({url!r}).raise_for_status().content))',
         pkgbuild_env,
