@@ -127,3 +127,33 @@ def test_gpg_secret_removed_on_error(signer: Signer, tmp_path: Path) -> None:
     with pytest.raises(KeyError), signer.gpg_secret(tmp_path) as secret:
         raise KeyError()
     assert not secret.exists()
+
+
+# A passphrase-protected ed25519 key as GnuPG 2.4 exports it, which Sequoia alone refuses: its
+# secret keeps leading zero octets (make-ed25519.sh).
+ED25519_KEY = Path(__file__).parent / 'data' / 'ed25519-gpg.asc'
+ED25519_PASSPHRASE = 'test-passphrase'
+
+
+def test_sequoia_alone_refuses_the_ed25519_fixture() -> None:
+    """The fixture still shows the bug: if Sequoia accepts it one day, the workaround can go."""
+    with pytest.raises(RuntimeError, match='Malformed MPI'):
+        pysequoia.Tsk.from_bytes(ED25519_KEY.read_bytes()).signer(ED25519_PASSPHRASE)
+
+
+def test_gpg_ed25519_key_unlocks_and_signs(tmp_path: Path) -> None:
+    signer = Signer.load(ED25519_KEY, ED25519_PASSPHRASE)
+    signature = signer.detached(TEXT)
+    cert = certificate(signer)
+    result = pysequoia.verify(
+        bytes=TEXT, store=lambda ids: [cert], signature=pysequoia.Sig.from_bytes(signature)
+    )
+    assert result.valid_sigs
+    # rpm's gpg gets the key as given, still locked
+    with signer.gpg_secret(tmp_path) as secret:
+        assert (secret / 'key').read_bytes() == ED25519_KEY.read_bytes()
+
+
+def test_gpg_ed25519_key_wrong_passphrase() -> None:
+    with pytest.raises(SigningKeyError, match='passphrase does not unlock'):
+        Signer.load(ED25519_KEY, 'not the passphrase')

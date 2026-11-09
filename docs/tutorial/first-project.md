@@ -130,12 +130,9 @@ The builder signs the packages and the repositories with the key in `key.gpg`, b
 `build.conf`. Make one, with a passphrase, and export its secret part:
 
 ```sh
-gpg --quick-generate-key 'Hello packages <packages@example.org>' rsa4096 sign never
+gpg --quick-generate-key 'Hello packages <packages@example.org>' ed25519 sign never
 gpg --export-secret-keys --armor 'Hello packages' > key.gpg
 ```
-
-An RSA key, because GnuPG 2.3 and later write a passphrase-protected ed25519 secret key in an
-encoding that the OpenPGP library of the builder, Sequoia, refuses.
 
 Keep `key.gpg` out of version control, and the passphrase in a file only you can read:
 

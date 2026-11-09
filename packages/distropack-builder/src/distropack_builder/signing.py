@@ -19,6 +19,8 @@ from typing import Self
 
 import pysequoia
 
+from distropack_builder import sos
+
 
 class SigningKeyError(Exception):
     """The signing key cannot be used: unreadable, locked, or not the one asked for."""
@@ -84,7 +86,7 @@ class Signer:
         certificate = key.extract_certificate()
         uids = [uid.strip()] if uid is not None else _uids(key)
         try:
-            signer = key.signer(passphrase)
+            signer = _signer(key, passphrase)
         except Exception as error:
             if passphrase is None:
                 message = f'{keyfile} is protected by a passphrase, and none was given'
@@ -139,6 +141,22 @@ class Signer:
         """
         text = data.removesuffix(b'\n')
         return pysequoia.sign(self._signer, text, mode=pysequoia.SignatureMode.CLEAR)
+
+
+def _signer(key: pysequoia.Tsk, passphrase: str | None) -> pysequoia.PySigner:
+    """The signer of key, unlocked with passphrase.
+
+    An EdDSA or Curve25519 key that GnuPG 2.3 or later exported may keep leading zero octets in its
+    secret, which Sequoia refuses: its secrets are then decrypted here, fixed, and given to Sequoia
+    unprotected, in memory only (`sos`).
+    """
+    try:
+        return key.signer(passphrase)
+    except Exception:
+        fixed = None if passphrase is None else sos.unlocked_copy(bytes(key), passphrase)
+        if fixed is None:
+            raise
+        return pysequoia.Tsk.from_bytes(fixed).signer(None)
 
 
 def _fingerprint(key: pysequoia.Tsk) -> str:

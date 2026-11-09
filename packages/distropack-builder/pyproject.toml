@@ -27,6 +27,7 @@ classifiers = [
 ]
 dependencies = [
     "createrepo-c",
+    "cryptography",
     "distro-releases",
     "docker",
     "filetype",
