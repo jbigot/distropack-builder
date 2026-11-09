@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+from collections.abc import Mapping
 from datetime import date
 from pathlib import Path
 
@@ -39,14 +40,32 @@ SCRIPT_MODULES = {
 FROZEN_DATE = date(2026, 11, 5)
 FIXTURE_PROJECT = REPO_ROOT / 'tests' / 'e2e' / 'project'
 FIXTURE_PASSPHRASE = 'test-passphrase'
+
+
 # The releases the shared fixture build covers: one per family, and Rocky Linux for Phase 10's el.
-FIXTURE_RELEASES = {
-    'debian': ['trixie'],
-    'ubuntu': ['noble'],
-    'fedora': ['44'],
-    'el': ['10'],
-    'opensuse': ['16.0', 'tumbleweed'],
-}
+def fixture_releases(environ: Mapping[str, str]) -> dict[str, list[str]]:
+    """The releases the end-to-end tests build the fixture for, by distribution.
+
+    One per family, openSUSE's two aside; with DISTROPACK_NIGHTLY=1 (the nightly run), a second
+    one each, so that one packaging is built for two releases of every family. The first is the
+    install tests'.
+    """
+    releases = {
+        'debian': ['trixie'],
+        'ubuntu': ['noble'],
+        'fedora': ['44'],
+        'el': ['10'],
+        'opensuse': ['16.0', 'tumbleweed'],
+    }
+    if environ.get('DISTROPACK_NIGHTLY') == '1':
+        # bookworm, in Debian's LTS, keeps the extended support's images exercised
+        second = {'debian': 'bookworm', 'ubuntu': 'jammy', 'fedora': '43', 'el': '9'}
+        for dist, release in second.items():
+            releases[dist].append(release)
+    return releases
+
+
+FIXTURE_RELEASES = fixture_releases(os.environ)
 
 
 def made_release(dist: str, version: str | None, codename: str | None, order: int) -> Release:
