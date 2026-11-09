@@ -175,3 +175,19 @@ def test_progress_on_a_terminal() -> None:
         reporter.finished('app', TRIXIE, Skipped('lib'))
     text = re.sub(r'\x1b\[[0-9;?]*[A-Za-z]', '', out.getvalue())
     assert 'built lib' in text and 'skipped app' in text
+
+
+def test_release_failed(tmp_path: Path) -> None:
+    con, out = console()
+    summary = tmp_path / 'summary.md'
+    with Reporter(con, verbose=False, github=False, summary=summary) as reporter:
+        reporter.release_failed(TRIXIE, 'not published yet')
+    assert out.getvalue() == f'no builder image for {TRIXIE}: not published yet\n'
+    assert summary.read_text() == f'\n- no builder image for {TRIXIE}: not published yet\n'
+
+
+def test_release_failed_github_error() -> None:
+    con, out = console()
+    with Reporter(con, verbose=False, github=True) as reporter:
+        reporter.release_failed(TRIXIE, 'not published yet')
+    assert out.getvalue() == f'::error::no builder image for {TRIXIE}: not published yet\n'

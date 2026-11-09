@@ -29,7 +29,7 @@ from distro_releases import Release, SelectorError, SourceError, UnknownDistribu
 from distropack_builder import bake, config, readme, targets
 from distropack_builder.availability import AvailabilityError, image_available
 from distropack_builder.builders import builder_image, run_builds
-from distropack_builder.config import BuildConfig, ConfigError, Distrib
+from distropack_builder.config import AVAILABLE, BuildConfig, ConfigError, Distrib
 from distropack_builder.context import BuildContext, Runner
 from distropack_builder.docker import Cancellation, Engine
 from distropack_builder.docker import run as run_container
@@ -113,6 +113,38 @@ def _selection(
             lambda release: image_available(bake.REGISTRY + builder_image(release), client),
         )
     return loaded, selected
+
+
+def _unpublished(
+    loaded: BuildConfig, selected: Mapping[str, frozenset[Release]], on: date
+) -> dict[Release, str]:
+    """The selected releases whose builder image the registry does not publish, and why.
+
+    The distributions whose versions hold `available` already kept only the published ones.
+
+    Raises:
+        AvailabilityError: the registry did not tell whether it publishes an image.
+    """
+    missing: dict[Release, str] = {}
+    with new_client() as client:
+        for dist_id, distrib in loaded.distribs.items():
+            if AVAILABLE in distrib.versions:
+                continue
+            for release in sorted(selected[dist_id]):
+                if not image_available(bake.REGISTRY + builder_image(release), client):
+                    missing[release] = _why_unpublished(release, on)
+    return missing
+
+
+def _why_unpublished(release: Release, on: date) -> str:
+    """Why the registry may not publish the builder image of release, as of on."""
+    if not release.is_eol(on) or release.is_maintained(on):
+        return 'not published yet'
+    if release.extended_eol_date is not None and release.extended_eol_date > (
+        release.eol_date or date.min
+    ):
+        return f'its extended support ended on {release.extended_eol_date}'
+    return f'end of life since {release.eol_date}'
 
 
 def _interrupt(signum: int, frame: FrameType | None) -> None:
@@ -207,6 +239,12 @@ def make_app(
         if not output_dirs:
             typer.echo(f'{PROG}: nothing to build: {build_conf} selects no release', err=True)
             return False, output_dirs
+        # a release whose builder image is missing fails once, here, and builds nothing
+        unpublished = _unpublished(loaded, selected, on)
+        selected = {
+            dist_id: frozenset(r for r in releases if r not in unpublished)
+            for dist_id, releases in selected.items()
+        }
         disabled = disabled_releases(loaded, selected, on)
         try:
             engine = connect(docker_host)
@@ -233,8 +271,10 @@ def make_app(
                     summary=Path(summary) if summary else None,
                 )
             )
+            for release, reason in unpublished.items():
+                reporter.release_failed(release, reason)
             failed = run_builds(context, reporter, loaded, selected, disabled, signer_for)
-        return failed, output_dirs
+        return failed or bool(unpublished), output_dirs
 
     @app.command()
     def run(

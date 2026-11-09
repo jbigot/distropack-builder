@@ -189,6 +189,18 @@ class Reporter:
             if self._progress is not None and self._task is not None:
                 self._progress.advance(self._task)
 
+    def release_failed(self, release: Release, reason: str) -> None:
+        """No build of release can run: the registry does not publish its builder image."""
+        message = f'no builder image for {release}: {reason}'
+        with self._lock:
+            if self._github:
+                self._print(f'::error::{message}')
+            else:
+                self._print(Text(message, 'red'))
+            if self._summary is not None:
+                with self._summary.open('a') as summary:
+                    summary.write(f'\n- {message}\n')
+
     def publication_failed(self, what: str, error: BaseException) -> None:
         """The publication of what (a release, or a whole distribution) failed with error."""
         with self._lock:

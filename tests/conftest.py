@@ -64,11 +64,28 @@ def recordings() -> dict[str, str]:
 
 
 @pytest.fixture
-def recorded_http(recordings: dict[str, str]) -> Iterator[respx.MockRouter]:
+def unpublished() -> set[str]:
+    """The builder image tags the registry of recorded_http does not publish.
+
+    It publishes every other one; with `ERROR` in the set, it answers every probe with a server
+    error.
+    """
+    return set()
+
+
+@pytest.fixture
+def recorded_http(recordings: dict[str, str], unpublished: set[str]) -> Iterator[respx.MockRouter]:
     """Serve httpx requests from the recordings, failing on any other URL, with a fresh catalog.
 
-    Retries happen without waiting, as in distro-releases' own tests.
+    Retries happen without waiting, as in distro-releases' own tests. The registry's manifests
+    answer as unpublished says.
     """
+
+    def manifest(request: httpx.Request) -> httpx.Response:
+        if 'ERROR' in unpublished:
+            return httpx.Response(500)
+        return httpx.Response(404 if request.url.path.rsplit('/', 1)[-1] in unpublished else 200)
+
     catalog._fetch.cache_clear()
     with (
         stamina.set_testing(True, attempts=5),
@@ -78,6 +95,9 @@ def recorded_http(recordings: dict[str, str]) -> Iterator[respx.MockRouter]:
             router.get(url, name=url).mock(
                 return_value=httpx.Response(200, content=(RELEASE_DATA / name).read_bytes())
             )
+        router.head(url__regex=r'^https://ghcr\.io/v2/.*/manifests/', name='registry').mock(
+            side_effect=manifest
+        )
         yield router
     catalog._fetch.cache_clear()
 

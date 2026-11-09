@@ -14,6 +14,7 @@ from typing import Any, cast
 
 import pytest
 import respx
+import yaml
 from typer.testing import CliRunner, Result
 
 from distropack_builder import cli, config
@@ -81,7 +82,11 @@ def test_passphrase_file_line_ending(tmp_path: Path, text: str, expected: str) -
 
 @pytest.fixture
 def project(
-    recorded_http: respx.MockRouter, frozen: date, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    recorded_http: respx.MockRouter,
+    unpublished: set[str],
+    frozen: date,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[Path]:
     """The fixture project, Debian trixie and hello-undeclared alone, as the current directory."""
     project = make_project(
@@ -231,13 +236,16 @@ def test_missing_build_conf(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_nothing_to_build(
-    recorded_http: respx.MockRouter, frozen: date, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    recorded_http: respx.MockRouter,
+    unpublished: set[str],
+    frozen: date,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A run that selects no release says so, and touches no engine."""
     monkeypatch.chdir(tmp_path)
     write_conf(tmp_path, 'distribs: {debian: {versions: [trixie, available]}}\npackages: {}\n')
-    manifest = 'https://ghcr.io/v2/jbigot/distropack-builder/debian_builder/manifests/trixie-p2'
-    recorded_http.head(manifest).respond(404)
+    unpublished.add('trixie-p2')
 
     def no_engine(host: str | None) -> Any:
         raise AssertionError('connected to an engine')
@@ -300,12 +308,15 @@ def test_unwritable_github_output(project: Path, tmp_path: Path) -> None:
 
 
 def test_nothing_selected_writes_outputs(
-    recorded_http: respx.MockRouter, frozen: date, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    recorded_http: respx.MockRouter,
+    unpublished: set[str],
+    frozen: date,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
     write_conf(tmp_path, 'distribs: {debian: {versions: [trixie, available]}}\npackages: {}\n')
-    manifest = 'https://ghcr.io/v2/jbigot/distropack-builder/debian_builder/manifests/trixie-p2'
-    recorded_http.head(manifest).respond(404)
+    unpublished.add('trixie-p2')
     output = tmp_path / 'output'
     result = invoke('run', env={'GITHUB_OUTPUT': str(output)})
     assert result.exit_code == 0, result.output
@@ -341,3 +352,62 @@ def test_usage_error_writes_failed_true(tmp_path: Path, monkeypatch: pytest.Monk
     result = invoke('run', env={'GITHUB_OUTPUT': str(output)})
     assert result.exit_code == 2
     assert read_outputs(output) == {'failed': 'true', 'output-dirs': '{}'}
+
+
+def run_with_bookworm(
+    project: Path, monkeypatch: pytest.MonkeyPatch, *args: str, available: bool = False
+) -> tuple[Result, FakeRunner]:
+    """run on the fixture project selecting bookworm and trixie; its result and its runner."""
+    conf = yaml.safe_load((project / 'build.conf').read_text())
+    versions = ['bookworm', 'trixie', *(['available'] if available else [])]
+    conf['distribs']['debian']['versions'] = versions
+    (project / 'build.conf').write_text(yaml.safe_dump(conf))
+    runner = FakeRunner(tools_respond)
+    env = {PASSPHRASE_ENV: FIXTURE_PASSPHRASE}
+    return invoke('run', *args, runner=runner, env=env), runner
+
+
+def test_missing_builder_image_fails_its_release_once(
+    project: Path, unpublished: set[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unpublished.add('bookworm-p2')
+    result, runner = run_with_bookworm(project, monkeypatch)
+    assert result.exit_code == 1, result.output
+    lines = [line for line in result.output.splitlines() if 'no builder image' in line]
+    assert lines == ['no builder image for Debian GNU/Linux 12 (Bookworm): not published yet']
+    assert not [call for call in runner.calls if 'bookworm' in call.image]
+    assert (project / 'repositories/debian/dists/trixie/InRelease').is_file()
+    assert not (project / 'repositories/debian/dists/bookworm').exists()
+
+
+@pytest.mark.parametrize('frozen', [date(2028, 7, 1)], indirect=True)
+def test_missing_image_of_a_release_out_of_support(
+    project: Path, unpublished: set[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unpublished.add('bookworm-p2')
+    result, _ = run_with_bookworm(project, monkeypatch, '-D', 'debian:bookworm')
+    assert result.exit_code == 1, result.output
+    assert (
+        'no builder image for Debian GNU/Linux 12 (Bookworm): its extended support ended on'
+        ' 2028-06-30' in result.output
+    )
+
+
+def test_available_still_drops_silently(
+    project: Path, unpublished: set[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unpublished.add('bookworm-p2')
+    result, _ = run_with_bookworm(project, monkeypatch, available=True)
+    assert result.exit_code == 0, result.output
+    assert 'no builder image' not in result.output
+
+
+def test_registry_error_fails_the_run(project: Path, unpublished: set[str]) -> None:
+    """A registry that does not answer is an error, never read as a missing image."""
+    unpublished.add('ERROR')
+    runner = FakeRunner(tools_respond)
+    result = invoke('run', runner=runner, env={PASSPHRASE_ENV: FIXTURE_PASSPHRASE})
+    assert result.exit_code == 1, result.output
+    assert 'cannot tell whether the registry publishes' in result.output
+    assert 'no builder image' not in result.output
+    assert not runner.calls

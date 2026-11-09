@@ -171,11 +171,11 @@ def test_docker_host_option(
 def test_registry_error_exits_1_before_any_work(
     main: Callable[..., Result],
     recorded_http: respx.MockRouter,
+    unpublished: set[str],
     tmp_path: Path,
 ) -> None:
     """A registry that does not answer stops the run: no release is dropped silently."""
-    manifest = 'https://ghcr.io/v2/jbigot/distropack-builder/debian_builder/manifests/trixie-p2'
-    recorded_http.head(manifest).respond(429)
+    unpublished.add('ERROR')
     write_conf(
         tmp_path, {'distribs': {'debian': {'versions': ['trixie', 'available']}}, 'packages': {}}
     )

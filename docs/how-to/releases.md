@@ -31,6 +31,27 @@ distribs:
 `available` asks the registry once per release, anonymously. A registry that does not answer stops
 the run: an error is never read as a missing image, which would silently drop the release.
 
+Without `available`, `run` asks the registry the same question before any build, and a release
+whose image is missing fails, once, with the reason: `no builder image for Debian GNU/Linux 12
+(Bookworm): not published yet`. Its packages are not built, every other release builds and
+publishes, and the run fails.
+
+## Keep a release in extended support
+
+A release past its end of life stays buildable while its distribution's archive still supports it
+for free: Debian's LTS (bookworm until 2028-06-30), Ubuntu's server support. `supported` drops it
+at its end of life; name it to keep it:
+
+```yaml
+distribs:
+  debian:
+    versions: [bookworm, supported]   # bookworm, in Debian's LTS, and the supported releases
+```
+
+`distro-releases list` shows such a release with the status `extended` and the date its extended
+support ends, the `EXTENDED` column; its builder image is published until that day. Debian's ELTS
+and Ubuntu's ESM do not count: they need a subscription the builder images do not have.
+
 ## Check what a run would build
 
 ```sh
