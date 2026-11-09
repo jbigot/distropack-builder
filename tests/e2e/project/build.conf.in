@@ -15,6 +15,10 @@ distribs:
     versions: ['44']
     repository: {path: repositories/fedora, url: "http://repo.example.invalid/fedora", name: hello, description: Hello test}
     gpg: {file: key.gpg}
+  opensuse:
+    versions: ['16.0', tumbleweed]
+    repository: {path: repositories/opensuse, url: "http://repo.example.invalid/opensuse", name: hello, description: Hello test}
+    gpg: {file: key.gpg}
   el:
     versions: ['10']
     repository: {path: repositories/el, url: "http://repo.example.invalid/el", name: hello, description: Hello test}

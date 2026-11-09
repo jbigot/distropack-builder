@@ -15,6 +15,8 @@
         "fedora_builder-44",
         "fedora_builder-45",
         "fedora_builder-46",
+        "opensuse_builder-16_0",
+        "opensuse_builder-tumbleweed",
         "rpm_sign",
         "ubuntu_builder-jammy",
         "ubuntu_builder-noble",
@@ -198,6 +200,36 @@
         "ghcr.io/jbigot/distropack-builder/fedora_builder:46",
         "ghcr.io/jbigot/distropack-builder/fedora_builder:46-p3",
         "ghcr.io/jbigot/distropack-builder/fedora_builder:rawhide"
+      ]
+    },
+    "opensuse_builder-16_0": {
+      "args": {
+        "DIST_CODENAME": "None",
+        "DIST_ID": "opensuse",
+        "DIST_IMAGE": "opensuse/leap",
+        "DIST_RELEASE": "16.0",
+        "DIST_TAG": "lp160"
+      },
+      "context": "/images/zypper_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/opensuse_builder:16.0",
+        "ghcr.io/jbigot/distropack-builder/opensuse_builder:16.0-p3"
+      ]
+    },
+    "opensuse_builder-tumbleweed": {
+      "args": {
+        "DIST_CODENAME": "None",
+        "DIST_ID": "opensuse",
+        "DIST_IMAGE": "opensuse/tumbleweed",
+        "DIST_RELEASE": "latest",
+        "DIST_TAG": "tw"
+      },
+      "context": "/images/zypper_builder",
+      "tags": [
+        "ghcr.io/jbigot/distropack-builder/opensuse_builder:tumbleweed",
+        "ghcr.io/jbigot/distropack-builder/opensuse_builder:tumbleweed-p3",
+        "ghcr.io/jbigot/distropack-builder/opensuse_builder:tumbleweed",
+        "ghcr.io/jbigot/distropack-builder/opensuse_builder:latest"
       ]
     },
     "rpm_sign": {

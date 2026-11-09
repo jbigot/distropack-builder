@@ -16,7 +16,8 @@ The tool images, `deb_tools` and `rpm_sign`, are tagged `latest` and `p<N>`.
 There is one builder image per release of each distribution that has not reached its end of life,
 or that its distribution's archive still supports for free after it (Debian's LTS), named
 `<distribution>_builder`: `debian_builder`, `ubuntu_builder`, `fedora_builder`, `el_builder` (from
-Rocky Linux's images). It carries these tags:
+Rocky Linux's images), `opensuse_builder` (zypper's variant, from openSUSE's Leap and Tumbleweed
+images). It carries these tags:
 
 | tag | example | present |
 |---|---|---|

@@ -99,7 +99,7 @@ Checked on 2026-11-05.
 
 | Tool | Families | Builds a dependent set in parallel | Isolated, clean builds | Many releases from one packaging | Repository publishing | Runs where |
 |---|---|---|---|---|---|---|
-| **distropack-builder** | Debian, Ubuntu, Fedora, EL | yes, graph across packages | yes, container per build, no host root needed | yes, computed release list | yes, signed, static | locally or any CI |
+| **distropack-builder** | Debian, Ubuntu, Fedora, EL, openSUSE | yes, graph across packages | yes, container per build, no network, no host root needed | yes, computed release list | yes, signed, static | locally or any CI |
 | sbuild, pbuilder/cowbuilder, debspawn | Debian, Ubuntu | no, one package per run | yes (chroot, unshare, nspawn) | one run per release | no | locally |
 | git-buildpackage | Debian, Ubuntu | no | delegates to the above | no | no | locally |
 | mock (`--chain`) | Fedora, EL, openSUSE | in order, not in parallel | yes | one run per target | no | locally |

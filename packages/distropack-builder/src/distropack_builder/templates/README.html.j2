@@ -39,9 +39,16 @@ sudo apt update</code></pre>
 <p>On {{ host }}, first:</p>
 <pre><code>{{ commands }}</code></pre>
 {% endfor -%}
+{% if page.package_manager == 'zypper' -%}
+<pre><code>sudo zypper addrepo {{ release.repo_file }}
+sudo zypper --gpg-auto-import-keys refresh</code></pre>
+<p>zypper imports <a href="{{ page.key_url }}">the key</a> of
+<a href="{{ release.url }}">{{ release.url }}</a> at its first refresh.</p>
+{%- else -%}
 <pre><code>sudo curl -fsSL -o /etc/yum.repos.d/{{ page.repository_name }}.repo {{ release.repo_file }}</code></pre>
 <p>dnf asks to trust <a href="{{ page.key_url }}">the key</a> at the first installation from
 <a href="{{ release.url }}">{{ release.url }}</a>.</p>
+{%- endif %}
 {%- endif %}
 {%- endblock %}
 {% endfor -%}

@@ -28,6 +28,13 @@ class TemplateError(Exception):
     """A page template that cannot be compiled or rendered; its message names the file."""
 
 
+_MANAGERS: dict[targets.Family, Literal['apt', 'dnf', 'zypper']] = {
+    'deb': 'apt',
+    'rpm-dnf': 'dnf',
+    'rpm-zypper': 'zypper',
+}
+
+
 @dataclass(frozen=True)
 class PageRelease:
     """A release of the repository, as its page lists it."""
@@ -68,6 +75,8 @@ class Page:
     """The URL of the public key that signs the repository."""
     releases: tuple[PageRelease, ...]
     """Its releases, sorted by name."""
+    package_manager: Literal['apt', 'dnf', 'zypper'] = 'apt'
+    """What installs from it on its hosts."""
 
     @classmethod
     def of(
@@ -91,7 +100,15 @@ class Page:
             ]
         distribution = listed[0].distribution
         return cls(
-            distribution.id, distribution.name, family, name, description, url, key_url, tuple(rows)
+            distribution.id,
+            distribution.name,
+            family,
+            name,
+            description,
+            url,
+            key_url,
+            tuple(rows),
+            _MANAGERS[targets.family(distribution)],
         )
 
 

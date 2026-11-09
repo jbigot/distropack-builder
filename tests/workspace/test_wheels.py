@@ -36,6 +36,7 @@ def test_wheel_ships_the_images(tmp_path: Path) -> None:
     assert executable == {
         'entrypoint in deb_builder',
         'entrypoint in rpm_builder',
+        'entrypoint in zypper_builder',
         'sign in rpm_sign',
     }
 

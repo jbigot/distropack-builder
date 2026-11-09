@@ -14,9 +14,10 @@ when they change, so that a runner asks for an image it can drive.
 import re
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import date
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Final
 
 from distropack_builder import targets
@@ -27,9 +28,18 @@ PROTOCOL: Final = 3
 # smaller than the base plus both tools' own layers (101.1 MB against 104.0 MB, Phase 10a).
 DEB_TOOLS: Final = 'deb_tools'
 TOOLS: Final = (DEB_TOOLS, 'rpm_sign')
+# The builder image variant of each family, a directory of images/
+BUILDERS: Final[Mapping[targets.Family, str]] = MappingProxyType(
+    {'deb': 'deb_builder', 'rpm-dnf': 'rpm_builder', 'rpm-zypper': 'zypper_builder'}
+)
 # What `imagetools inspect` reports for a missing image: `not found` from Docker Hub, `manifest
 # unknown` from registries that use the distribution specification's error code.
 MISSING_IMAGE: Final = re.compile(r'not found|manifest unknown', re.IGNORECASE)
+
+
+def target_name(distrib_id: str, release_tag: str) -> str:
+    """The bake target of a release's builder image: bake allows no dot, which tags keep."""
+    return f'{distrib_id}_builder-{release_tag.replace(".", "_")}'
 
 
 def tool_image(tool: str) -> str:
@@ -84,14 +94,11 @@ def bake_definition(images_dir: Path, base_image_exists: Callable[[str], bool]) 
         # every release a project may name: not at its end of life yet (unreleased ones
         # included), or past it but still maintained for free (Debian's LTS)
         for release in (r for r in releases if not r.is_eol(on) or r.is_maintained(on)):
-            release_tag = str(release.version)
-            builder = 'rpm_builder'
-            if targets.is_deb(distrib):
-                release_tag = str(release.codename)
-                builder = 'deb_builder'
+            release_tag = str(release.codename if targets.is_deb(distrib) else release.version)
             target = targets.TARGETS[distrib.id]
+            builder = BUILDERS[target.family]
             base_image = target.base_image(release_tag)
-            name = f'{distrib.id}_builder-{release_tag}'
+            name = target_name(distrib.id, release_tag)
             if not base_image_exists(base_image):
                 print(f'UNAVAILABLE {base_image} for {name}', file=sys.stderr)
                 continue
@@ -108,10 +115,11 @@ def bake_definition(images_dir: Path, base_image_exists: Callable[[str], bool]) 
                 'tags': tags,
                 'args': {
                     'DIST_ID': distrib.id,
-                    'DIST_IMAGE': target.repository,
+                    'DIST_IMAGE': base_image.rpartition(':')[0],
                     'DIST_RELEASE': base_image.rpartition(':')[2],
                     'DIST_CODENAME': str(release.codename),
                     **target.build_args,
+                    **target.release_args(release_tag),
                 },
             }
     return {

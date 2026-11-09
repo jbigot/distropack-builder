@@ -20,6 +20,7 @@ def test_every_target_has_a_family() -> None:
         'debian': 'deb',
         'el': 'rpm-dnf',
         'fedora': 'rpm-dnf',
+        'opensuse': 'rpm-zypper',
         'ubuntu': 'deb',
     }
 
@@ -37,6 +38,17 @@ def test_base_images() -> None:
     assert debian.base_image('rc-buggy') == 'debian:rc-buggy'
     assert fedora.base_image('44') == 'fedora:44'
     assert targets.TARGETS['el'].base_image('10') == 'rockylinux/rockylinux:10'
+    opensuse = targets.TARGETS['opensuse']
+    assert opensuse.base_image('16.0') == 'opensuse/leap:16.0'
+    assert opensuse.base_image('tumbleweed') == 'opensuse/tumbleweed:latest'
+
+
+def test_opensuse_dist_tags() -> None:
+    """openSUSE has no %{?dist}: each release's builder image defines its own."""
+    opensuse = targets.TARGETS['opensuse']
+    assert opensuse.release_args('16.0') == {'DIST_TAG': 'lp160'}
+    assert opensuse.release_args('tumbleweed') == {'DIST_TAG': 'tw'}
+    assert targets.TARGETS['fedora'].release_args('44') == {}
 
 
 def test_no_name_test_outside_targets() -> None:

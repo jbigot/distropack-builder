@@ -28,7 +28,7 @@ def fixture_targets(definition: dict[str, object]) -> list[str]:
     wanted = list(bake.TOOLS)
     for dist, releases in FIXTURE_RELEASES.items():
         for release in releases:
-            name = f'{dist}_builder-{release}'
+            name = bake.target_name(dist, release)
             if name not in names:
                 raise SystemExit(f'no bake target {name}: is its base image published?')
             wanted.append(name)

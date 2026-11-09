@@ -184,3 +184,15 @@ def test_fedora_has_no_prerequisites() -> None:
     )
     page = readme.Page.of('rpm', 'https://x/fedora', 'ex', 'Ex', [fedora])
     assert page.releases[0].prerequisites == ()
+
+
+def test_opensuse_page_uses_zypper() -> None:
+    leap = Release(
+        distribution('opensuse'), '16.0', None, '16.0', 0, None, None, date(2025, 10, 1), None, None
+    )
+    page = readme.Page.of('rpm', 'https://x/opensuse', 'ex', 'Ex', [leap])
+    assert page.package_manager == 'zypper'
+    html = readme.render(readme.environment(None), page)
+    assert 'sudo zypper addrepo https://x/opensuse/16.0/ex.repo' in html
+    assert 'sudo zypper --gpg-auto-import-keys refresh' in html
+    assert 'dnf' not in html

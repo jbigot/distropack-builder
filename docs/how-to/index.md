@@ -11,6 +11,7 @@ One guide per task.
 - [Add a package](add-package.md)
 - [Add or drop a distribution release](releases.md)
 - [Build for Enterprise Linux](enterprise-linux.md)
+- [Build for openSUSE](opensuse.md)
 - [Use the GitHub Action](github-action.md)
 - [Build the images locally](build-images.md)
 - [Use distro-releases from Python](use-distro-releases.md)
@@ -23,6 +24,7 @@ One guide per task.
 add-package
 releases
 enterprise-linux
+opensuse
 github-action
 build-images
 use-distro-releases

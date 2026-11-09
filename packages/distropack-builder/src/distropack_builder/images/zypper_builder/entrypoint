@@ -1,0 +1,84 @@
+#!/bin/bash
+
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
+# The modes of the rpm builder (protocol 3), with zypper:
+#   query   with the specs mounted under /specs, writes for each one under /out/<name>/ what
+#           rpmspec says of it: buildrequires, provides, parsed, errors and status;
+#   deps    with network: installs the build dependencies of the spec in /src, from the release's
+#           repositories and the local repository in /localrepo, and copies /src to /tmp/src; the
+#           runner then commits the container to a temporary image;
+#   build   from that image, with no network: rpmbuild as an unprivileged user, the rpms moved to
+#           /output.
+
+trap 'echo received signal, quitting...; exit 1' INT TERM
+
+set -euo pipefail
+
+mode=${1:-}
+shift || true
+
+case "${mode}" in
+query)
+	for spec in /specs/*.spec
+	do
+		out="/out/$(basename "${spec}" .spec)"
+		mkdir -p "${out}"
+		status=0
+		rpmspec -q --buildrequires "${spec}" > "${out}/buildrequires" 2> "${out}/errors" || status=$?
+		if [ "${status}" = 0 ]
+		then
+			rpmspec -q --provides "${spec}" > "${out}/provides" 2>> "${out}/errors" || status=$?
+		fi
+		if [ "${status}" = 0 ]
+		then
+			rpmspec -P "${spec}" > "${out}/parsed" 2>> "${out}/errors" || status=$?
+		fi
+		echo "${status}" > "${out}/status"
+	done
+	chown -R "$(stat -c '%u:%g' /out)" /out
+	;;
+deps)
+	set -x
+	if [ -d /localrepo/repodata ]
+	then
+		zypper --non-interactive addrepo --no-gpgcheck --priority 50 file:///localrepo/ localrepo
+	fi
+	zypper --non-interactive refresh
+	zypper --non-interactive dist-upgrade --no-recommends
+	# rpmspec writes `name >= version`; zypper takes `name>=version`
+	mapfile -t requires < <(rpmspec -q --buildrequires /src/*.spec | sed 's/ //g')
+	if [ "${#requires[@]}" -gt 0 ]
+	then
+		zypper --non-interactive install --no-recommends "${requires[@]}"
+	fi
+	# the local repository is not mounted in the build container
+	if [ -d /localrepo/repodata ]
+	then
+		zypper --non-interactive removerepo localrepo
+	fi
+	cp -a /src /tmp/src
+	mkdir -p /tmp/build/BUILD /tmp/output/src
+	chown -R builder:builder /tmp/src /tmp/build /tmp/output
+	;;
+build)
+	set -x
+	setpriv --reuid=builder --regid=builder --init-groups env HOME=/home/builder rpmbuild \
+		--define "_topdir    /tmp/build" \
+		--define "_tmppath   %{_topdir}" \
+		--define "_builddir  %{_topdir}/BUILD" \
+		--define "_sourcedir /tmp/src" \
+		--define "_specdir   /tmp/src" \
+		--define "_rpmdir    /tmp/output" \
+		--define "_srcrpmdir %{_rpmdir}/src" \
+		-ba /tmp/src/*.spec
+	chown -R "$(stat -c '%u:%g' /output)" /tmp/output
+	find /tmp/output -type f -name '*.rpm' -execdir mv -t /output -- '{}' '+'
+	;;
+*)
+	echo "usage: entrypoint query | deps | build" >&2
+	exit 2
+	;;
+esac

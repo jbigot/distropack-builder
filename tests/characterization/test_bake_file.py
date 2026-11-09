@@ -48,6 +48,18 @@ def test_extended_release_gets_a_builder_image(bake: ModuleType) -> None:
     assert f'{bake.REGISTRY}debian_builder:latest' not in bookworm['tags']
 
 
+def test_opensuse_builder_images(bake: ModuleType) -> None:
+    """The zypper variant of the rpm builder, with each release's dist tag (Phase 10b)."""
+    targets = bake.bake_definition(Path('/images'), everything_exists)['target']
+    leap, tumbleweed = targets['opensuse_builder-16_0'], targets['opensuse_builder-tumbleweed']
+    assert Path(leap['context']).name == Path(tumbleweed['context']).name == 'zypper_builder'
+    assert leap['args']['DIST_IMAGE'] == 'opensuse/leap'
+    assert (leap['args']['DIST_RELEASE'], leap['args']['DIST_TAG']) == ('16.0', 'lp160')
+    assert tumbleweed['args']['DIST_IMAGE'] == 'opensuse/tumbleweed'
+    assert (tumbleweed['args']['DIST_RELEASE'], tumbleweed['args']['DIST_TAG']) == ('latest', 'tw')
+    assert f'{bake.REGISTRY}opensuse_builder:tumbleweed-p{bake.PROTOCOL}' in tumbleweed['tags']
+
+
 def test_bake_file_matches_the_recorded_build_calls(bake: ModuleType) -> None:
     definition = bake.bake_definition(Path('/images'), everything_exists)
     generated = {
@@ -58,8 +70,9 @@ def test_bake_file_matches_the_recorded_build_calls(bake: ModuleType) -> None:
         )
         for name, target in definition['target'].items()
         # the releases in free extended support are new (Phase 10a): master built the supported
-        # ones only; el replaces master's almalinux and rocky (Phase 10b)
-        if name != 'debian_builder-bookworm' and not name.startswith('el_builder-')
+        # ones only; el replaces master's almalinux and rocky, and opensuse is new (Phase 10b)
+        if name != 'debian_builder-bookworm'
+        and not name.startswith(('el_builder-', 'opensuse_builder-'))
     }
     recorded = {
         tag: image

@@ -109,6 +109,8 @@ jobs:
           check='dpkg-buildpackage --version && test -x /entrypoint' ;;
         rpm_builder)
           check='rpmbuild --version && dnf builddep --help > /dev/null && test -x /entrypoint' ;;
+        zypper_builder)
+          check='rpmbuild --version && zypper --version && test -x /entrypoint && rpm -E %dist' ;;
         deb_tools)
           check='aptly version && uscan --version && mk-origtargz --help > /dev/null' ;;
         rpm_sign)

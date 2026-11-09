@@ -69,8 +69,8 @@ def test_bake_file_command(
     assert main('images', 'bake-file', '-o', str(tmp_path / 'b.json')).exit_code == 0
     definition = json.loads((tmp_path / 'b.json').read_text())
     # bookworm, in free extended support, is new (Phase 10a); el's 3 majors replace almalinux's 3
-    # and rocky's 3 (Phase 10b)
-    assert len(definition['target']) == 19
+    # and rocky's 3, and openSUSE's Leap 16.0 and Tumbleweed are new (Phase 10b)
+    assert len(definition['target']) == 21
     for target in definition['target'].values():
         assert (Path(target['context']) / 'Dockerfile').is_file()
 
@@ -81,7 +81,10 @@ def test_rhel_is_not_a_target(main: Callable[..., Result], tmp_path: Path) -> No
     )
     result = main('run', 'build.conf')
     assert result.exit_code == 2
-    assert 'rhel is not a build target; the targets are debian, el, fedora, ubuntu' in result.stderr
+    assert (
+        'rhel is not a build target; the targets are debian, el, fedora, opensuse, ubuntu'
+        in result.stderr
+    )
 
 
 BODHI = 'https://bodhi.fedoraproject.org/releases/?exclude_archived=False&rows_per_page=100&page=1'

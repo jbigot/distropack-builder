@@ -43,6 +43,8 @@ class Target:
             releases of `unsuffixed`, whose images have no such variant.
         unsuffixed: the releases whose base image tag is the release alone.
         build_args: what its builder image's Dockerfile is given beyond the release.
+        release_args: what it is given that depends on the release, from its tag.
+        images: the base images of the releases that are not `repository:<release tag>`.
         prerequisites: what a host must enable before installing from its repository, per host
             family, as (host family, shell commands) pairs, from the release's version.
     """
@@ -53,10 +55,14 @@ class Target:
     tag_suffix: str = ''
     unsuffixed: frozenset[str] = field(default_factory=frozenset)
     build_args: Mapping[str, str] = field(default_factory=dict)
+    release_args: Callable[[str], Mapping[str, str]] = lambda tag: {}
+    images: Mapping[str, str] = field(default_factory=dict)
     prerequisites: Callable[[str], tuple[tuple[str, str], ...]] = lambda version: ()
 
     def base_image(self, release_tag: str) -> str:
         """The base image of the builder of the release that release_tag names."""
+        if release_tag in self.images:
+            return self.images[release_tag]
         suffix = '' if release_tag in self.unsuffixed else self.tag_suffix
         return f'{self.repository}:{release_tag}{suffix}'
 
@@ -76,10 +82,23 @@ TARGETS: Final[Mapping[str, Target]] = MappingProxyType(
                 prerequisites=lambda major: _el_prerequisites(major),
             ),
             Target('fedora', 'rpm-dnf', 'fedora'),
+            # Leap's images, but Tumbleweed's; openSUSE has no %{?dist}: the builder sets one
+            Target(
+                'opensuse',
+                'rpm-zypper',
+                'opensuse/leap',
+                release_args=lambda tag: {'DIST_TAG': _opensuse_dist(tag)},
+                images={'tumbleweed': 'opensuse/tumbleweed:latest'},
+            ),
             Target('ubuntu', 'deb', 'ubuntu'),
         )
     }
 )
+
+
+def _opensuse_dist(release_tag: str) -> str:
+    """The dist tag of an openSUSE release, as its build service names them: lp160, tw."""
+    return 'tw' if release_tag == 'tumbleweed' else 'lp' + release_tag.replace('.', '')
 
 
 def _el_prerequisites(major: str) -> tuple[tuple[str, str], ...]:
