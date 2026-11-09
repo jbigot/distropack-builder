@@ -30,6 +30,9 @@ class Runner(Protocol):
         check: bool = True,
         cancellation: Cancellation | None = None,
         logger: logging.Logger | None = None,
+        network: bool = True,
+        commit_to: str | None = None,
+        remove_image: bool = False,
     ) -> RunResult:
         """Run image with args in a new container, and remove it (see docker.run)."""
         ...

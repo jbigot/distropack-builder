@@ -4,17 +4,29 @@
 #
 # SPDX-License-Identifier: MIT
 
+# Three modes (protocol 3):
+#   query   with the specs mounted under /specs, writes for each one under /out/<name>/ what
+#           rpmspec says of it: buildrequires, provides, parsed, errors and status;
+#   deps    with network: installs the build dependencies of the spec in /src, from the release's
+#           repositories and the local repository in /localrepo, and copies /src to /tmp/src; the
+#           runner then commits the container to a temporary image;
+#   build   from that image, with no network: rpmbuild as an unprivileged user, as mock builds, the
+#           rpms moved to /output.
+
 trap 'echo received signal, quitting...; exit 1' INT TERM
-set -ex
+
+set -euo pipefail
 
 if [ -e /usr/lib64/nosync/nosync.so ]
 then
 	export LD_PRELOAD="/usr/lib64/nosync/nosync.so"
 fi
 
-# query: what each spec under /specs says, as this release's rpm reads it (rpmquery.py)
-if [ "$1" = query ]
-then
+mode=${1:-}
+shift || true
+
+case "${mode}" in
+query)
 	for spec in /specs/*.spec
 	do
 		out="/out/$(basename "${spec}" .spec)"
@@ -32,45 +44,47 @@ then
 		echo "${status}" > "${out}/status"
 	done
 	chown -R "$(stat -c '%u:%g' /out)" /out
-	exit 0
-fi
-
-if [ -d /localrepo/repodata ]
-then
-cat<<EOF > /tmp/localrepo.repo
-[localrepo]
-name=localrepo
-type=rpm-md
-baseurl=file:///localrepo/
-gpgcheck=0
-enabled=1
-EOF
-dnf config-manager --add-repo /tmp/localrepo.repo \
-|| dnf config-manager addrepo --from-repofile=/tmp/localrepo.repo \
-|| true
-fi
-
-dnf upgrade -y
-
-dnf builddep -y --setopt=tsflags=nodocs --setopt=install_weak_deps=False --best /src/*.spec
-
-# re-read profile after installation to load any new env
-set +e
-. /etc/profile
-set -e
-
-# the build itself as an unprivileged user, as the archives build: packaging that needs root fails
-cp -a /src /tmp/src
-mkdir -p "/tmp/build/BUILD" "/tmp/output" "/tmp/output/src"
-chown -R builder:builder /tmp/src /tmp/build /tmp/output
-setpriv --reuid=builder --regid=builder --init-groups env HOME=/home/builder rpmbuild \
-	--define "_topdir    /tmp/build" \
-	--define "_tmppath   %{_topdir}" \
-	--define "_builddir  %{_topdir}/BUILD" \
-	--define "_sourcedir /tmp/src" \
-	--define "_specdir   /tmp/src" \
-	--define "_rpmdir    /tmp/output" \
-	--define "_srcrpmdir %{_rpmdir}/src" \
-	-ba /tmp/src/*.spec
-chown -R $(stat -c '%u:%g' /src) /tmp/output
-find /tmp/output -type f -name '*.rpm' -execdir mv -t /output -- '{}' '+'
+	;;
+deps)
+	set -x
+	if [ -d /localrepo/repodata ]
+	then
+		cat > /tmp/localrepo.repo <<-EOF
+			[localrepo]
+			name=localrepo
+			type=rpm-md
+			baseurl=file:///localrepo/
+			gpgcheck=0
+			enabled=1
+		EOF
+		dnf config-manager --add-repo /tmp/localrepo.repo \
+		|| dnf config-manager addrepo --from-repofile=/tmp/localrepo.repo \
+		|| true
+	fi
+	dnf upgrade -y
+	dnf builddep -y --setopt=tsflags=nodocs --setopt=install_weak_deps=False --best /src/*.spec
+	# the local repository is not mounted in the build container
+	rm -f /etc/yum.repos.d/localrepo.repo
+	cp -a /src /tmp/src
+	mkdir -p /tmp/build/BUILD /tmp/output/src
+	chown -R builder:builder /tmp/src /tmp/build /tmp/output
+	;;
+build)
+	set -x
+	setpriv --reuid=builder --regid=builder --init-groups env HOME=/home/builder rpmbuild \
+		--define "_topdir    /tmp/build" \
+		--define "_tmppath   %{_topdir}" \
+		--define "_builddir  %{_topdir}/BUILD" \
+		--define "_sourcedir /tmp/src" \
+		--define "_specdir   /tmp/src" \
+		--define "_rpmdir    /tmp/output" \
+		--define "_srcrpmdir %{_rpmdir}/src" \
+		-ba /tmp/src/*.spec
+	chown -R "$(stat -c '%u:%g' /output)" /tmp/output
+	find /tmp/output -type f -name '*.rpm' -execdir mv -t /output -- '{}' '+'
+	;;
+*)
+	echo "usage: entrypoint query | deps | build" >&2
+	exit 2
+	;;
+esac

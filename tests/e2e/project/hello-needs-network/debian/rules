@@ -1,0 +1,7 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	bash -c 'exec 3<>/dev/tcp/deb.debian.org/80' || { echo 'hello-needs-network: no network'; exit 1; }

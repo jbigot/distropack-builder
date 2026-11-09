@@ -51,6 +51,15 @@ under Docker and Podman alike), and chooses the user of each container from that
   fakeroot, `rpmbuild`), as the archives' own builders do, so that packaging that writes outside
   its build tree fails; and they hand their outputs back to the owner of their source mount.
 
+## Builds without network
+
+A build runs in two containers of its release's builder image, as sbuild and mock split it. The
+first installs the build dependencies, from the release's archive and the local repository of the
+packages it depends on, with the engine's default network; the runner commits it to a temporary
+image. The second builds from that image with no network at all, as the archives' builders do, so
+that a package that downloads during its build fails here as it would there. The temporary image
+is removed after the build, whether it succeeded or not.
+
 ## Engine quirks handled once
 
 Every container is created with SELinux labelling disabled (`label=disable`), so that bind mounts

@@ -10,6 +10,7 @@ outputs of a family's builds, signed, with its page. run_builds drives a whole r
 
 import json
 import logging
+import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence, Set
 from configparser import ConfigParser
 from dataclasses import dataclass
@@ -235,6 +236,50 @@ class PackageBuilder:
         """Build in wk_dir, the packages written to outdir."""
         raise NotImplementedError
 
+    def _run_builder(
+        self,
+        *,
+        deps_args: Sequence[str] = (),
+        build_args: Sequence[str] = (),
+        deps_mounts: Sequence[Mount],
+        build_mounts: Sequence[Mount],
+        env: Mapping[str, str] | None = None,
+    ) -> None:
+        """Build in two containers of the release's builder image, as sbuild and mock do.
+
+        The first installs the build dependencies, with the engine's default network, and is
+        committed to a temporary image; the second builds from that image, with no network, as
+        the archives' builders do. The temporary image is removed after it, failed or not.
+        """
+        # the builder image's name and tag, unique: distropack-build/fedora_builder-<id>:44-p3
+        name, _, tag = builder_image(self.dist_release).partition(':')
+        temporary = f'distropack-build/{name}-{uuid.uuid4().hex[:12]}:{tag}'
+        run = self._context.run
+        common: dict[str, Any] = {
+            'env': env,
+            'shm_size': '5g',
+            'as_root': True,
+            'cancellation': self._context.cancellation,
+            'logger': self.logger,
+        }
+        run(
+            self._context.engine,
+            REGISTRY + builder_image(self.dist_release),
+            ['deps', *deps_args],
+            mounts=deps_mounts,
+            commit_to=temporary,
+            **common,
+        )
+        run(
+            self._context.engine,
+            temporary,
+            ['build', *build_args],
+            mounts=build_mounts,
+            network=False,
+            remove_image=True,
+            **common,
+        )
+
     def _local_repository(
         self,
         family: type['DebRepoBuilder'] | type['RpmRepoBuilder'],
@@ -343,13 +388,10 @@ class DebPackageBuilder(PackageBuilder):
         self._local_repository(DebRepoBuilder, localrepo, deps)
 
         profiles = f'{self.dist_release.distribution.id},{release_codename}'
-        Container(self._context, builder_image(self.dist_release), self.logger)(
-            f'-j{self._context.jobs}',
-            '-sa',
-            f'-P{profiles}',
-            mounts=[Mount('/src', pkg_dir), Mount('/localrepo', localrepo)],
-            shm_size='5g',
-            as_root=True,
+        self._run_builder(
+            build_args=[f'-j{self._context.jobs}', '-sa', f'-P{profiles}'],
+            deps_mounts=[Mount('/src', pkg_dir), Mount('/localrepo', localrepo)],
+            build_mounts=[Mount('/src', pkg_dir)],
             env={'DH_VERBOSE': '1', 'DISTROPACK_BUILD_PROFILES': profiles},
         )
         rmtree(localrepo)
@@ -418,14 +460,12 @@ class RpmPackageBuilder(PackageBuilder):
             assert isinstance(file, Path)  # build raised the download's failure
             link_or_copy(file, pkg_dir / source_name(url))
 
-        Container(self._context, builder_image(self.dist_release), self.logger)(
-            mounts=[
+        self._run_builder(
+            deps_mounts=[
                 Mount('/src', pkg_dir, read_only=True),
-                Mount('/output', outdir),
                 Mount('/localrepo', localrepo / version(self.dist_release), read_only=True),
             ],
-            shm_size='5g',
-            as_root=True,
+            build_mounts=[Mount('/src', pkg_dir, read_only=True), Mount('/output', outdir)],
         )
         rmtree(localrepo)
 

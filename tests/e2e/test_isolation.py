@@ -42,3 +42,14 @@ def test_needs_root_fails(
     assert result.returncode != 0
     # the build user may not write into /usr: only that error proves the build ran unprivileged
     assert re.search(r'hello-needs-root-stamp.*Permission denied', result.stdout), result.stdout
+
+
+@pytest.mark.e2e
+@pytest.mark.parametrize('dist,rel', RELEASES)
+def test_needs_network_fails(
+    docker_engine: None, project: Project, run_pkgbuild: RunPkgbuild, dist: str, rel: str
+) -> None:
+    """The build runs with no network, as in the archives; the dependencies installed with one."""
+    result = run_pkgbuild(project({dist: [rel]}, ['hello-needs-network']))
+    assert result.returncode != 0
+    assert 'hello-needs-network: no network' in result.stdout, result.stdout

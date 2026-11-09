@@ -18,6 +18,7 @@ import yaml
 from typer.testing import CliRunner, Result
 
 from distropack_builder import cli, config
+from distropack_builder.bake import PROTOCOL
 from distropack_builder.docker import RunResult
 from fake_runner import Call, FakeRunner, tools_respond
 from support import FIXTURE_PASSPHRASE, make_project
@@ -245,7 +246,7 @@ def test_nothing_to_build(
     """A run that selects no release says so, and touches no engine."""
     monkeypatch.chdir(tmp_path)
     write_conf(tmp_path, 'distribs: {debian: {versions: [trixie, available]}}\npackages: {}\n')
-    unpublished.add('trixie-p2')
+    unpublished.add(f'trixie-p{PROTOCOL}')
 
     def no_engine(host: str | None) -> Any:
         raise AssertionError('connected to an engine')
@@ -316,7 +317,7 @@ def test_nothing_selected_writes_outputs(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     write_conf(tmp_path, 'distribs: {debian: {versions: [trixie, available]}}\npackages: {}\n')
-    unpublished.add('trixie-p2')
+    unpublished.add(f'trixie-p{PROTOCOL}')
     output = tmp_path / 'output'
     result = invoke('run', env={'GITHUB_OUTPUT': str(output)})
     assert result.exit_code == 0, result.output
@@ -370,7 +371,7 @@ def run_with_bookworm(
 def test_missing_builder_image_fails_its_release_once(
     project: Path, unpublished: set[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    unpublished.add('bookworm-p2')
+    unpublished.add(f'bookworm-p{PROTOCOL}')
     result, runner = run_with_bookworm(project, monkeypatch)
     assert result.exit_code == 1, result.output
     lines = [line for line in result.output.splitlines() if 'no builder image' in line]
@@ -384,7 +385,7 @@ def test_missing_builder_image_fails_its_release_once(
 def test_missing_image_of_a_release_out_of_support(
     project: Path, unpublished: set[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    unpublished.add('bookworm-p2')
+    unpublished.add(f'bookworm-p{PROTOCOL}')
     result, _ = run_with_bookworm(project, monkeypatch, '-D', 'debian:bookworm')
     assert result.exit_code == 1, result.output
     assert (
@@ -396,7 +397,7 @@ def test_missing_image_of_a_release_out_of_support(
 def test_available_still_drops_silently(
     project: Path, unpublished: set[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    unpublished.add('bookworm-p2')
+    unpublished.add(f'bookworm-p{PROTOCOL}')
     result, _ = run_with_bookworm(project, monkeypatch, available=True)
     assert result.exit_code == 0, result.output
     assert 'no builder image' not in result.output
@@ -417,7 +418,7 @@ def test_unpublished_release_stays_on_the_page(
     project: Path, unpublished: set[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A release failed for its missing image stays listed on the page, as a failed build does."""
-    unpublished.add('bookworm-p2')
+    unpublished.add(f'bookworm-p{PROTOCOL}')
     release = project / 'repositories' / 'debian' / 'dists' / 'bookworm' / 'Release'
     release.parent.mkdir(parents=True)
     release.write_text('Codename: bookworm\n')

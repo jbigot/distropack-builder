@@ -24,3 +24,4 @@ packages:
   hello-app: {}
   hello-undeclared: {}
   hello-needs-root: {}
+  hello-needs-network: {}

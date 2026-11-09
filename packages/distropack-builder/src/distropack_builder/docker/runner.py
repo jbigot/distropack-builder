@@ -165,6 +165,9 @@ def run(
     check: bool = True,
     cancellation: Cancellation | None = None,
     logger: logging.Logger | None = None,
+    network: bool = True,
+    commit_to: str | None = None,
+    remove_image: bool = False,
 ) -> RunResult:
     """Run image with args in a new container, and remove it.
 
@@ -182,15 +185,57 @@ def run(
         cancellation: what cancels this run, among others.
         logger: where the container's output goes, line by line, at the debug level; the
             module's LOGGER by default.
+        network: whether the container has the engine's default network; none otherwise.
+        commit_to: the reference of an image to commit the container to, once it exited 0.
+        remove_image: whether to remove image once the container is removed, whatever happened:
+            a temporary image, such as one commit_to made.
 
     Raises:
         ContainerFailed: check is set and the container exited with a non-zero status.
         Cancelled: the run was cancelled before or while it ran.
     """
     cancellation = cancellation or Cancellation()
+    try:
+        return _run(
+            engine,
+            qualified(image),
+            args,
+            mounts=mounts,
+            env=env,
+            workdir=workdir,
+            shm_size=shm_size,
+            as_root=as_root,
+            check=check,
+            cancellation=cancellation,
+            logger=logger,
+            network=network,
+            commit_to=commit_to,
+        )
+    finally:
+        if remove_image:
+            with suppress(docker.errors.ImageNotFound):
+                engine.client.images.remove(qualified(image), force=True)
+
+
+def _run(
+    engine: Engine,
+    image: str,
+    args: Sequence[str],
+    *,
+    mounts: Sequence[Mount],
+    env: Mapping[str, str] | None,
+    workdir: str | None,
+    shm_size: str | None,
+    as_root: bool,
+    check: bool,
+    cancellation: Cancellation,
+    logger: logging.Logger | None,
+    network: bool,
+    commit_to: str | None,
+) -> RunResult:
+    """run, but for the removal of its image."""
     if cancellation.cancelled:
         raise Cancelled()
-    image = qualified(image)
     container = _create(
         engine,
         image,
@@ -206,6 +251,7 @@ def run(
         user=engine.user(as_root),
         security_opt=['label=disable'],
         pids_limit=-1,
+        network_mode=None if network else 'none',
         labels={LABEL.split('=')[0]: LABEL.split('=')[1]},
     )
     try:
@@ -218,6 +264,9 @@ def run(
             if cancellation.cancelled:
                 raise Cancelled()
             stdout = container.logs(stdout=True, stderr=False).decode(errors='replace')
+            if commit_to is not None and status == 0:
+                repository, tag = parse_repository_tag(commit_to)
+                container.commit(repository=repository, tag=tag or 'latest')
     finally:
         container.remove(force=True)
     if check and status != 0:

@@ -29,6 +29,9 @@ class Call:
     env: Mapping[str, str]
     as_root: bool
     workdir: str | None = None
+    network: bool = True
+    commit_to: str | None = None
+    remove_image: bool = False
 
     @property
     def targets(self) -> dict[str, Mount]:
@@ -37,12 +40,31 @@ class Call:
 
     @property
     def is_build(self) -> bool:
-        """Whether this is a builder container building, not answering spec queries."""
-        return '_builder:' in self.image and self.args[:1] != ('query',)
+        """Whether this is a builder container building: its build mode, after its deps one."""
+        return self.args[:1] == ('build',)
+
+    @property
+    def is_deps(self) -> bool:
+        """Whether this is a builder container installing a build's dependencies."""
+        return '_builder:' in self.image and self.args[:1] == ('deps',)
+
+    @property
+    def is_query(self) -> bool:
+        """Whether this is a builder container answering the rpm spec queries."""
+        return self.args[:1] == ('query',)
+
+    @property
+    def is_tool(self) -> bool:
+        """Whether this is a tool container: no builder image, nor a commit of one."""
+        return '_builder' not in self.image
 
     def build_of(self, package: str) -> bool:
         """Whether this is the builder container of package's build."""
         return self.is_build and self.targets['/src'].source.parent.name.startswith(f'{package}.')
+
+    def deps_of(self, package: str) -> bool:
+        """Whether this is the container installing the build dependencies of package."""
+        return self.is_deps and self.targets['/src'].source.parent.name.startswith(f'{package}.')
 
 
 @dataclass
@@ -69,8 +91,21 @@ class FakeRunner:
         check: bool = True,
         cancellation: Cancellation | None = None,
         logger: logging.Logger | None = None,
+        network: bool = True,
+        commit_to: str | None = None,
+        remove_image: bool = False,
     ) -> RunResult:
-        call = Call(image, tuple(args), tuple(mounts), dict(env or {}), as_root, workdir)
+        call = Call(
+            image,
+            tuple(args),
+            tuple(mounts),
+            dict(env or {}),
+            as_root,
+            workdir,
+            network,
+            commit_to,
+            remove_image,
+        )
         self.calls.append(call)
         return self.respond(call) or RunResult(0, '', '')
 

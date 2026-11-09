@@ -76,7 +76,8 @@ Pages included, can serve.
 ## 6. The distributions' own tools and conventions first
 
 distropack-builder builds the packaging with the distributions' own tools (`apt-get build-dep`,
-`dpkg-buildpackage`, `dnf builddep`, `rpmbuild`), as an unprivileged user as their builders do,
+`dpkg-buildpackage`, `dnf builddep`, `rpmbuild`), as an unprivileged user and with no network as
+their builders do,
 downloads a deb package's upstream tarball with `uscan`, as its `debian/watch` says, accepts a
 download only if it matches its line in the package's `sources` file (Fedora's) or its upstream
 signature (Debian's), and asks nothing
@@ -88,7 +89,6 @@ and the departure is listed below with what it buys and what it costs.
 | Departure | What it supports | What it costs |
 |---|---|---|
 | Builds in its own images (`apt-get build-dep`, then `dpkg-buildpackage` or `rpmbuild`), not in sbuild or mock | a dependent set built in parallel against a local repository of fresh builds, every container engine through one API, no host root | the build environment could differ from the archives'; the images install nothing more than sbuild's or mock's build roots would, and a difference is a bug of the images |
-| Builds have network access | nothing: the containers' default | a package downloading at build time builds here and fails in the archives; builds lose the network before the first release |
 | deb builds get the build profiles `<distribution>,<codename>` (`-P` of `dpkg-buildpackage` and `apt-get build-dep`) | varying a build per release | Debian reserves the build profile namespace and its archive never sets these, so a `Build-Profiles: <trixie>` restriction would not survive a submission; dropping them is proposed |
 | rpm sources (`Source:` URLs) are downloaded by distropack-builder, not by `spectool -g` | one download per URL across packages and releases, retried on transient errors | none for the packaging: the URLs are the spec's own |
 | Release versions such as `1.0-1~bpo13.pdidev.<n>` | the same changelog entry built for several releases, and rebuilds | the scheme follows the official backports one, with a suffix of its own |

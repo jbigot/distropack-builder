@@ -8,6 +8,7 @@ import logging
 import os
 import threading
 import time
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -157,3 +158,30 @@ def test_engine_knows_its_images(engine: Engine) -> None:
     run(engine, ALPINE, ['true'])  # pulled if missing
     assert engine.has_image(ALPINE)
     assert not engine.has_image('docker.io/library/alpine:no-such-tag-distropack')
+
+
+def test_commit_then_run_without_network(engine: Engine) -> None:
+    """A container committed once it succeeds; its image run with no network, then removed."""
+    temporary = f'distropack-test/commit:{uuid.uuid4().hex[:12]}'
+    # in /tmp, which any user may write: rootful Docker runs it as the invoking user
+    run(engine, ALPINE, ['sh', '-c', 'echo made > /tmp/made'], commit_to=temporary)
+    assert engine.has_image(temporary)
+    script = 'cat /tmp/made; if nc -w 3 -z 1.1.1.1 53; then echo network; else echo no-network; fi'
+    result = run(engine, temporary, ['sh', '-c', script], network=False, remove_image=True)
+    assert result.output.split() == ['made', 'no-network']
+    assert not engine.has_image(temporary)
+
+
+def test_no_commit_on_failure(engine: Engine) -> None:
+    temporary = f'distropack-test/commit:{uuid.uuid4().hex[:12]}'
+    with pytest.raises(ContainerFailed):
+        run(engine, ALPINE, ['false'], commit_to=temporary)
+    assert not engine.has_image(temporary)
+
+
+def test_image_removed_after_a_failure(engine: Engine) -> None:
+    temporary = f'distropack-test/commit:{uuid.uuid4().hex[:12]}'
+    run(engine, ALPINE, ['true'], commit_to=temporary)
+    with pytest.raises(ContainerFailed):
+        run(engine, temporary, ['false'], network=False, remove_image=True)
+    assert not engine.has_image(temporary)

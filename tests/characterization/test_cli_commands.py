@@ -16,6 +16,7 @@ import pytest
 import respx
 from typer.testing import CliRunner, Result
 
+from distropack_builder.bake import PROTOCOL
 from distropack_builder.config import BuildConfig
 from distropack_builder.selection import configured_releases, disabled_releases
 
@@ -181,4 +182,4 @@ def test_registry_error_exits_1_before_any_work(
     )
     result = main('run', 'build.conf')
     assert result.exit_code == 1
-    assert 'debian_builder:trixie-p2' in result.stderr
+    assert f'debian_builder:trixie-p{PROTOCOL}' in result.stderr

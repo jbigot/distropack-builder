@@ -4,39 +4,58 @@
 #
 # SPDX-License-Identifier: MIT
 
-trap 'echo received signal, quitting...; exit 1' QUIT ABRT KILL SEGV INT TERM STOP
+# A build runs in two containers of this image, as sbuild builds (protocol 3):
+#   deps         with network: copies the source package of /src to /tmp/src and installs its build
+#                dependencies, from the release's archive and the local repository in /localrepo;
+#                the runner then commits the container to a temporary image;
+#   build ARGS   from that image, with no network: dpkg-buildpackage ARGS as an unprivileged
+#                user, the outputs moved to /src.
 
-set -e
+trap 'echo received signal, quitting...; exit 1' INT TERM QUIT ABRT
+
+set -euo pipefail
 
 bgrun() {
-"$@" &
-wait "$!"
+	"$@" &
+	wait "$!"
 }
 
-if [ -d /localrepo/dists ]
-then
-	echo "deb [trusted=yes] file:///localrepo/ ${DIST_CODENAME} main" > /etc/apt/sources.list.d/local.list
-fi
+source_dir() {
+	find /tmp/src/ -mindepth 1 -maxdepth 1 -type d
+}
 
-cp -a /src /tmp/
-cd "$(find /tmp/src/ -mindepth 1 -maxdepth 1 -type d)"
-bgrun find /tmp/src/ -maxdepth 1 -name '*.orig.tar.*' -exec tar -C "${PWD}" --strip-components=1 -xf '{}' ';'
+mode=${1:-}
+shift || true
 
-# the build dependencies of the source, resolved in the target release with its build profiles
-bgrun apt-get -y update
-bgrun apt-get -y dist-upgrade
-bgrun apt-get -o Debug::pkgProblemResolver=yes -y --no-install-recommends \
-	${DISTROPACK_BUILD_PROFILES:+-P "${DISTROPACK_BUILD_PROFILES}"} build-dep ./
-
-# re-read profile after installation to load any new env
-set +e
-. /etc/profile
-set -e
-
-# the build itself as an unprivileged user, as the archives build: packaging that needs root fails
-chown -R builder:builder /tmp/src
-bgrun setpriv --reuid=builder --regid=builder --init-groups \
-	env HOME=/home/builder dpkg-buildpackage -rfakeroot "$@"
-
-chown -R "$(stat -c '%u:%g' /src)" /tmp/src
-find /tmp/src -maxdepth 1 -type f -execdir mv -t /src -- '{}' '+'
+case "${mode}" in
+deps)
+	if [ -d /localrepo/dists ]
+	then
+		echo "deb [trusted=yes] file:///localrepo/ ${DIST_CODENAME} main" > /etc/apt/sources.list.d/local.list
+	fi
+	cp -a /src /tmp/
+	cd "$(source_dir)"
+	bgrun find /tmp/src/ -maxdepth 1 -name '*.orig.tar.*' -exec tar -C "${PWD}" --strip-components=1 -xf '{}' ';'
+	# the build dependencies of the source, resolved in the target release with its build profiles
+	bgrun apt-get -y update
+	bgrun apt-get -y dist-upgrade
+	bgrun apt-get -o Debug::pkgProblemResolver=yes -y --no-install-recommends \
+		${DISTROPACK_BUILD_PROFILES:+-P "${DISTROPACK_BUILD_PROFILES}"} build-dep ./
+	# the local repository is not mounted in the build container
+	rm -f /etc/apt/sources.list.d/local.list
+	chown -R builder:builder /tmp/src
+	;;
+build)
+	cd "$(source_dir)"
+	# the build itself as an unprivileged user, as the archives build: packaging that needs root
+	# fails
+	bgrun setpriv --reuid=builder --regid=builder --init-groups \
+		env HOME=/home/builder dpkg-buildpackage -rfakeroot "$@"
+	chown -R "$(stat -c '%u:%g' /src)" /tmp/src
+	find /tmp/src -maxdepth 1 -type f -execdir mv -t /src -- '{}' '+'
+	;;
+*)
+	echo "usage: entrypoint deps | build DPKG_BUILDPACKAGE_ARGS..." >&2
+	exit 2
+	;;
+esac

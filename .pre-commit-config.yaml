@@ -44,11 +44,10 @@ repos:
     require_serial: true
   - id: shellcheck
     name: shellcheck
-    # The release scripts and the action's, until Phase 10 rewrites the builder entrypoints.
+    # Every shell file: the release scripts, the action's, the images' entrypoints, the tests'.
     entry: uv run --frozen shellcheck
     language: system
     types: [shell]
-    files: ^(\.github/scripts|action)/
   # The uv of the environment, .tool-versions' in CI, not a second pin of uv in this file.
   - id: uv-lock
     name: uv-lock

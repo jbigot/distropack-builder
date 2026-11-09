@@ -27,13 +27,16 @@ or that its distribution's archive still supports for free after it (Debian's LT
 
 ## The protocol version
 
-`<N>`, 2 today, is the version of what the runner relies on in an image: its entrypoint and its
+`<N>`, 3 today, is the version of what the runner relies on in an image: its entrypoint and its
 volumes. It is bumped whenever either changes incompatibly, so that a runner can ask for an image
 it can drive: the runner asks for the protocol tag of each image, never a moving tag. Protocol 2
 (the builders install their own build dependencies, answer the rpm spec queries, and build as an
 unprivileged user) replaced the tool images `deb_tools`, `rpm_tools` and `gpg2` by `aptly` and
 `rpm_sign`; `deb_tools` came back in place of `aptly` with uscan beside it, one image being smaller
-than two that share their base.
+than two that share their base. Protocol 3 splits a build in two containers, the builders'
+entrypoints taking a mode: `deps` installs the build dependencies (with network) before the runner
+commits the container, `build` builds from that commit (without network), and the rpm builders'
+`query` answers the spec queries.
 
 ## Availability
 

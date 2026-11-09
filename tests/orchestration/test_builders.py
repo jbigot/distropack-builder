@@ -89,6 +89,13 @@ def build(builders: ModuleType, context: BuildContext, rel: Release) -> None:
 
 
 def builder_call(runner: FakeRunner) -> Call:
+    """The container that installs the build's dependencies, from the release's builder image."""
+    (call,) = (c for c in runner.calls if c.is_deps)
+    return call
+
+
+def build_call(runner: FakeRunner) -> Call:
+    """The container that builds, from the commit of the dependency container."""
     (call,) = (c for c in runner.calls if c.is_build)
     return call
 
@@ -102,6 +109,7 @@ def test_deb_builder_image_and_mounts(
     assert call.as_root
     assert sorted(call.targets) == ['/localrepo', '/src']
     assert call.env['DISTROPACK_BUILD_PROFILES'] == 'debian,trixie'
+    assert sorted(build_call(runner).targets) == ['/src']
 
 
 def test_no_mk_build_deps(
@@ -121,7 +129,9 @@ def test_rpm_builder_mounts_read_only(
     assert call.as_root
     mounts = call.targets
     assert (mounts['/src'].read_only, mounts['/localrepo'].read_only) == (True, True)
-    assert mounts['/output'].read_only is False
+    built = build_call(runner).targets
+    assert sorted(built) == ['/output', '/src']
+    assert (built['/src'].read_only, built['/output'].read_only) == (True, False)
 
 
 @pytest.mark.parametrize(('dist', 'name'), [('debian', 'trixie'), ('fedora', '44')])
@@ -134,16 +144,16 @@ def test_no_secret_key_in_a_builder(
     name: str,
 ) -> None:
     build(builders, context, release(dist, name, frozen))
-    call = builder_call(runner)
-    assert '/secret' not in call.targets
-    assert not [m for m in call.mounts if m.source.name.startswith('distropack-sign.')]
+    for call in (builder_call(runner), build_call(runner)):
+        assert '/secret' not in call.targets
+        assert not [m for m in call.mounts if m.source.name.startswith('distropack-sign.')]
 
 
 def test_tools_run_as_the_runner_chooses_in_a_run(run_main: Callable[..., int]) -> None:
     """aptly and rpm_sign run as the runner chooses; only builder images run as root."""
     runner = FakeRunner(rpm_builds())
     assert run_main(runner, {'fedora': ['44'], 'debian': ['trixie']}, ['hello-undeclared']) == 0
-    tools = [c for c in runner.calls if '_builder:' not in c.image]
+    tools = [c for c in runner.calls if c.is_tool]
     assert {c.image.rsplit('/', 1)[1].split(':')[0] for c in tools} == {'deb_tools', 'rpm_sign'}
     assert not [c for c in tools if c.as_root]
 
@@ -158,7 +168,7 @@ def test_tools_run_as_the_runner_chooses(
     name: str,
 ) -> None:
     build(builders, context, release(dist, name, frozen))
-    tools = [c for c in runner.calls if '_builder:' not in c.image]
+    tools = [c for c in runner.calls if c.is_tool]
     assert tools and not [c for c in tools if c.as_root]
 
 
@@ -479,7 +489,7 @@ def test_local_repository_unsigned(run_main: Callable[..., int]) -> None:
     seen: list[list[str]] = []
 
     def respond(call: Call) -> RunResult | None:
-        if call.build_of('hello-app'):
+        if call.deps_of('hello-app'):
             local = call.targets['/localrepo'].source
             seen.append(sorted(p.name for p in local.rglob('*') if p.is_file()))
         return tools_respond(call)
@@ -496,7 +506,7 @@ def test_one_query_per_rpm_release(run_main: Callable[..., int]) -> None:
     runner = FakeRunner(tools_respond)
     packages = ['hello-undeclared', 'hello-needs-root']
     assert run_main(runner, {'fedora': ['43', '44'], 'debian': ['trixie']}, packages) == 0
-    queries = [c for c in runner.calls if '_builder:' in c.image and not c.is_build]
+    queries = [c for c in runner.calls if c.is_query]
     assert sorted(c.image.rsplit('/', 1)[1] for c in queries) == [
         f'fedora_builder:43-p{PROTOCOL}',
         f'fedora_builder:44-p{PROTOCOL}',
@@ -514,7 +524,7 @@ def test_failed_query_fails_its_package_only(
 ) -> None:
     def respond(call: Call) -> RunResult | None:
         result = tools_respond(call)
-        if '_builder:' in call.image and not call.is_build:
+        if call.is_query:
             broken = call.targets['/out'].source / 'hello-needs-root'
             (broken / 'status').write_text('1\n')
             (broken / 'errors').write_text('error: line 3: Unknown tag: Bogus\n')
@@ -931,3 +941,29 @@ def test_sources_query_failure_is_a_message(
     assert result.exit_code == 1, result.output
     assert result.exception is None or isinstance(result.exception, SystemExit)
     assert 'hello-lib:' in result.stderr
+
+
+@pytest.mark.parametrize(('dist', 'release'), [('debian', 'trixie'), ('fedora', '44')])
+def test_build_runs_without_network(run_main: Callable[..., int], dist: str, release: str) -> None:
+    """Dependencies installed with network and committed; the build from that image, without."""
+    runner = FakeRunner(rpm_builds() if dist == 'fedora' else tools_respond)
+    assert run_main(runner, {dist: [release]}, ['hello-undeclared']) == 0
+    (deps,) = [c for c in runner.calls if c.is_deps]
+    (build,) = [c for c in runner.calls if c.is_build]
+    assert deps.network and deps.commit_to is not None and not deps.remove_image
+    assert build.image == deps.commit_to
+    assert not build.network and build.remove_image and build.commit_to is None
+    assert '/localrepo' in deps.targets and '/localrepo' not in build.targets
+
+
+def test_deps_failure_runs_no_build(
+    run_main: Callable[..., int], capsys: pytest.CaptureFixture[str]
+) -> None:
+    def respond(call: Call) -> RunResult | None:
+        if call.is_deps:
+            raise ContainerFailed(100, [call.image, *call.args], output='E: unmet dependencies\n')
+        return tools_respond(call)
+
+    runner = FakeRunner(respond)
+    assert run_main(runner, {'debian': ['trixie']}, ['hello-undeclared']) == 1
+    assert not [c for c in runner.calls if c.is_build]
