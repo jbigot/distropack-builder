@@ -57,6 +57,8 @@ jobs:
         uv run python tests/fixture_project.py "$RUNNER_TEMP/work" "$BASE_URL" \
           --releases "$RELEASE" --packages hello-lib hello-app
         python3 -m http.server 8765 -d "$RUNNER_TEMP/work/served" > /dev/null 2>&1 &
+    # hello-lib's deb tarball is uscan's, which the fixture's sources file cannot list
+    - run: uv run distropack-build sources "$RUNNER_TEMP/work/project/build.conf" hello-lib
     - id: build
       uses: ./
       with:

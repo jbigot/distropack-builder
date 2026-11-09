@@ -28,7 +28,7 @@ from rich.console import Console
 from distro_releases import Release, SelectorError, SourceError, UnknownDistribution
 from distropack_builder import bake, config, readme, targets
 from distropack_builder.availability import AvailabilityError, image_available
-from distropack_builder.builders import builder_image, run_builds
+from distropack_builder.builders import builder_image, run_builds, write_sources
 from distropack_builder.config import AVAILABLE, BuildConfig, ConfigError, Distrib
 from distropack_builder.context import BuildContext, Runner
 from distropack_builder.docker import Cancellation, Engine
@@ -346,6 +346,50 @@ def make_app(
                 os.environ, {'failed': str(failed).lower(), 'output-dirs': _compact(output_dirs)}
             )
         if failed:
+            raise typer.Exit(1)
+
+    @app.command('sources')
+    def sources_command(
+        build_conf: Annotated[
+            Path, typer.Argument(metavar='BUILD_CONF', help='The build configuration.')
+        ],
+        packages: Annotated[
+            list[str], typer.Argument(metavar='PACKAGE...', help='The packages to write it for.')
+        ],
+        distributions: Patterns = None,
+        docker_host: Annotated[
+            str | None,
+            typer.Option(
+                '--docker-host',
+                metavar='URL',
+                envvar='DISTROPACK_DOCKER_HOST',
+                help='The endpoint of the container engine.',
+            ),
+        ] = None,
+    ) -> None:
+        """Writes the sources file of packages: the SHA-512 of each file their builds download.
+
+        Run it when a package's upstream version changes, and review what it writes: run then
+        refuses any downloaded file that does not match its line.
+        """
+        with _errors():
+            loaded, selected = _selection(build_conf, distributions or [], date.today())
+        unknown = [name for name in packages if name not in loaded.packages]
+        if unknown:
+            typer.echo(f'{PROG}: {unknown[0]} is not a package of {build_conf}', err=True)
+            raise typer.Exit(2)
+        disabled = disabled_releases(loaded, selected, date.today())
+        try:
+            engine = connect(docker_host)
+        except (EngineNotFound, docker.errors.DockerException) as error:
+            _fail(1, error)
+        with TemporaryDirectory(prefix='distropack-build.') as workdir:
+            jobs = (os.cpu_count() or 1) + 1
+            context = BuildContext(engine, runner, Cancellation(), Path(workdir), jobs)
+            failures = write_sources(context, loaded, selected, disabled, packages)
+        for name, failure in failures.items():
+            typer.echo(f'{PROG}: {name}: {failure}', err=True)
+        if failures:
             raise typer.Exit(1)
 
     @images.command('bake-file')

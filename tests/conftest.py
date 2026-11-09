@@ -238,7 +238,8 @@ def fixture_build(
 ) -> Path:
     """hello-lib and hello-app built once per session for FIXTURE_RELEASES; the project directory.
 
-    Shared by the install tests, so that one run builds the fixture once.
+    Shared by the install tests, so that one run builds the fixture once. Its sources files are
+    written first, with the sources command.
     """
     project_dir = make_project(
         tmp_path_factory.mktemp('fixture-build') / 'project',
@@ -246,6 +247,16 @@ def fixture_build(
         FIXTURE_RELEASES,
         ['hello-lib', 'hello-app'],
     )
+    # the deb tarball is uscan's (git archive, xz), which the fixture's sources file cannot list
+    result = subprocess.run(
+        [sys.executable, '-m', 'distropack_builder', 'sources', 'build.conf', 'hello-lib'],
+        cwd=project_dir,
+        env=pkgbuild_env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout
     result = pkgbuild_run(pkgbuild_env, project_dir)
     assert result.returncode == 0, result.stdout
     return project_dir

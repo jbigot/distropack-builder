@@ -125,11 +125,17 @@ def test_load_fixture(fixture_project: Path) -> None:
         pytest.param(
             'distribs: {}\npackages: {nothing: {}}\n', 'packages.nothing', id='no-packaging'
         ),
+        pytest.param(
+            'distribs: {}\npackages: {spec-only: {}}\n',
+            'packages.spec-only: ',
+            id='malformed-sources',
+        ),
         pytest.param('distribs: {}\npackages: {missing: {}}\n', 'packages.missing', id='no-dir'),
     ],
 )
 def test_load_rejects(tmp_path: Path, text: str, expected: str) -> None:
     package_dir(tmp_path, 'spec-only', deb=False)
+    (tmp_path / 'spec-only' / 'sources').write_text('MD5 (x) = 00\n')
     package_dir(tmp_path, 'nothing', deb=False, spec=False)
     for name, watched in (('quilt', True), ('quilt-unwatched', False)):
         package_dir(tmp_path, name, spec=False)

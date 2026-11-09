@@ -26,7 +26,7 @@ from debian.changelog import Changelog, format_date
 from debian.deb822 import Deb822, _PkgRelationMixin
 
 from distro_releases import Release
-from distropack_builder import readme, repodata, rpmquery, targets
+from distropack_builder import readme, repodata, rpmquery, sources, targets
 from distropack_builder.bake import DEB_TOOLS, PROTOCOL, REGISTRY, tool_image
 from distropack_builder.config import BuildConfig, Distrib
 from distropack_builder.context import BuildContext
@@ -207,16 +207,29 @@ class PackageBuilder:
         return []
 
     def build(self, deps: Set['PackageBuilder'], files: Files) -> None:
-        """Build, with the outputs of deps in the local repository, and files downloaded."""
+        """Build, with the outputs of deps in the local repository, and files downloaded.
+
+        Raises:
+            DownloadFailed: a file the build needs could not be downloaded, or does not match
+                the package's sources line.
+        """
+        expected = sources.read(self._base_dir / self.name)
         for url in self.sources():
-            failure = files[url]
-            if isinstance(failure, DownloadFailed):
-                raise failure
+            file = files[url]
+            if isinstance(file, DownloadFailed):
+                raise file
+            mismatch = sources.check(source_name(url), file, expected)
+            if mismatch is not None:
+                raise mismatch
+        self._check_own_downloads(expected)
         wk_dir = self._context.workdir / f'{self.name}.{self.dist_release.uid}.{self.family}-build'
         wk_dir.mkdir()
         self.outdir = wk_dir / 'output'
         self.outdir.mkdir()
         self._build(wk_dir, self.outdir, set(deps) | {self}, files)
+
+    def _check_own_downloads(self, expected: Mapping[str, str]) -> None:
+        """Raise DownloadFailed for a file the builder downloaded itself that is not expected."""
 
     def _build(self, wk_dir: Path, outdir: Path, deps: Set['PackageBuilder'], files: Files) -> None:
         """Build in wk_dir, the packages written to outdir."""
@@ -279,6 +292,13 @@ class DebPackageBuilder(PackageBuilder):
     def needs_orig(self) -> bool:
         """Whether the source holds an upstream tarball, which its debian/watch downloads."""
         return self._format == '3.0 (quilt)'
+
+    def _check_own_downloads(self, expected: Mapping[str, str]) -> None:
+        """The upstream tarball matches its sources line, unless uscan verified its signature."""
+        if isinstance(self.orig, OrigFiles) and not self.orig.verified:
+            mismatch = sources.check(self.orig.upstream.name, self.orig.upstream, expected)
+            if mismatch is not None:
+                raise mismatch
 
     def _build(self, wk_dir: Path, outdir: Path, deps: Set[PackageBuilder], files: Files) -> None:
         pkg_dir = wk_dir / 'pkg'
@@ -763,3 +783,76 @@ def run_builds(
             reporter.publication_failed(what, failure)
             failed = True
     return failed
+
+
+def write_sources(
+    context: BuildContext,
+    config: BuildConfig,
+    selected: Mapping[str, Set[Release]],
+    disabled: Mapping[str, Set[Release]],
+    names: Sequence[str],
+) -> dict[str, DownloadFailed]:
+    """Write the sources file of each package named: the line of each file its builds download.
+
+    The deb upstream tarball comes from uscan; the rpm sources are those the spec names in the
+    first selected release of each rpm distribution that builds the package. A package that
+    downloads nothing gets no file.
+
+    Returns:
+        The packages whose sources could not all be downloaded, and why; theirs is not written.
+    """
+    root = config.root
+    files: dict[str, dict[str, Path]] = {name: {} for name in names}
+    failures: dict[str, DownloadFailed] = {}
+    quilt = [
+        name
+        for name in names
+        if DebPackageBuilder.applies(root, name)
+        and source_format(root / name / 'debian') == '3.0 (quilt)'
+        and any(
+            targets.is_deb(targets.target(dist_id)) and selected[dist_id] - disabled[name]
+            for dist_id in config.distribs
+        )
+    ]
+    for name, orig in fetch_origs(context, root, quilt, context.workdir / 'origs').items():
+        if isinstance(orig, DownloadFailed):
+            failures[name] = orig
+        else:
+            files[name][orig.upstream.name] = orig.upstream
+    urls: dict[str, list[str]] = {}
+    for dist_id in config.distribs:
+        if targets.is_deb(targets.target(dist_id)):
+            continue
+        for name in names:
+            releases = sorted(selected[dist_id] - disabled[name], key=lambda r: r.uid)
+            if not releases or not RpmPackageBuilder.applies(root, name):
+                continue
+            spec = rpmquery.query(
+                context,
+                REGISTRY + builder_image(releases[0]),
+                {name: RpmPackageBuilder.spec_file(root, name)},
+            )[name]
+            if isinstance(spec, SpecFailed):
+                failures[name] = DownloadFailed(name, spec.message)
+                continue
+            urls.setdefault(name, []).extend(spec.sources)
+    downloads = context.workdir / 'downloads'
+    downloads.mkdir()
+    fetched = fetch_all(
+        [url for found in urls.values() for url in found],
+        downloads,
+        jobs=context.jobs,
+        cancellation=context.cancellation,
+    )
+    for name, found in urls.items():
+        for url in found:
+            file = fetched[url]
+            if isinstance(file, DownloadFailed):
+                failures.setdefault(name, file)
+            else:
+                files[name][source_name(url)] = file
+    for name in names:
+        if name not in failures and files[name]:
+            lines = [sources.line(file, path) for file, path in sorted(files[name].items())]
+            (root / name / sources.FILE).write_text(''.join(f'{line}\n' for line in lines))
+    return failures

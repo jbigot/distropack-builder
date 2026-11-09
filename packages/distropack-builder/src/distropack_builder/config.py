@@ -25,7 +25,7 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from distro_releases import UnknownDistribution
-from distropack_builder import targets
+from distropack_builder import sources, targets
 
 # The release token that keeps, among the releases selected, those whose builder image exists.
 AVAILABLE = 'available'
@@ -241,6 +241,10 @@ def _check_packaging(path: Path, root: Path, name: str) -> None:
         raise ConfigError(
             f'{path}: packages.{name}: {directory} has neither debian/ nor {name}.spec'
         )
+    try:
+        sources.read(directory)
+    except sources.SourcesError as error:
+        raise ConfigError(f'{path}: packages.{name}: {error}') from error
     debian = directory / 'debian'
     if deb and _quilt(debian) and not (debian / 'watch').is_file():
         raise ConfigError(

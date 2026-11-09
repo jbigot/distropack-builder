@@ -50,6 +50,23 @@ Every source is downloaded once, before the first build: a download that fails f
 that need it, and spares the others. A transient failure (a server error, a timeout) is retried,
 uscan's included.
 
+## Secure its sources
+
+Every downloaded file must be what the package expects, or the package's builds fail before they
+start, and the builds that depend on them are skipped:
+
+- either its line in the package's `sources` file matches it, `SHA512 (<file>) = <digest>`,
+  Fedora's format, one line per file, the file named as downloaded;
+- or, for a deb upstream tarball, uscan checked its upstream signature: `debian/watch` asks for it
+  (`pgpsigurlmangle`, or `pgpmode` `next`, `previous`, `self` or `gittag`) and
+  `debian/upstream/signing-key.asc` holds the upstream's key, as Debian checks it. Such a tarball
+  needs no line.
+
+`distropack-build sources build.conf <package>…` downloads what each package's builds need and
+writes its `sources` file. Run it when an upstream version changes, check the new lines (the
+release announcement may give the digest), and commit them with the new version. A line for a file
+no build downloads any more is ignored.
+
 ## Its dependencies
 
 A package that build-depends on another of `build.conf` (`Build-Depends` in `debian/control`,

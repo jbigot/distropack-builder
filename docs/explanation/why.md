@@ -77,7 +77,9 @@ Pages included, can serve.
 
 distropack-builder builds the packaging with the distributions' own tools (`apt-get build-dep`,
 `dpkg-buildpackage`, `dnf builddep`, `rpmbuild`), as an unprivileged user as their builders do,
-downloads a deb package's upstream tarball with `uscan`, as its `debian/watch` says, and asks nothing
+downloads a deb package's upstream tarball with `uscan`, as its `debian/watch` says, accepts a
+download only if it matches its line in the package's `sources` file (Fedora's) or its upstream
+signature (Debian's), and asks nothing
 of the packaging that an archive would not, so that a package directory stays submittable to
 Debian or Fedora. Where it departs from them, it is to support what an archive's packages do not
 need (several distributions and releases from one packaging, a dependent set built in parallel),

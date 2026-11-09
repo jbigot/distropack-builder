@@ -18,6 +18,7 @@ from pathlib import Path
 import yaml
 
 from distro_releases import Release, distribution
+from distropack_builder import sources
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA = REPO_ROOT / 'tests' / 'characterization' / 'data'
@@ -76,7 +77,8 @@ def write_tarball(source: Path, target: Path) -> None:
             tar.add(
                 path, arcname=str(path.relative_to(source.parent)), recursive=False, filter=reset
             )
-    with gzip.GzipFile(target, 'wb', mtime=0) as gz:
+    # no file name in the gzip header: the same bytes whatever the target is called
+    with target.open('wb') as file, gzip.GzipFile('', 'wb', fileobj=file, mtime=0) as gz:
         gz.write(data.getvalue())
 
 
@@ -118,7 +120,8 @@ def make_project(
 
     Every *.in file of the copy is rendered with @ORIG_BASE@ set to orig_base. Each upstream
     tree <name>-<version> becomes the bare git repository upstream/<name>.git, tagged v<version>,
-    which the deb packages' watch files read.
+    which the deb packages' watch files read, and the sources line of <name>-<version>.tar.gz, the
+    tarball the tests serve (write_tarball), is written to <name>/sources.
     """
     project_dir = Path(
         shutil.copytree(FIXTURE_PROJECT, target, ignore=shutil.ignore_patterns('upstream'))
@@ -126,6 +129,11 @@ def make_project(
     for upstream in (FIXTURE_PROJECT / 'upstream').iterdir():
         name, _, version = upstream.name.rpartition('-')
         write_git_upstream(upstream, project_dir / 'upstream' / f'{name}.git', f'v{version}')
+        # the line of the tarball the tests serve, which the fake uscan writes too
+        with tempfile.TemporaryDirectory() as scratch:
+            tarball = Path(scratch) / f'{upstream.name}.tar.gz'
+            write_tarball(upstream, tarball)
+            (project_dir / name / 'sources').write_text(sources.line(tarball.name, tarball) + '\n')
     for template in project_dir.rglob('*.in'):
         template.with_suffix('').write_text(template.read_text().replace('@ORIG_BASE@', orig_base))
         template.unlink()

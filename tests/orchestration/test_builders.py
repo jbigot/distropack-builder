@@ -4,6 +4,7 @@
 
 """What the builders ask of the engine: images, mounts, users; no container runs."""
 
+import hashlib
 import importlib
 import shutil
 import signal
@@ -650,6 +651,10 @@ def add_quilt_package(project: Path, name: str, version: str) -> None:
     (target / 'debian' / 'watch').write_text((project / 'hello-lib/debian/watch').read_text())
     for spec in target.glob('*.spec'):
         spec.unlink()
+    # hello-lib's line is copied; the fake uscan writes a placeholder for any other upstream
+    placeholder = hashlib.sha512(f'{name} {version}\n'.encode()).hexdigest()
+    with (target / 'sources').open('a') as lines:
+        lines.write(f'SHA512 ({name}-{version}.tar.gz) = {placeholder}\n')
     conf = yaml.safe_load((project / 'build.conf').read_text())
     conf['packages'][name] = {}
     (project / 'build.conf').write_text(yaml.safe_dump(conf))
@@ -761,3 +766,102 @@ def test_uscan_failure_keeps_its_reason(
         ' reading webpage https://github.com/pdidev/paraconf/tags failed: 504 Gateway Time-out'
         in capsys.readouterr().out
     )
+
+
+def test_unlisted_source_fails_the_package_only(
+    run_main: Callable[..., int], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A tarball whose sources line differs fails its package and descendants, before building."""
+
+    def prepare(project: Path) -> None:
+        lines = (project / 'hello-lib' / 'sources').read_text()
+        (project / 'hello-lib' / 'sources').write_text(lines.replace('= ', '= 0', 1)[:-2] + '\n')
+
+    runner = FakeRunner(tools_respond)
+    packages = ['hello-lib', 'hello-app', 'hello-undeclared']
+    assert run_main(runner, {'debian': ['trixie']}, packages, prepare=prepare) == 1
+    built = {p for p in packages if any(c.build_of(p) for c in runner.calls)}
+    assert built == {'hello-undeclared'}
+    out = capsys.readouterr().out
+    assert (
+        'failed hello-lib on Debian GNU/Linux 13 (Trixie): while downloading hello-lib-1.0.tar.gz:'
+        ' hello-lib-1.0.tar.gz does not match its sources line' in out
+    )
+
+
+def test_missing_sources_file_fails_the_package(
+    run_main: Callable[..., int], capsys: pytest.CaptureFixture[str]
+) -> None:
+    runner = FakeRunner(rpm_builds())
+
+    def prepare(project: Path) -> None:
+        (project / 'hello-lib' / 'sources').unlink()
+
+    assert run_main(runner, {'fedora': ['44']}, ['hello-lib'], prepare=prepare) == 1
+    assert 'no sources line for hello-lib-1.0.tar.gz' in capsys.readouterr().out
+
+
+def test_verified_deb_source_needs_no_line(run_main: Callable[..., int]) -> None:
+    """uscan checked the upstream signature: the tarball needs no sources line."""
+
+    def prepare(project: Path) -> None:
+        (project / 'hello-lib' / 'sources').unlink()
+        debian = project / 'hello-lib' / 'debian'
+        watch = debian / 'watch'
+        watch.write_text(watch.read_text().replace('pgpmode=none', 'pgpmode=gittag'))
+        (debian / 'upstream').mkdir()
+        (debian / 'upstream' / 'signing-key.asc').write_text('the upstream key\n')
+
+    runner = FakeRunner(tools_respond)
+    assert run_main(runner, {'debian': ['trixie']}, ['hello-lib'], prepare=prepare) == 0
+
+
+def test_extra_line_is_ignored(run_main: Callable[..., int]) -> None:
+    def prepare(project: Path) -> None:
+        with (project / 'hello-lib' / 'sources').open('a') as lines:
+            lines.write(f'SHA512 (gone-0.1.tar.gz) = {"0" * 128}\n')
+
+    runner = FakeRunner(tools_respond)
+    assert run_main(runner, {'debian': ['trixie']}, ['hello-lib'], prepare=prepare) == 0
+
+
+def test_sources_writes_lines_a_fresh_run_accepts(
+    cli: ModuleType,
+    recorded_http: respx.MockRouter,
+    frozen: date,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """sources writes, sorted, the line of each file the builds download; run then accepts them."""
+    recorded_http.get(HELLO_LIB_ORIG, name='orig').respond(200, content=tarball())
+    versions = {'debian': ['trixie'], 'fedora': ['44']}
+    project = make_project(tmp_path / 'project', ORIG_BASE, versions, ['hello-lib', 'hello-app'])
+    (project / 'hello-lib' / 'sources').unlink()
+    monkeypatch.chdir(project)
+    app = cli.make_app(runner=FakeRunner(tools_respond), connect=lambda host: cast(Any, None))
+    env = {'DISTROPACK_GPG_PASSPHRASE': FIXTURE_PASSPHRASE}
+    result = CliRunner().invoke(app, ['sources', 'build.conf', 'hello-lib', 'hello-app'], env=env)
+    assert result.exit_code == 0, result.output
+    digest = hashlib.sha512(tarball()).hexdigest()
+    # the deb tarball (the fake uscan's) and the rpm one are the same file here
+    assert (project / 'hello-lib' / 'sources').read_text() == (
+        f'SHA512 (hello-lib-1.0.tar.gz) = {digest}\n'
+    )
+    assert not (project / 'hello-app' / 'sources').exists()  # downloads nothing
+    runner = FakeRunner(rpm_builds())
+    result = CliRunner().invoke(
+        cli.make_app(runner=runner, connect=lambda host: cast(Any, None)),
+        ['run', 'build.conf'],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+
+
+def test_sources_unknown_package(
+    cli: ModuleType, recorded_http: respx.MockRouter, frozen: date, tmp_path: Path
+) -> None:
+    project = make_project(tmp_path / 'project', ORIG_BASE, {'debian': ['trixie']}, ['hello-lib'])
+    app = cli.make_app(runner=FakeRunner(tools_respond), connect=lambda host: cast(Any, None))
+    result = CliRunner().invoke(app, ['sources', str(project / 'build.conf'), 'nosuch'])
+    assert result.exit_code == 2
+    assert 'nosuch is not a package of' in result.stderr
