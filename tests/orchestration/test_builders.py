@@ -141,7 +141,7 @@ def test_tools_run_as_the_runner_chooses_in_a_run(run_main: Callable[..., int]) 
     runner = FakeRunner(rpm_builds())
     assert run_main(runner, {'fedora': ['44'], 'debian': ['trixie']}, ['hello-undeclared']) == 0
     tools = [c for c in runner.calls if '_builder:' not in c.image]
-    assert {c.image.rsplit('/', 1)[1].split(':')[0] for c in tools} == {'aptly', 'rpm_sign'}
+    assert {c.image.rsplit('/', 1)[1].split(':')[0] for c in tools} == {'deb_tools', 'rpm_sign'}
     assert not [c for c in tools if c.as_root]
 
 
@@ -560,8 +560,9 @@ def test_no_gpg_tool_images(run_main: Callable[..., int]) -> None:
     runner = FakeRunner(rpm_builds())
     assert run_main(runner, {'fedora': ['44'], 'debian': ['trixie']}, ['hello-undeclared']) == 0
     images = {c.image.rsplit('/', 1)[1].split(':')[0] for c in runner.calls}
-    assert not images & {'gpg2', 'rpm_tools', 'deb_tools'}
-    assert {'rpm_sign', 'aptly'} <= images
+    # master's gpg images; deb_tools is the Debian tools' image again (Phase 10a), without gpg
+    assert not images & {'gpg2', 'rpm_tools'}
+    assert {'rpm_sign', 'deb_tools'} <= images
 
 
 def test_wrong_passphrase_is_a_message(

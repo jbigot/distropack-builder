@@ -14,7 +14,7 @@ declares and the host needs nothing but a container engine.
 | Container | Image | Runs |
 |---|---|---|
 | the builders | `<distribution>_builder:<release>` | the target release's own `dpkg-buildpackage` or `rpmbuild`, after installing the build dependencies; for rpm, also the `rpmspec` queries of every spec of the release, in one container |
-| aptly | `aptly` | `aptly`, which publishes deb repositories unsigned: the builder signs them itself |
+| the Debian tools | `deb_tools` | `aptly`, which publishes deb repositories unsigned (the builder signs them itself), and `uscan`, which downloads the upstream tarballs `debian/watch` names |
 | rpm signing | `rpm_sign` | `rpmsign`, through gpg, with the key and its passphrase mounted for that one call |
 
 Everything else runs in the builder's own process: the signatures of deb sources and of every

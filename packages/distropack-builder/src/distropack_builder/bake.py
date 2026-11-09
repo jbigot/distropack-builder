@@ -23,7 +23,10 @@ from distropack_builder import targets
 
 REGISTRY: Final = 'ghcr.io/jbigot/distropack-builder/'
 PROTOCOL: Final = 2
-TOOLS: Final = ('aptly', 'rpm_sign')
+# The Debian tools: aptly, and uscan with mk-origtargz. One image, not two: compressed, it is
+# smaller than the base plus both tools' own layers (101.1 MB against 104.0 MB, Phase 10a).
+DEB_TOOLS: Final = 'deb_tools'
+TOOLS: Final = (DEB_TOOLS, 'rpm_sign')
 # What `imagetools inspect` reports for a missing image: `not found` from Docker Hub, `manifest
 # unknown` from registries that use the distribution specification's error code.
 MISSING_IMAGE: Final = re.compile(r'not found|manifest unknown', re.IGNORECASE)

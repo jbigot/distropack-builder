@@ -27,7 +27,7 @@ from debian.deb822 import Deb822, _PkgRelationMixin
 
 from distro_releases import Release
 from distropack_builder import readme, repodata, rpmquery, targets
-from distropack_builder.bake import PROTOCOL, REGISTRY, tool_image
+from distropack_builder.bake import DEB_TOOLS, PROTOCOL, REGISTRY, tool_image
 from distropack_builder.config import BuildConfig, Distrib
 from distropack_builder.context import BuildContext
 from distropack_builder.docker import Mount
@@ -138,7 +138,7 @@ class Aptly(Container):
 
     def __init__(self, context: BuildContext, logger: logging.Logger | None = None) -> None:
         """aptly, run in context."""
-        super().__init__(context, tool_image('aptly'), logger)
+        super().__init__(context, tool_image(DEB_TOOLS), logger)
 
 
 class RpmSign(Container):

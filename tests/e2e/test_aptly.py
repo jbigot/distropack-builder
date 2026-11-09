@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from distropack_builder.bake import REGISTRY, tool_image
+from distropack_builder.bake import DEB_TOOLS, REGISTRY, tool_image
 from distropack_builder.builders import APTLY_CONFIG
 from distropack_builder.docker import Engine
 from distropack_builder.signing import Signer
@@ -52,7 +52,7 @@ def test_adds_a_signed_dsc_as_a_user_without_home(docker_engine: None, tmp_path:
         ' && aptly -config=/tmp/aptly.conf repo add hello /data'
     )
     output = Engine.connect().client.containers.run(
-        REGISTRY + tool_image('aptly'),
+        REGISTRY + tool_image(DEB_TOOLS),
         ['sh', '-c', script],
         user='4242:4242',
         volumes={str(data): {'bind': '/data', 'mode': 'ro'}},

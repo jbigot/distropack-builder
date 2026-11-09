@@ -76,10 +76,10 @@ def recorded_images(registry: str, protocol: int) -> dict[str, Image]:
     - a tag build left implicit is spelled out as latest;
     - each image gains its protocol tag: <release>-p<N> on a builder, p<N> on a tool;
     - build's --force-rm has no bake equivalent, and building in CI leaves nothing behind anyway;
-    - the tool images shrink (Phase 6): deb_tools, whose aptly alone remains, is the aptly image;
-      rpm_tools and gpg2 go.
+    - the tool images change: rpm_tools and gpg2 go (Phase 6); deb_tools holds aptly, and uscan
+      with what it needs (Phase 10a).
     """
-    tools = {'deb_tools': 'aptly'}
+    tools: dict[str, str] = {}
 
     def rename(image: str) -> str:
         image = registry + image.removeprefix('ghcr.io/jbigot/pkg_builder/')
@@ -192,4 +192,4 @@ def test_runner_asks_protocol_tags(
     (f44,) = (r for r in distribution('fedora').releases() if r.version == '44')
     assert cli.builder_image(trixie) == f'debian_builder:trixie-p{bake.PROTOCOL}'
     assert cli.builder_image(f44) == f'fedora_builder:44-p{bake.PROTOCOL}'
-    assert bake.tool_image('aptly') == f'aptly:p{bake.PROTOCOL}'
+    assert bake.tool_image(bake.DEB_TOOLS) == f'deb_tools:p{bake.PROTOCOL}'

@@ -11,7 +11,7 @@ defined by `distropack-build images bake-file` alone (see [](../how-to/build-ima
 
 ## Names and tags
 
-The tool images, `aptly` and `rpm_sign`, are tagged `latest` and `p<N>`.
+The tool images, `deb_tools` and `rpm_sign`, are tagged `latest` and `p<N>`.
 
 There is one builder image per release of each distribution that has not reached its end of life,
 or that its distribution's archive still supports for free after it (Debian's LTS), named `<distribution>_builder`: `debian_builder`, `ubuntu_builder`, `fedora_builder`,
@@ -32,7 +32,8 @@ volumes. It is bumped whenever either changes incompatibly, so that a runner can
 it can drive: the runner asks for the protocol tag of each image, never a moving tag. Protocol 2
 (the builders install their own build dependencies, answer the rpm spec queries, and build as an
 unprivileged user) replaced the tool images `deb_tools`, `rpm_tools` and `gpg2` by `aptly` and
-`rpm_sign`.
+`rpm_sign`; `deb_tools` came back in place of `aptly` with uscan beside it, one image being smaller
+than two that share their base.
 
 ## Availability
 

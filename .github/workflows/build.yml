@@ -109,8 +109,8 @@ jobs:
           check='dpkg-buildpackage --version && test -x /entrypoint' ;;
         rpm_builder)
           check='rpmbuild --version && dnf builddep --help > /dev/null && test -x /entrypoint' ;;
-        aptly)
-          check='aptly version' ;;
+        deb_tools)
+          check='aptly version && uscan --version && mk-origtargz --help > /dev/null' ;;
         rpm_sign)
           check='rpmsign --help > /dev/null && gpg --version && test -x /usr/local/bin/sign' ;;
         *)
