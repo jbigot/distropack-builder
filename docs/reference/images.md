@@ -14,8 +14,9 @@ defined by `distropack-build images bake-file` alone (see [](../how-to/build-ima
 The tool images, `deb_tools` and `rpm_sign`, are tagged `latest` and `p<N>`.
 
 There is one builder image per release of each distribution that has not reached its end of life,
-or that its distribution's archive still supports for free after it (Debian's LTS), named `<distribution>_builder`: `debian_builder`, `ubuntu_builder`, `fedora_builder`,
-`almalinux_builder`, `rocky_builder`. It carries these tags:
+or that its distribution's archive still supports for free after it (Debian's LTS), named
+`<distribution>_builder`: `debian_builder`, `ubuntu_builder`, `fedora_builder`, `el_builder` (from
+Rocky Linux's images). It carries these tags:
 
 | tag | example | present |
 |---|---|---|

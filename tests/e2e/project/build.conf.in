@@ -15,9 +15,9 @@ distribs:
     versions: ['44']
     repository: {path: repositories/fedora, url: "http://repo.example.invalid/fedora", name: hello, description: Hello test}
     gpg: {file: key.gpg}
-  rocky:
+  el:
     versions: ['10']
-    repository: {path: repositories/rocky, url: "http://repo.example.invalid/rocky", name: hello, description: Hello test}
+    repository: {path: repositories/el, url: "http://repo.example.invalid/el", name: hello, description: Hello test}
     gpg: {file: key.gpg}
 packages:
   hello-lib: {}

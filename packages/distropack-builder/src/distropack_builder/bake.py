@@ -111,6 +111,7 @@ def bake_definition(images_dir: Path, base_image_exists: Callable[[str], bool]) 
                     'DIST_IMAGE': target.repository,
                     'DIST_RELEASE': base_image.rpartition(':')[2],
                     'DIST_CODENAME': str(release.codename),
+                    **target.build_args,
                 },
             }
     return {

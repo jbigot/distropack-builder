@@ -29,7 +29,7 @@ through a local repository.
 
 One `build.conf` and one `distropack-build run` publish signed apt and dnf repositories.
 
-- The fixture is built for Debian, Ubuntu, Fedora and Rocky Linux in one run, and each repository
+- The fixture is built for Debian, Ubuntu, Fedora and Enterprise Linux in one run, and each repository
   installs in a clean container of its release with apt or dnf checking the signatures
   ({source}`test_install_from_repository <tests/e2e/test_install.py>`); a tampered repository is
   refused ({source}`test_tampered_repository_is_refused <tests/e2e/test_install.py>`).

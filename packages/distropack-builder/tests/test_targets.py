@@ -7,7 +7,9 @@
 import re
 from pathlib import Path
 
-from distro_releases import distribution
+import pytest
+
+from distro_releases import UnknownDistribution, distribution
 from distropack_builder import targets
 
 SOURCES = Path(targets.__file__).parent
@@ -15,10 +17,9 @@ SOURCES = Path(targets.__file__).parent
 
 def test_every_target_has_a_family() -> None:
     assert {t.id: t.family for t in targets.TARGETS.values()} == {
-        'almalinux': 'rpm-dnf',
         'debian': 'deb',
+        'el': 'rpm-dnf',
         'fedora': 'rpm-dnf',
-        'rocky': 'rpm-dnf',
         'ubuntu': 'deb',
     }
 
@@ -35,7 +36,7 @@ def test_base_images() -> None:
     assert debian.base_image('trixie') == 'debian:trixie-slim'
     assert debian.base_image('rc-buggy') == 'debian:rc-buggy'
     assert fedora.base_image('44') == 'fedora:44'
-    assert targets.TARGETS['rocky'].base_image('10') == 'rockylinux/rockylinux:10'
+    assert targets.TARGETS['el'].base_image('10') == 'rockylinux/rockylinux:10'
 
 
 def test_no_name_test_outside_targets() -> None:
@@ -50,3 +51,14 @@ def test_no_name_test_outside_targets() -> None:
         if test.search(line)
     ]
     assert found == []
+
+
+@pytest.mark.parametrize('id', ['almalinux', 'rocky'])
+def test_clones_are_not_targets(id: str) -> None:
+    with pytest.raises(targets.NotATarget):
+        targets.target(id)
+
+
+def test_unknown_distribution() -> None:
+    with pytest.raises(UnknownDistribution):
+        targets.target('nosuch')

@@ -27,14 +27,14 @@ jobs:
       with: { version-file: .tool-versions }
     - run: >-
         uv run python tests/fixture_project.py "$RUNNER_TEMP/work" "$BASE_URL"
-        --releases debian:trixie ubuntu:noble fedora:44 rocky:10 --packages hello-lib hello-app
+        --releases debian:trixie ubuntu:noble fedora:44 el:10 --packages hello-lib hello-app
     - id: plan
       uses: ./plan
       with: { working-directory: "${{ runner.temp }}/work", config: project/build.conf }
     - name: the matrix lists the four releases
       env: { MATRIX: "${{ steps.plan.outputs.matrix }}" }
       run: |
-        expected='[{"distrib":"debian","release":"trixie"},{"distrib":"fedora","release":"44"},{"distrib":"rocky","release":"10"},{"distrib":"ubuntu","release":"noble"}]'
+        expected='[{"distrib":"debian","release":"trixie"},{"distrib":"el","release":"10"},{"distrib":"fedora","release":"44"},{"distrib":"ubuntu","release":"noble"}]'
         [ "$(jq -cS . <<< "$MATRIX")" = "$(jq -cS . <<< "$expected")" ]
   build:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository

@@ -25,7 +25,7 @@ SPECS = {
 }
 pytestmark = [pytest.mark.e2e, pytest.mark.enable_socket]
 
-IMAGES = {'.fc44': f'fedora_builder:44-p{PROTOCOL}', '.el10': f'rocky_builder:10-p{PROTOCOL}'}
+IMAGES = {'.fc44': f'fedora_builder:44-p{PROTOCOL}', '.el10': f'el_builder:10-p{PROTOCOL}'}
 
 
 @pytest.fixture(scope='module')

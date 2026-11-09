@@ -19,6 +19,7 @@ from typing import Literal
 import jinja2
 
 from distro_releases import Release
+from distropack_builder import targets
 
 TEMPLATE = 'README.html.j2'
 
@@ -43,6 +44,8 @@ class PageRelease:
     """The URL of its repository: the whole repository for deb, its own directory for rpm."""
     repo_file: str | None
     """The URL of its .repo file, for rpm; None for deb."""
+    prerequisites: tuple[tuple[str, str], ...] = ()
+    """What a host must enable first, per host family: (host family, shell commands) pairs."""
 
 
 @dataclass(frozen=True)
@@ -94,8 +97,16 @@ class Page:
 
 def _release(release: Release, url: str, repo_file: str | None) -> PageRelease:
     """A release of a page."""
+    target = targets.TARGETS.get(release.distribution.id)
+    prerequisites = () if target is None else target.prerequisites(release.version or '')
     return PageRelease(
-        str(release), release.codename, release.suite, release.version, url, repo_file
+        str(release),
+        release.codename,
+        release.suite,
+        release.version,
+        url,
+        repo_file,
+        prerequisites,
     )
 
 

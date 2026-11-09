@@ -13,6 +13,8 @@ VOLUME /output
 VOLUME /localrepo
 
 ARG DIST_ID
+# 1 for Enterprise Linux: CRB (PowerTools on 8) and EPEL enabled
+ARG DIST_EL=0
 
 RUN EXTRA_PKGS="" \
   ; EXTRA_REPOS="" \
@@ -20,10 +22,11 @@ RUN EXTRA_PKGS="" \
     "fedora" ) \
       EXTRA_PKGS="nosync" \
   ;; \
-    "almalinux" | "rocky" ) \
-      EXTRA_REPOS="epel-release" \
-  ;; \
     esac \
+  ; if [ "${DIST_EL}" = 1 ] \
+  ; then \
+      EXTRA_REPOS="epel-release" \
+  ; fi \
  && dnf upgrade -y \
  && dnf install -y --setopt=tsflags=nodocs --setopt=install_weak_deps=False --best \
     'dnf-command(builddep)' \

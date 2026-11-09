@@ -45,8 +45,8 @@ RELEASE_LISTS = [
     {'ubuntu': ['supported']},
     {'fedora': ['supported']},
     {'fedora': ['rawhide']},
-    {'rocky': ['supported']},
-    {'almalinux': ['9', '+']},
+    # master's rocky and almalinux targets became el (Phase 10b), which master did not have: its
+    # releases are tested in tests/orchestration/test_el.py
 ]
 FILTERS = [
     'debian',
@@ -57,7 +57,6 @@ FILTERS = [
     'ubuntu:noble',
     'fedora:44',
     'Fedora:rawhide',
-    'rocky:10',
     'nosuch',
 ]
 

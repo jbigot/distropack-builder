@@ -35,6 +35,10 @@ Signed-By: /usr/share/keyrings/{{ page.repository_name }}-archive-keyring.gpg
 EOF
 sudo apt update</code></pre>
 {%- else -%}
+{% for host, commands in release.prerequisites -%}
+<p>On {{ host }}, first:</p>
+<pre><code>{{ commands }}</code></pre>
+{% endfor -%}
 <pre><code>sudo curl -fsSL -o /etc/yum.repos.d/{{ page.repository_name }}.repo {{ release.repo_file }}</code></pre>
 <p>dnf asks to trust <a href="{{ page.key_url }}">the key</a> at the first installation from
 <a href="{{ release.url }}">{{ release.url }}</a>.</p>

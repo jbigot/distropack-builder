@@ -58,11 +58,15 @@ def test_bake_file_matches_the_recorded_build_calls(bake: ModuleType) -> None:
         )
         for name, target in definition['target'].items()
         # the releases in free extended support are new (Phase 10a): master built the supported
-        # ones only
-        if name != 'debian_builder-bookworm'
+        # ones only; el replaces master's almalinux and rocky (Phase 10b)
+        if name != 'debian_builder-bookworm' and not name.startswith('el_builder-')
     }
-    recorded = recorded_images(bake.REGISTRY, bake.PROTOCOL)
-    assert len(recorded) == 20
+    recorded = {
+        tag: image
+        for tag, image in recorded_images(bake.REGISTRY, bake.PROTOCOL).items()
+        if '/almalinux_builder:' not in tag and '/rocky_builder:' not in tag
+    }
+    assert len(recorded) == 14  # master's 20, but its 3 almalinux and 3 rocky images
     # rpm_sign is new (Phase 6): what remains of rpm_tools and gpg2, rpmsign, on Fedora
     assert {k: v for k, v in generated.items() if '/rpm_sign:' not in k} == recorded
     assert sorted(definition['group']['default']['targets']) == sorted(definition['target'])

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-RELEASES = [('debian', 'trixie'), ('ubuntu', 'noble'), ('fedora', '44'), ('rocky', '10')]
+RELEASES = [('debian', 'trixie'), ('ubuntu', 'noble'), ('fedora', '44'), ('el', '10')]
 Project = Callable[[dict[str, list[str]], list[str]], Path]
 RunPkgbuild = Callable[[Path], subprocess.CompletedProcess[str]]
 

@@ -4,13 +4,15 @@
 
 """The repository pages, rendered from the default template or a project's."""
 
+from datetime import date
 from pathlib import Path
 
 import pytest
 from syrupy.assertion import SnapshotAssertion
 from syrupy.extensions.single_file import SingleFileSnapshotExtension, WriteMode
 
-from distropack_builder import readme
+from distro_releases import Release, distribution
+from distropack_builder import readme, targets
 from distropack_builder.readme import Page, PageRelease, TemplateError
 
 DEB = Page(
@@ -146,3 +148,39 @@ def test_check_project_without_template(tmp_path: Path) -> None:
     (project / 'index.html').write_text('<p>the site root</p>')
     readme.check(project)
     assert 'Suites: bookworm' in readme.render(readme.environment(project), DEB)
+
+
+def el_release(major: str) -> Release:
+    """A release of Enterprise Linux, made by hand."""
+    return Release(
+        targets.EL, major, None, major, int(major), None, None, date(2025, 6, 11), None, None
+    )
+
+
+def test_el_prerequisites_per_host_family() -> None:
+    page = readme.Page.of('rpm', 'https://x/el', 'ex', 'Ex', [el_release('10'), el_release('8')])
+    ten = {r.version: r for r in page.releases}['10']
+    hosts = dict(ten.prerequisites)
+    assert list(hosts) == ['Rocky Linux and AlmaLinux', 'Red Hat Enterprise Linux', 'Oracle Linux']
+    assert 'dnf config-manager --set-enabled crb' in hosts['Rocky Linux and AlmaLinux']
+    assert 'epel-release' in hosts['Rocky Linux and AlmaLinux']
+    assert 'codeready-builder-for-rhel-10-$(arch)-rpms' in hosts['Red Hat Enterprise Linux']
+    assert 'epel-release-latest-10.noarch.rpm' in hosts['Red Hat Enterprise Linux']
+    assert 'ol10_codeready_builder' in hosts['Oracle Linux']
+    assert 'oracle-epel-release-el10' in hosts['Oracle Linux']
+    eight = dict({r.version: r for r in page.releases}['8'].prerequisites)
+    assert 'dnf config-manager --set-enabled powertools' in eight['Rocky Linux and AlmaLinux']
+
+
+def test_el_page_shows_the_prerequisites() -> None:
+    page = readme.Page.of('rpm', 'https://x/el', 'ex', 'Ex', [el_release('10')])
+    html = readme.render(readme.environment(None), page)
+    assert 'On Oracle Linux' in html and 'ol10_codeready_builder' in html
+
+
+def test_fedora_has_no_prerequisites() -> None:
+    fedora = Release(
+        distribution('fedora'), '44', None, '44', 44, None, None, date(2026, 4, 1), None, None
+    )
+    page = readme.Page.of('rpm', 'https://x/fedora', 'ex', 'Ex', [fedora])
+    assert page.releases[0].prerequisites == ()

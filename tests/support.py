@@ -40,7 +40,7 @@ FROZEN_DATE = date(2026, 11, 5)
 FIXTURE_PROJECT = REPO_ROOT / 'tests' / 'e2e' / 'project'
 FIXTURE_PASSPHRASE = 'test-passphrase'
 # The releases the shared fixture build covers: one per family, and Rocky Linux for Phase 10's el.
-FIXTURE_RELEASES = {'debian': ['trixie'], 'ubuntu': ['noble'], 'fedora': ['44'], 'rocky': ['10']}
+FIXTURE_RELEASES = {'debian': ['trixie'], 'ubuntu': ['noble'], 'fedora': ['44'], 'el': ['10']}
 
 
 def made_release(dist: str, version: str | None, codename: str | None, order: int) -> Release:
