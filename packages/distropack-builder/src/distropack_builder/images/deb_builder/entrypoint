@@ -4,12 +4,16 @@
 #
 # SPDX-License-Identifier: MIT
 
-# A build runs in two containers of this image, as sbuild builds (protocol 3):
+# A build runs in two containers of this image, as sbuild builds (protocol 4):
 #   deps         with network: copies the source package of /src to /tmp/src and installs its build
-#                dependencies, from the release's archive and the local repository in /localrepo;
-#                the runner then commits the container to a temporary image;
+#                dependencies, from the release's archive and the local repository in /localrepo,
+#                reporting them in /buildenv; the runner then commits the container to a
+#                temporary image;
 #   build ARGS   from that image, with no network: dpkg-buildpackage ARGS as an unprivileged
 #                user, the outputs moved to /src.
+# A binNMU: /src holds a stored source package (a .dsc and its files) and binnmu.changelog; deps
+# unpacks it and prepends the entry, build runs with -B and moves back only the .deb, .buildinfo
+# and .changes.
 
 trap 'echo received signal, quitting...; exit 1' INT TERM QUIT ABRT
 
@@ -22,6 +26,22 @@ bgrun() {
 
 source_dir() {
 	find /tmp/src/ -mindepth 1 -maxdepth 1 -type d
+}
+
+# With /buildenv mounted, what the dependency container installed, sorted, in /buildenv/installed:
+# its sha256 is the environment key; when it is DISTROPACK_KNOWN_ENV's, /buildenv/unchanged says
+# that nothing is to be built, and the runner does not commit the container.
+report_environment() {
+	if [ -d /buildenv ]
+	then
+		printf '%s\n' "$1" | LC_ALL=C sort > /buildenv/installed
+		key=$(sha256sum < /buildenv/installed | cut -d' ' -f1)
+		if [ -n "${DISTROPACK_KNOWN_ENV:-}" ] && [ "${key}" = "${DISTROPACK_KNOWN_ENV}" ]
+		then
+			touch /buildenv/unchanged
+		fi
+		chown -R "$(stat -c '%u:%g' /buildenv)" /buildenv
+	fi
 }
 
 mode=${1:-}
@@ -40,9 +60,19 @@ deps)
 	do
 		if [ -e "${extra}" ]; then cp "${extra}" /etc/apt/sources.list.d/; fi
 	done
-	cp -a /src /tmp/
-	cd "$(source_dir)"
-	bgrun find /tmp/src/ -maxdepth 1 -name '*.orig.tar.*' -exec tar -C "${PWD}" --strip-components=1 -xf '{}' ';'
+	if [ -e /src/binnmu.changelog ]
+	then
+		mkdir /tmp/src
+		touch /tmp/src/.binnmu
+		(cd /tmp/src && bgrun dpkg-source --no-check -x /src/*.dsc)
+		cd "$(source_dir)"
+		cat /src/binnmu.changelog debian/changelog > /tmp/changelog
+		mv /tmp/changelog debian/changelog
+	else
+		cp -a /src /tmp/
+		cd "$(source_dir)"
+		bgrun find /tmp/src/ -maxdepth 1 -name '*.orig.tar.*' -exec tar -C "${PWD}" --strip-components=1 -xf '{}' ';'
+	fi
 	# the build dependencies of the source, resolved in the target release with its build profiles
 	bgrun apt-get -y update
 	bgrun apt-get -y dist-upgrade
@@ -54,6 +84,7 @@ deps)
 	do
 		if [ -e "${extra}" ]; then rm -f "/etc/apt/sources.list.d/$(basename "${extra}")"; fi
 	done
+	report_environment "$(dpkg-query -W -f='${binary:Package} ${Version}\n')"
 	chown -R builder:builder /tmp/src
 	;;
 build)
@@ -63,7 +94,13 @@ build)
 	bgrun setpriv --reuid=builder --regid=builder --init-groups \
 		env HOME=/home/builder dpkg-buildpackage -rfakeroot "$@"
 	chown -R "$(stat -c '%u:%g' /src)" /tmp/src
-	find /tmp/src -maxdepth 1 -type f -execdir mv -t /src -- '{}' '+'
+	if [ -e /tmp/src/.binnmu ]
+	then
+		find /tmp/src -maxdepth 1 -type f \( -name '*.deb' -o -name '*.buildinfo' -o -name '*.changes' \) \
+			-execdir mv -t /src -- '{}' '+'
+	else
+		find /tmp/src -maxdepth 1 -type f -execdir mv -t /src -- '{}' '+'
+	fi
 	;;
 *)
 	echo "usage: entrypoint deps | build DPKG_BUILDPACKAGE_ARGS..." >&2

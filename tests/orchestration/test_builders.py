@@ -35,6 +35,7 @@ from distropack_builder.docker import Cancellation, Cancelled, ContainerFailed, 
 from distropack_builder.rpmquery import SpecInfo
 from distropack_builder.scheduler import Interrupted, schedule
 from distropack_builder.signing import Signer
+from distropack_builder.uscan import OrigFiles
 from fake_runner import Call, FakeRunner, StopBuild, tools_respond
 from support import FIXTURE_PASSPHRASE, FIXTURE_PROJECT, make_project, write_tarball
 
@@ -111,7 +112,7 @@ def test_deb_builder_image_and_mounts(
     call = builder_call(runner)
     assert call.image == REGISTRY + f'debian_builder:trixie-p{PROTOCOL}'
     assert call.as_root
-    assert sorted(call.targets) == ['/localrepo', '/src']
+    assert sorted(call.targets) == ['/buildenv', '/localrepo', '/src']
     assert call.env['DISTROPACK_BUILD_PROFILES'] == 'debian,trixie'
     assert sorted(build_call(runner).targets) == ['/src']
 
@@ -1124,3 +1125,65 @@ def test_download_dir_kept_across_runs(run_main: Callable[..., int], tmp_path: P
     assert len(places) == 2 and places[0] == places[1]
     assert places[0].is_relative_to(kept)
     assert list((kept / 'origs').glob('*/hello-lib-1.0.tar.gz'))
+
+
+INSTALLED = 'base-files 13.8\ndebhelper 13.24\n'
+
+
+@pytest.mark.parametrize(('dist', 'name'), [('debian', 'trixie'), ('fedora', '44')])
+def test_deps_reports_its_environment(
+    builders: ModuleType,
+    context: BuildContext,
+    runner: FakeRunner,
+    frozen: date,
+    dist: str,
+    name: str,
+) -> None:
+    """The dependency container writes what it installed; its sha256 is the environment key."""
+
+    def respond(call: Call) -> RunResult | None:
+        if call.is_deps:
+            (call.targets['/buildenv'].source / 'installed').write_text(INSTALLED)
+        if call.is_build:
+            raise StopBuild()
+        return None
+
+    runner.respond = respond
+    under = builder(builders, context, release(dist, name, frozen))
+    with pytest.raises(StopBuild):
+        under.build(frozenset(), {})
+    deps = builder_call(runner)
+    assert not deps.targets['/buildenv'].read_only
+    assert 'DISTROPACK_KNOWN_ENV' not in deps.env
+    assert deps.commit_unless == deps.targets['/buildenv'].source / 'unchanged'
+    assert under.env_key == hashlib.sha256(INSTALLED.encode()).hexdigest()
+    assert not under.unchanged
+
+
+def test_known_environment_builds_nothing(
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date
+) -> None:
+    known = hashlib.sha256(INSTALLED.encode()).hexdigest()
+
+    def respond(call: Call) -> RunResult | None:
+        if call.is_deps:
+            assert call.env['DISTROPACK_KNOWN_ENV'] == known
+            buildenv = call.targets['/buildenv'].source
+            (buildenv / 'installed').write_text(INSTALLED)
+            (buildenv / 'unchanged').touch()
+        return None
+
+    runner.respond = respond
+    signer = Signer.load(FIXTURE_PROJECT / 'key.gpg', FIXTURE_PASSPHRASE)
+    trixie = release('debian', 'trixie', frozen)
+    # a quilt package, whose orig tarball goes into its source directory
+    under = builders.DebPackageBuilder(context, trixie, FIXTURE_PROJECT, signer, 'hello-lib')
+    tarball_path = context.workdir / 'hello-lib-1.0.tar.gz'
+    tarball_path.write_bytes(b'upstream')
+    (context.workdir / 'hello-lib_1.0.orig.tar.gz').symlink_to(tarball_path.name)
+    under.orig = OrigFiles(tarball_path, context.workdir / 'hello-lib_1.0.orig.tar.gz', True)
+    under.known_env = known
+    under.build(frozenset(), {})
+    assert not [c for c in runner.calls if c.is_build]
+    assert under.unchanged and under.env_key == known
+    assert list(under.outdir.iterdir()) == []  # no package: the stored ones stand

@@ -168,6 +168,7 @@ def run(
     network: bool = True,
     commit_to: str | None = None,
     remove_image: bool = False,
+    commit_unless: Path | None = None,
 ) -> RunResult:
     """Run image with args in a new container, and remove it.
 
@@ -187,6 +188,8 @@ def run(
             module's LOGGER by default.
         network: whether the container has the engine's default network; none otherwise.
         commit_to: the reference of an image to commit the container to, once it exited 0.
+        commit_unless: a host path whose existence, once the container exited, cancels that
+            commit (a container saying there is nothing more to do with it).
         remove_image: whether to remove image once the container is removed, whatever happened:
             a temporary image, such as one commit_to made.
 
@@ -210,6 +213,7 @@ def run(
             logger=logger,
             network=network,
             commit_to=commit_to,
+            commit_unless=commit_unless,
         )
     finally:
         if remove_image:
@@ -232,6 +236,7 @@ def _run(
     logger: logging.Logger | None,
     network: bool,
     commit_to: str | None,
+    commit_unless: Path | None,
 ) -> RunResult:
     """run, but for the removal of its image."""
     if cancellation.cancelled:
@@ -264,7 +269,8 @@ def _run(
             if cancellation.cancelled:
                 raise Cancelled()
             stdout = container.logs(stdout=True, stderr=False).decode(errors='replace')
-            if commit_to is not None and status == 0:
+            skip = commit_unless is not None and commit_unless.exists()
+            if commit_to is not None and status == 0 and not skip:
                 repository, tag = parse_repository_tag(commit_to)
                 container.commit(repository=repository, tag=tag or 'latest')
     finally:

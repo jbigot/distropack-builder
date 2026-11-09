@@ -4,7 +4,7 @@
 #
 # SPDX-License-Identifier: MIT
 
-# The modes of the rpm builder (protocol 3), with zypper:
+# The modes of the rpm builder (protocol 4), with zypper:
 #   query   with the specs mounted under /specs, writes for each one under /out/<name>/ what
 #           rpmspec says of it: buildrequires, provides, parsed, errors and status;
 #   deps    with network: installs the build dependencies of the spec in /src, from the release's
@@ -16,6 +16,22 @@
 trap 'echo received signal, quitting...; exit 1' INT TERM
 
 set -euo pipefail
+
+# With /buildenv mounted, what the dependency container installed, sorted, in /buildenv/installed:
+# its sha256 is the environment key; when it is DISTROPACK_KNOWN_ENV's, /buildenv/unchanged says
+# that nothing is to be built, and the runner does not commit the container.
+report_environment() {
+	if [ -d /buildenv ]
+	then
+		printf '%s\n' "$1" | LC_ALL=C sort > /buildenv/installed
+		key=$(sha256sum < /buildenv/installed | cut -d' ' -f1)
+		if [ -n "${DISTROPACK_KNOWN_ENV:-}" ] && [ "${key}" = "${DISTROPACK_KNOWN_ENV}" ]
+		then
+			touch /buildenv/unchanged
+		fi
+		chown -R "$(stat -c '%u:%g' /buildenv)" /buildenv
+	fi
+}
 
 mode=${1:-}
 shift || true
@@ -73,6 +89,7 @@ deps)
 	fi
 	cp -a /src /tmp/src
 	mkdir -p /tmp/build/BUILD /tmp/output/src
+	report_environment "$(rpm -qa --qf '%{NEVRA}\n')"
 	chown -R builder:builder /tmp/src /tmp/build /tmp/output
 	;;
 build)

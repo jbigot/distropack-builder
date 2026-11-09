@@ -29,7 +29,7 @@ images). It carries these tags:
 
 ## The protocol version
 
-`<N>`, 3 today, is the version of what the runner relies on in an image: its entrypoint and its
+`<N>`, 4 today, is the version of what the runner relies on in an image: its entrypoint and its
 volumes. It is bumped whenever either changes incompatibly, so that a runner can ask for an image
 it can drive: the runner asks for the protocol tag of each image, never a moving tag. Protocol 2
 (the builders install their own build dependencies, answer the rpm spec queries, and build as an
@@ -38,7 +38,12 @@ unprivileged user) replaced the tool images `deb_tools`, `rpm_tools` and `gpg2` 
 than two that share their base. Protocol 3 splits a build in two containers, the builders'
 entrypoints taking a mode: `deps` installs the build dependencies (with network) before the runner
 commits the container, `build` builds from that commit (without network), and the rpm builders'
-`query` answers the spec queries.
+`query` answers the spec queries. Protocol 4 adds the report of the build environment: with
+`/buildenv` mounted, `deps` writes what it installed, sorted, to `/buildenv/installed`, whose
+sha256 is the environment key, and creates `/buildenv/unchanged` when that key is
+`DISTROPACK_KNOWN_ENV`'s, nothing to build then; and, for deb, a binNMU: given a stored source
+package and `binnmu.changelog` in `/src`, `deps` unpacks it and prepends the entry, and `build -B`
+gives back only the `.deb`, `.buildinfo` and `.changes`.
 
 ## Availability
 

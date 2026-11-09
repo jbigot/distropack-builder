@@ -23,7 +23,7 @@ from typing import Any, Final
 from distropack_builder import targets
 
 REGISTRY: Final = 'ghcr.io/jbigot/distropack-builder/'
-PROTOCOL: Final = 3
+PROTOCOL: Final = 4
 # The Debian tools: aptly, and uscan with mk-origtargz. One image, not two: compressed, it is
 # smaller than the base plus both tools' own layers (101.1 MB against 104.0 MB, Phase 10a).
 DEB_TOOLS: Final = 'deb_tools'

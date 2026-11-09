@@ -106,11 +106,11 @@ jobs:
         kind=$(basename "$(jq -r --arg t "$TARGET" '.target[$t].context' docker-bake.json)")
         case "$kind" in
         deb_builder)
-          check='dpkg-buildpackage --version && test -x /entrypoint' ;;
+          check='dpkg-buildpackage --version && dpkg-source --version && test -x /entrypoint && grep -q /buildenv /entrypoint' ;;
         rpm_builder)
-          check='rpmbuild --version && dnf builddep --help > /dev/null && test -x /entrypoint' ;;
+          check='rpmbuild --version && dnf builddep --help > /dev/null && test -x /entrypoint && grep -q /buildenv /entrypoint' ;;
         zypper_builder)
-          check='rpmbuild --version && zypper --version && test -x /entrypoint && rpm -E %dist' ;;
+          check='rpmbuild --version && zypper --version && test -x /entrypoint && rpm -E %dist && grep -q /buildenv /entrypoint' ;;
         deb_tools)
           check='aptly version && uscan --version && mk-origtargz --help > /dev/null' ;;
         rpm_sign)

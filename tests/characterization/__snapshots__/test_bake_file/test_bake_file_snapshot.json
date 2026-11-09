@@ -31,7 +31,7 @@
       "context": "/images/deb_tools",
       "tags": [
         "ghcr.io/jbigot/distropack-builder/deb_tools:latest",
-        "ghcr.io/jbigot/distropack-builder/deb_tools:p3"
+        "ghcr.io/jbigot/distropack-builder/deb_tools:p4"
       ]
     },
     "debian_builder-bookworm": {
@@ -44,7 +44,7 @@
       "context": "/images/deb_builder",
       "tags": [
         "ghcr.io/jbigot/distropack-builder/debian_builder:bookworm",
-        "ghcr.io/jbigot/distropack-builder/debian_builder:bookworm-p3",
+        "ghcr.io/jbigot/distropack-builder/debian_builder:bookworm-p4",
         "ghcr.io/jbigot/distropack-builder/debian_builder:oldstable"
       ]
     },
@@ -58,7 +58,7 @@
       "context": "/images/deb_builder",
       "tags": [
         "ghcr.io/jbigot/distropack-builder/debian_builder:forky",
-        "ghcr.io/jbigot/distropack-builder/debian_builder:forky-p3",
+        "ghcr.io/jbigot/distropack-builder/debian_builder:forky-p4",
         "ghcr.io/jbigot/distropack-builder/debian_builder:testing"
       ]
     },
@@ -72,7 +72,7 @@
       "context": "/images/deb_builder",
       "tags": [
         "ghcr.io/jbigot/distropack-builder/debian_builder:rc-buggy",
-        "ghcr.io/jbigot/distropack-builder/debian_builder:rc-buggy-p3",
+        "ghcr.io/jbigot/distropack-builder/debian_builder:rc-buggy-p4",
         "ghcr.io/jbigot/distropack-builder/debian_builder:experimental"
       ]
     },
@@ -86,7 +86,7 @@
       "context": "/images/deb_builder",
       "tags": [
         "ghcr.io/jbigot/distropack-builder/debian_builder:sid",
-        "ghcr.io/jbigot/distropack-builder/debian_builder:sid-p3",
+        "ghcr.io/jbigot/distropack-builder/debian_builder:sid-p4",
         "ghcr.io/jbigot/distropack-builder/debian_builder:unstable"
       ]
     },
@@ -100,7 +100,7 @@
       "context": "/images/deb_builder",
       "tags": [
         "ghcr.io/jbigot/distropack-builder/debian_builder:trixie",
-        "ghcr.io/jbigot/distropack-builder/debian_builder:trixie-p3",
+        "ghcr.io/jbigot/distropack-builder/debian_builder:trixie-p4",
         "ghcr.io/jbigot/distropack-builder/debian_builder:stable",
         "ghcr.io/jbigot/distropack-builder/debian_builder:latest"
       ]
@@ -116,7 +116,7 @@
       "context": "/images/rpm_builder",
       "tags": [
         "ghcr.io/jbigot/distropack-builder/el_builder:10",
-        "ghcr.io/jbigot/distropack-builder/el_builder:10-p3",
+        "ghcr.io/jbigot/distropack-builder/el_builder:10-p4",
         "ghcr.io/jbigot/distropack-builder/el_builder:latest"
       ]
     },
@@ -131,7 +131,7 @@
       "context": "/images/rpm_builder",
       "tags": [
         "ghcr.io/jbigot/distropack-builder/el_builder:8",
-        "ghcr.io/jbigot/distropack-builder/el_builder:8-p3"
+        "ghcr.io/jbigot/distropack-builder/el_builder:8-p4"
       ]
     },
     "el_builder-9": {
@@ -145,7 +145,7 @@
       "context": "/images/rpm_builder",
       "tags": [
         "ghcr.io/jbigot/distropack-builder/el_builder:9",
-        "ghcr.io/jbigot/distropack-builder/el_builder:9-p3"
+        "ghcr.io/jbigot/distropack-builder/el_builder:9-p4"
       ]
     },
     "fedora_builder-43": {
@@ -158,7 +158,7 @@
       "context": "/images/rpm_builder",
       "tags": [
         "ghcr.io/jbigot/distropack-builder/fedora_builder:43",
-        "ghcr.io/jbigot/distropack-builder/fedora_builder:43-p3"
+        "ghcr.io/jbigot/distropack-builder/fedora_builder:43-p4"
       ]
     },
     "fedora_builder-44": {
@@ -171,7 +171,7 @@
       "context": "/images/rpm_builder",
       "tags": [
         "ghcr.io/jbigot/distropack-builder/fedora_builder:44",
-        "ghcr.io/jbigot/distropack-builder/fedora_builder:44-p3"
+        "ghcr.io/jbigot/distropack-builder/fedora_builder:44-p4"
       ]
     },
     "fedora_builder-45": {
@@ -184,7 +184,7 @@
       "context": "/images/rpm_builder",
       "tags": [
         "ghcr.io/jbigot/distropack-builder/fedora_builder:45",
-        "ghcr.io/jbigot/distropack-builder/fedora_builder:45-p3",
+        "ghcr.io/jbigot/distropack-builder/fedora_builder:45-p4",
         "ghcr.io/jbigot/distropack-builder/fedora_builder:latest"
       ]
     },
@@ -198,7 +198,7 @@
       "context": "/images/rpm_builder",
       "tags": [
         "ghcr.io/jbigot/distropack-builder/fedora_builder:46",
-        "ghcr.io/jbigot/distropack-builder/fedora_builder:46-p3",
+        "ghcr.io/jbigot/distropack-builder/fedora_builder:46-p4",
         "ghcr.io/jbigot/distropack-builder/fedora_builder:rawhide"
       ]
     },
@@ -213,7 +213,7 @@
       "context": "/images/zypper_builder",
       "tags": [
         "ghcr.io/jbigot/distropack-builder/opensuse_builder:16.0",
-        "ghcr.io/jbigot/distropack-builder/opensuse_builder:16.0-p3"
+        "ghcr.io/jbigot/distropack-builder/opensuse_builder:16.0-p4"
       ]
     },
     "opensuse_builder-tumbleweed": {
@@ -227,7 +227,7 @@
       "context": "/images/zypper_builder",
       "tags": [
         "ghcr.io/jbigot/distropack-builder/opensuse_builder:tumbleweed",
-        "ghcr.io/jbigot/distropack-builder/opensuse_builder:tumbleweed-p3",
+        "ghcr.io/jbigot/distropack-builder/opensuse_builder:tumbleweed-p4",
         "ghcr.io/jbigot/distropack-builder/opensuse_builder:tumbleweed",
         "ghcr.io/jbigot/distropack-builder/opensuse_builder:latest"
       ]
@@ -236,7 +236,7 @@
       "context": "/images/rpm_sign",
       "tags": [
         "ghcr.io/jbigot/distropack-builder/rpm_sign:latest",
-        "ghcr.io/jbigot/distropack-builder/rpm_sign:p3"
+        "ghcr.io/jbigot/distropack-builder/rpm_sign:p4"
       ]
     },
     "ubuntu_builder-jammy": {
@@ -249,7 +249,7 @@
       "context": "/images/deb_builder",
       "tags": [
         "ghcr.io/jbigot/distropack-builder/ubuntu_builder:jammy",
-        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:jammy-p3"
+        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:jammy-p4"
       ]
     },
     "ubuntu_builder-noble": {
@@ -262,7 +262,7 @@
       "context": "/images/deb_builder",
       "tags": [
         "ghcr.io/jbigot/distropack-builder/ubuntu_builder:noble",
-        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:noble-p3"
+        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:noble-p4"
       ]
     },
     "ubuntu_builder-resolute": {
@@ -275,7 +275,7 @@
       "context": "/images/deb_builder",
       "tags": [
         "ghcr.io/jbigot/distropack-builder/ubuntu_builder:resolute",
-        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:resolute-p3"
+        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:resolute-p4"
       ]
     },
     "ubuntu_builder-stonking": {
@@ -288,7 +288,7 @@
       "context": "/images/deb_builder",
       "tags": [
         "ghcr.io/jbigot/distropack-builder/ubuntu_builder:stonking",
-        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:stonking-p3",
+        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:stonking-p4",
         "ghcr.io/jbigot/distropack-builder/ubuntu_builder:latest"
       ]
     },
@@ -302,7 +302,7 @@
       "context": "/images/deb_builder",
       "tags": [
         "ghcr.io/jbigot/distropack-builder/ubuntu_builder:tenacious",
-        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:tenacious-p3",
+        "ghcr.io/jbigot/distropack-builder/ubuntu_builder:tenacious-p4",
         "ghcr.io/jbigot/distropack-builder/ubuntu_builder:devel"
       ]
     }

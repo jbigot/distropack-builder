@@ -32,6 +32,7 @@ class Call:
     network: bool = True
     commit_to: str | None = None
     remove_image: bool = False
+    commit_unless: Path | None = None
 
     @property
     def targets(self) -> dict[str, Mount]:
@@ -94,6 +95,7 @@ class FakeRunner:
         network: bool = True,
         commit_to: str | None = None,
         remove_image: bool = False,
+        commit_unless: Path | None = None,
     ) -> RunResult:
         call = Call(
             image,
@@ -105,6 +107,7 @@ class FakeRunner:
             network,
             commit_to,
             remove_image,
+            commit_unless,
         )
         self.calls.append(call)
         return self.respond(call) or RunResult(0, '', '')

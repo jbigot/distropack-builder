@@ -33,6 +33,7 @@ class Runner(Protocol):
         network: bool = True,
         commit_to: str | None = None,
         remove_image: bool = False,
+        commit_unless: Path | None = None,
     ) -> RunResult:
         """Run image with args in a new container, and remove it (see docker.run)."""
         ...

@@ -8,6 +8,7 @@ A package builder builds one package for one release; a repository builder publi
 outputs of a family's builds, signed, with its page. run_builds drives a whole run.
 """
 
+import hashlib
 import json
 import logging
 import uuid
@@ -194,6 +195,13 @@ class PackageBuilder:
         self.bin_depends: set[str] = set()
         # the repositories of other packages its dependencies may come from, set by run_builds
         self.extras: Sequence[ExtraRepository] = ()
+        # the environment key of the last build stored, if any (Phase 12); a build whose
+        # dependency container installs the same environment builds nothing
+        self.known_env: str | None = None
+        # what this build's dependency container installed, as its sha256, and whether it was
+        # known_env: then no package was built
+        self.env_key: str | None = None
+        self.unchanged = False
 
     def __str__(self) -> str:
         """The package's name, as the report names the build a skipped one waited for."""
@@ -255,7 +263,12 @@ class PackageBuilder:
         # the builder image's name and tag, unique: distropack-build/fedora_builder-<id>:44-p3
         name, _, tag = builder_image(self.dist_release).partition(':')
         temporary = f'distropack-build/{name}-{uuid.uuid4().hex[:12]}:{tag}'
-        deps_mounts = [*deps_mounts, *self._extra_mounts()]
+        buildenv = self._context.workdir / f'{self.name}.{self.dist_release.uid}.buildenv'
+        buildenv.mkdir()
+        deps_mounts = [*deps_mounts, Mount('/buildenv', buildenv), *self._extra_mounts()]
+        deps_env = dict(env or {})
+        if self.known_env is not None:
+            deps_env['DISTROPACK_KNOWN_ENV'] = self.known_env
         run = self._context.run
         common: dict[str, Any] = {
             'env': env,
@@ -270,8 +283,15 @@ class PackageBuilder:
             ['deps', *deps_args],
             mounts=deps_mounts,
             commit_to=temporary,
-            **common,
+            commit_unless=buildenv / 'unchanged',
+            **{**common, 'env': deps_env},
         )
+        installed = buildenv / 'installed'
+        if installed.is_file():
+            self.env_key = hashlib.sha256(installed.read_bytes()).hexdigest()
+        if (buildenv / 'unchanged').exists():
+            self.unchanged = True
+            return
         run(
             self._context.engine,
             temporary,
@@ -434,6 +454,9 @@ class DebPackageBuilder(PackageBuilder):
             env={'DH_VERBOSE': '1', 'DISTROPACK_BUILD_PROFILES': profiles},
         )
         rmtree(localrepo)
+        if self.unchanged:  # nothing built: the stored packages stand
+            rmtree(pkg_dir)
+            return
 
         # Sign the source package: nothing reads the .changes, aptly adds the .dsc as it is
         for dsc in pkg_dir.glob('*.dsc'):
