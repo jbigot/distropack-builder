@@ -118,7 +118,13 @@ def run_step_arguments(tmp_path: Path, env: dict[str, str]) -> list[str]:
     stub.write_text('#!/bin/bash\nprintf "%s\\0" "$@"\n')
     stub.chmod(0o755)
     [run] = [step for step in steps(ACTIONS[0]) if step.get('id') == 'run']
-    defaults = {'CONFIG': 'build.conf', 'DISTRIBUTIONS': '', 'JOBS': '', 'VERBOSE': 'false'}
+    defaults = {
+        'CONFIG': 'build.conf',
+        'DISTRIBUTIONS': '',
+        'JOBS': '',
+        'VERBOSE': 'false',
+        'DOWNLOAD_DIR': '',
+    }
     out = subprocess.run(
         ['bash', '-euc', run['run']],
         env={'PATH': '/usr/bin:/bin', 'GITHUB_ACTION_PATH': str(action_path), **defaults, **env},
@@ -135,3 +141,8 @@ def test_verbose_input_reaches_the_cli(tmp_path: Path) -> None:
     assert load(ACTIONS[0])['inputs']['verbose']['default'] == 'false'
     assert run_step_arguments(tmp_path, {'VERBOSE': 'true'}) == ['run', '--verbose', 'build.conf']
     assert run_step_arguments(tmp_path, {'VERBOSE': 'false'}) == ['run', 'build.conf']
+
+
+def test_download_dir_input_reaches_the_cli(tmp_path: Path) -> None:
+    args = run_step_arguments(tmp_path, {'DOWNLOAD_DIR': 'cache/sources'})
+    assert args == ['run', '--download-dir', 'cache/sources', 'build.conf']

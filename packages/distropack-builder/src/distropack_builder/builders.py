@@ -776,11 +776,13 @@ def run_builds(
     disabled: Mapping[str, Set[Release]],
     signer_for: Callable[[Distrib], Signer],
     unbuilt: Set[Release] = frozenset(),
+    download_dir: Path | None = None,
 ) -> bool:
     """Download, build and publish; whether any build or publication did not succeed.
 
     unbuilt are releases failed before any build (their builder image is missing): their
     repositories are left as they were, and stay listed, as those of the releases whose builds fail.
+    download_dir, if given, keeps the downloads from run to run; a temporary one otherwise.
     """
     builders: list[PackageBuilder] = []
     repo_builders: list[tuple[str, DebRepoBuilder | RpmRepoBuilder, list[PackageBuilder]]] = []
@@ -835,11 +837,12 @@ def run_builds(
         builders += dist_builders
 
     debs = [b for b in builders if isinstance(b, DebPackageBuilder) and b.needs_orig]
-    origs = fetch_origs(context, root, sorted({b.name for b in debs}), context.workdir / 'origs')
+    keep_dir = download_dir or context.workdir
+    origs = fetch_origs(context, root, sorted({b.name for b in debs}), keep_dir / 'origs')
     for deb_builder in debs:
         deb_builder.orig = origs[deb_builder.name]
-    downloads = context.workdir / 'downloads'
-    downloads.mkdir()
+    downloads = keep_dir / 'downloads'
+    downloads.mkdir(parents=True, exist_ok=True)
     files = fetch_all(
         [url for builder in builders for url in builder.sources()],
         downloads,

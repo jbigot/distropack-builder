@@ -10,6 +10,7 @@ whose watch file and upstream version are the same share one download, which mk-
 names (and repacks, after its own Files-Excluded) for each of the others.
 """
 
+import hashlib
 import re
 import shutil
 from dataclasses import dataclass
@@ -94,9 +95,11 @@ def fetch_origs(
         groups.setdefault(origin(project / name), []).append(name)
     run = _Tools(context, project, directory)
     results: dict[str, OrigFiles | DownloadFailed] = {}
-    for index, (found, members) in enumerate(groups.items()):
+    for found, members in groups.items():
         first, *others = members
-        destdir = directory / str(index)
+        # named after the origin, so that a directory kept across runs finds it again
+        index = hashlib.sha256(found.watch + found.upstream_version.encode()).hexdigest()[:16]
+        destdir = directory / index
         try:
             _uscan(run, first, destdir, index)
             upstream = _upstream(destdir, first, found.upstream_version)
@@ -123,14 +126,26 @@ def _transient(error: Exception) -> bool:
 
 
 @stamina.retry(on=_transient, attempts=ATTEMPTS)
-def _uscan(run: '_Tools', name: str, destdir: Path, index: int) -> None:
-    """Run uscan in package name's directory, writing to destdir, emptied first."""
-    shutil.rmtree(destdir, ignore_errors=True)
-    destdir.mkdir(parents=True)
-    run(name, 'uscan', '--download-current-version', '--destdir', _in(destdir, index))
+def _uscan(run: '_Tools', name: str, destdir: Path, index: str) -> None:
+    """Run uscan in package name's directory, writing to destdir.
+
+    What an earlier run left there is reused (uscan does not download a file it finds); what a
+    failed attempt wrote is removed, so that no partial download is taken for complete.
+    """
+    destdir.mkdir(parents=True, exist_ok=True)
+    before = set(destdir.iterdir())
+    try:
+        run(name, 'uscan', '--download-current-version', '--destdir', _in(destdir, index))
+    except BaseException:
+        for path in set(destdir.iterdir()) - before:
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                path.unlink(missing_ok=True)
+        raise
 
 
-def _in(path: Path, index: int) -> str:
+def _in(path: Path, index: str) -> str:
     """The path in the container of a file of the origin index's directory."""
     name = '' if path.name == str(index) else f'/{path.name}'
     return f'{DOWNLOADS}/{index}{name}'

@@ -1102,3 +1102,25 @@ def test_generated_entry_dated_from_the_packaging(
     with time_machine.travel(now, tick=False):
         assert run_main(FakeRunner(respond), {'debian': ['trixie']}, ['hello-undeclared']) == 0
     assert entries == [(f'{packaged.version}~bpo13', packaged.date)]
+
+
+def test_download_dir_kept_across_runs(run_main: Callable[..., int], tmp_path: Path) -> None:
+    """--download-dir keeps the downloads, uscan's included, in the same place from run to run."""
+    kept = tmp_path / 'kept'
+    places: list[Path] = []
+
+    def respond(call: Call) -> RunResult | None:
+        if call.args[:1] == ('uscan',):
+            places.append(call.targets['/downloads'].source)
+        return tools_respond(call)
+
+    for _ in range(2):
+        shutil.rmtree(tmp_path / 'project', ignore_errors=True)
+        runner = FakeRunner(respond)
+        assert (
+            run_main(runner, {'debian': ['trixie']}, ['hello-lib'], '--download-dir', str(kept))
+            == 0
+        )
+    assert len(places) == 2 and places[0] == places[1]
+    assert places[0].is_relative_to(kept)
+    assert list((kept / 'origs').glob('*/hello-lib-1.0.tar.gz'))

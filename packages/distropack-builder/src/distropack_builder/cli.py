@@ -227,6 +227,7 @@ def make_app(
         verbose: bool,
         passphrase: str | None,
         docker_host: str | None,
+        download_dir: Path | None = None,
     ) -> tuple[bool, dict[str, str]]:
         """Build and publish; whether anything failed, and the repositories by distribution id."""
         # One date for the whole run, so that a run crossing midnight sees one list of releases.
@@ -280,7 +281,14 @@ def make_app(
             for release, reason in unpublished.items():
                 reporter.release_failed(release, reason)
             failed = run_builds(
-                context, reporter, loaded, selected, disabled, signer_for, set(unpublished)
+                context,
+                reporter,
+                loaded,
+                selected,
+                disabled,
+                signer_for,
+                set(unpublished),
+                download_dir.resolve() if download_dir else None,
             )
         return failed or bool(unpublished), output_dirs
 
@@ -323,6 +331,16 @@ def make_app(
                 " Docker context, Docker's socket, then Podman's).",
             ),
         ] = None,
+        download_dir: Annotated[
+            Path | None,
+            typer.Option(
+                '--download-dir',
+                metavar='DIR',
+                file_okay=False,
+                help='Where to keep the downloaded sources from run to run, instead of a'
+                ' temporary directory: a source already there is not downloaded again.',
+            ),
+        ] = None,
     ) -> None:
         """Builds the packages of build.conf, and publishes their signed repositories."""
         # SIGTERM (kill, timeout, a CI job cancelled) takes the path of Ctrl-C: the builds are
@@ -339,6 +357,7 @@ def make_app(
                     verbose,
                     read_passphrase(passphrase_file, os.environ),
                     docker_host,
+                    download_dir,
                 )
         except typer.Exit:
             _write_outputs_once_stopped(stopped)

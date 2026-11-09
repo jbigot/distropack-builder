@@ -64,18 +64,27 @@ def _transient(error: Exception) -> bool:
 def _attempt(client: httpx.Client, url: str, path: Path, cancellation: Cancellation) -> None:
     if cancellation.cancelled:  # Cancelled is not transient: no retry after it
         raise Cancelled()
-    with client.stream('GET', url) as response:
-        response.raise_for_status()
-        with path.open('wb') as file:
-            for chunk in response.iter_bytes():
-                if cancellation.cancelled:
-                    raise Cancelled()
-                file.write(chunk)
+    # written aside, then renamed: a file at path is always a complete download, which a directory
+    # kept across runs may then reuse
+    partial = path.with_name(path.name + '.part')
+    try:
+        with client.stream('GET', url) as response:
+            response.raise_for_status()
+            with partial.open('wb') as file:
+                for chunk in response.iter_bytes():
+                    if cancellation.cancelled:
+                        raise Cancelled()
+                    file.write(chunk)
+        partial.rename(path)
+    finally:
+        partial.unlink(missing_ok=True)
 
 
 def _fetch(client: httpx.Client, url: str, path: Path, cancellation: Cancellation) -> Path:
     if cancellation.cancelled:
         raise Cancelled()
+    if path.is_file():  # downloaded by an earlier run into a kept directory
+        return path
     try:
         _attempt(client, url, path, cancellation)
     except httpx.HTTPError as error:
@@ -92,6 +101,9 @@ def fetch_all(
     client: httpx.Client | None = None,
 ) -> dict[str, Path | DownloadFailed]:
     """Download each distinct URL once, to directory/<sha256 of the URL>, at most jobs at once.
+
+    A URL whose file the directory already holds, kept from an earlier run, is not downloaded
+    again: the URLs are immutable releases.
 
     Returns:
         The file of each URL, or why it could not be downloaded.

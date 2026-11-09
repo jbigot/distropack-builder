@@ -153,6 +153,8 @@ def answer_uscan(call: Call) -> None:
     destdir = host_path(call, call.args[call.args.index('--destdir') + 1])
     destdir.mkdir(parents=True, exist_ok=True)
     upstream = destdir / f'{package}-{version}.tar.gz'
+    if upstream.exists():  # kept from an earlier run: uscan does not download it again
+        return
     tree = Path(__file__).parent / 'e2e' / 'project' / 'upstream' / f'{upstream_name}-{version}'
     if tree.is_dir():
         write_tarball(tree, upstream)
@@ -175,7 +177,9 @@ def answer_mk_origtargz(call: Call) -> None:
     package, version = changelog_version(call)
     directory = host_path(call, args[args.index('--directory') + 1])
     upstream = Path(args[-1]).name
-    (directory / f'{package}_{version}.orig.tar.gz').symlink_to(upstream)
+    orig = directory / f'{package}_{version}.orig.tar.gz'
+    if not orig.is_symlink():
+        orig.symlink_to(upstream)
 
 
 def tools_respond(call: Call) -> RunResult | None:

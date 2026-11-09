@@ -147,3 +147,23 @@ def test_user_agent_without_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(importlib.metadata, 'version', missing)
     with downloads.new_client() as client:
         assert client.headers['User-Agent'] == 'distropack-builder/unknown'
+
+
+@respx.mock
+def test_kept_url_not_downloaded_again(tmp_path: Path) -> None:
+    """A directory kept across runs: a URL already downloaded is not fetched again."""
+    route = respx.get(URL).respond(200, content=b'data')
+    fetch(URL, directory=tmp_path)
+    files = fetch(URL, directory=tmp_path)
+    assert route.call_count == 1
+    assert files[URL].read_bytes() == b'data'  # type: ignore[union-attr]
+
+
+@respx.mock
+def test_interrupted_download_is_not_kept(tmp_path: Path) -> None:
+    """A download that failed half-way leaves no file a later run would take for complete."""
+    route = respx.get(URL)
+    route.side_effect = [httpx.Response(404), httpx.Response(200, content=b'data')]
+    assert isinstance(fetch(URL, directory=tmp_path)[URL], DownloadFailed)
+    assert list(tmp_path.iterdir()) == []
+    assert fetch(URL, directory=tmp_path)[URL].read_bytes() == b'data'  # type: ignore[union-attr]

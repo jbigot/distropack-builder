@@ -28,6 +28,11 @@ inputs:
   passphrase:
     description: The passphrase of the signing key; pass it from a secret.
     default: ''
+  download-dir:
+    description: >-
+      Where to keep the downloaded sources from run to run (with `actions/cache`, say), relative
+      to `working-directory`; a temporary directory when empty.
+    default: ''
   verbose:
     description: >-
       `true` to print every build's output in its log group, not only the failed builds'.
@@ -63,10 +68,12 @@ runs:
       DISTRIBUTIONS: ${{ inputs.distributions }}
       JOBS: ${{ inputs.jobs }}
       VERBOSE: ${{ inputs.verbose }}
+      DOWNLOAD_DIR: ${{ inputs.download-dir }}
       DISTROPACK_GPG_PASSPHRASE: ${{ inputs.passphrase }}
     run: |
       . "$GITHUB_ACTION_PATH/action/patterns.sh"
       distribution_options "$DISTRIBUTIONS"
       if [ -n "$JOBS" ]; then options+=(-j "$JOBS"); fi
       if [ "$VERBOSE" = true ]; then options+=(--verbose); fi
+      if [ -n "$DOWNLOAD_DIR" ]; then options+=(--download-dir "$DOWNLOAD_DIR"); fi
       "$GITHUB_ACTION_PATH/action/run-cli" run "${options[@]}" "$CONFIG"
