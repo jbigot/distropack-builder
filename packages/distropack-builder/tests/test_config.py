@@ -9,10 +9,12 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import pysequoia
 import pytest
 from syrupy.assertion import SnapshotAssertion
 from syrupy.extensions.json import JSONSnapshotExtension
 
+from distro_releases import Release, distribution
 from distropack_builder import config
 from distropack_builder.config import BuildConfig, ConfigError, Package
 
@@ -200,3 +202,81 @@ def test_schema_snapshot(snapshot: SnapshotAssertion) -> None:
     for name, value in properties(schema):
         assert value.get('description'), name
     assert schema == snapshot.use_extension(JSONSnapshotExtension)
+
+
+def write_extra(tmp_path: Path, dist: str, extra: str, *, key: bytes | None = None) -> Path:
+    """A build.conf whose dist has extra_repositories: extra (YAML flow), key.asc beside it."""
+    if key is not None:
+        (tmp_path / 'key.asc').write_bytes(key)
+    conf = tmp_path / 'build.conf'
+    conf.write_text(f'distribs: {{{dist}: {{extra_repositories: [{extra}]}}}}\npackages: {{}}\n')
+    return conf
+
+
+def public_key() -> bytes:
+    return str(
+        pysequoia.Tsk.generate('Other <other@example.invalid>').extract_certificate()
+    ).encode()
+
+
+def test_extra_repository(tmp_path: Path) -> None:
+    conf = write_extra(
+        tmp_path, 'debian', '{url: "https://repo.pdi.dev/debian/", key: key.asc}', key=public_key()
+    )
+    (extra,) = config.load(conf).distribs['debian'].extra_repositories
+    assert (extra.url, extra.key, extra.suite, extra.components) == (
+        'https://repo.pdi.dev/debian/',
+        Path('key.asc'),
+        '{codename}',
+        ('main',),
+    )
+
+
+@pytest.mark.parametrize(
+    ('dist', 'extra', 'key', 'expected'),
+    [
+        pytest.param('debian', '{url: "https://x/"}', None, 'key', id='key-missing'),
+        pytest.param(
+            'debian', '{url: "https://x/", key: key.asc}', None, 'key.asc', id='key-file-missing'
+        ),
+        pytest.param(
+            'debian',
+            '{url: "https://x/", key: key.asc}',
+            b'not a key\n',
+            'not an OpenPGP public key',
+            id='not-a-key',
+        ),
+        pytest.param(
+            'debian',
+            '{url: "https://x/{nosuch}", key: key.asc}',
+            b'',
+            'unknown field {nosuch}',
+            id='unknown-field',
+        ),
+        pytest.param(
+            'fedora',
+            '{url: "https://x/{version}", key: key.asc, suite: stable}',
+            b'',
+            'suite and components are for the Debian family',
+            id='suite-on-rpm',
+        ),
+    ],
+)
+def test_extra_repository_rejects(
+    tmp_path: Path, dist: str, extra: str, key: bytes | None, expected: str
+) -> None:
+    conf = write_extra(tmp_path, dist, extra, key=public_key() if key == b'' else key)
+    with pytest.raises(ConfigError) as caught:
+        config.load(conf)
+    assert f'distribs.{dist}.extra_repositories' in str(caught.value)
+    assert expected in str(caught.value)
+
+
+def test_expand_per_release() -> None:
+    trixie = Release(
+        distribution('debian'), '13', 'trixie', '13 (Trixie)', 13, 'stable', None, None, None, None
+    )
+    assert (
+        config.expand('https://x/{codename}/{version}/{suite}', trixie)
+        == 'https://x/trixie/13/stable'
+    )

@@ -29,3 +29,4 @@ packages:
   hello-undeclared: {}
   hello-needs-root: {}
   hello-needs-network: {}
+  hello-ext: {}

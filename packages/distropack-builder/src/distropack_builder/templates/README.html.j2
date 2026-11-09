@@ -24,6 +24,33 @@ with <a href="{{ page.key_url }}">its key</a>.</p>
 {% for release in page.releases -%}
 <h3>On {{ release.label }}</h3>
 {% block release scoped -%}
+{% for extra in release.extras -%}
+<p>First, the repository of the packages these depend on, {{ extra.name }}, signed by the key of
+fingerprint <code>{{ extra.fingerprint }}</code>:</p>
+{% if page.family == 'deb' -%}
+<pre><code>{% if extra.key_url %}sudo curl -fsSL -o /usr/share/keyrings/{{ extra.name }}.asc {{ extra.key_url }}
+{% endif %}sudo tee /etc/apt/sources.list.d/{{ extra.name }}.sources &lt;&lt;'EOF'
+Types: deb
+URIs: {{ extra.url }}
+Suites: {{ extra.suite }}
+Components: {{ extra.components | join(' ') }}
+Signed-By: /usr/share/keyrings/{{ extra.name }}.asc
+EOF</code></pre>
+{% elif page.package_manager == 'zypper' -%}
+<pre><code>{% if extra.key_url %}sudo rpm --import {{ extra.key_url }}
+{% endif %}sudo zypper addrepo --gpgcheck {{ extra.url }} {{ extra.name }}</code></pre>
+{% else -%}
+<pre><code>sudo tee /etc/yum.repos.d/{{ extra.name }}.repo &lt;&lt;'EOF'
+[{{ extra.name }}]
+name={{ extra.name }}
+baseurl={{ extra.url }}
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+{% if extra.key_url %}gpgkey={{ extra.key_url }}
+{% endif %}EOF</code></pre>
+{% endif -%}
+{% endfor -%}
 {% if page.family == 'deb' -%}
 <pre><code>sudo curl -fsSL -o /usr/share/keyrings/{{ page.repository_name }}-archive-keyring.gpg {{ page.key_url }}
 sudo tee /etc/apt/sources.list.d/{{ page.repository_name }}.sources &lt;&lt;'EOF'

@@ -13,6 +13,7 @@ import tempfile
 import time
 from collections.abc import Callable, Iterator
 from datetime import date
+from functools import partial
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
@@ -967,3 +968,73 @@ def test_deps_failure_runs_no_build(
     runner = FakeRunner(respond)
     assert run_main(runner, {'debian': ['trixie']}, ['hello-undeclared']) == 1
     assert not [c for c in runner.calls if c.is_build]
+
+
+def add_extra(project: Path, dist: str, url: str) -> None:
+    """An extra repository for dist in build.conf, signed by the fixture's key."""
+    signer = Signer.load(project / 'key.gpg', FIXTURE_PASSPHRASE)
+    (project / 'extra.asc').write_bytes(signer.public_key(armored=True))
+    conf = yaml.safe_load((project / 'build.conf').read_text())
+    conf['distribs'][dist]['extra_repositories'] = [{'url': url, 'key': 'extra.asc', 'name': 'pdi'}]
+    (project / 'build.conf').write_text(yaml.safe_dump(conf))
+
+
+@pytest.mark.parametrize(
+    ('dist', 'release', 'url', 'file', 'expected'),
+    [
+        (
+            'debian',
+            'trixie',
+            'https://repo.pdi.dev/debian/',
+            'pdi.sources',
+            'Types: deb\nURIs: https://repo.pdi.dev/debian/\nSuites: trixie\nComponents: main\n'
+            'Signed-By: /extrarepos/pdi.asc\n',
+        ),
+        (
+            'fedora',
+            '44',
+            'https://repo.pdi.dev/fedora/{version}',
+            'pdi.repo',
+            '[pdi]\nname=pdi\nbaseurl=https://repo.pdi.dev/fedora/44\nenabled=1\ngpgcheck=1\n'
+            'repo_gpgcheck=1\ngpgkey=file:///extrarepos/pdi.asc\n',
+        ),
+    ],
+)
+def test_extra_repositories_reach_the_dependency_container(
+    run_main: Callable[..., int], dist: str, release: str, url: str, file: str, expected: str
+) -> None:
+    seen: dict[str, str] = {}
+
+    def respond(call: Call) -> RunResult | None:
+        if call.is_deps:
+            extra = call.targets['/extrarepos']
+            assert extra.read_only
+            seen.update({p.name: p.read_text() for p in extra.source.iterdir()})
+        if call.is_build:
+            assert '/extrarepos' not in call.targets
+        return (rpm_builds() if dist == 'fedora' else tools_respond)(call)
+
+    runner = FakeRunner(respond)
+    prepare = partial(add_extra, dist=dist, url=url)
+    assert run_main(runner, {dist: [release]}, ['hello-undeclared'], prepare=prepare) == 0
+    assert seen[file] == expected
+    assert seen['pdi.asc'].startswith('-----BEGIN PGP PUBLIC KEY BLOCK-----')
+
+
+def test_file_extra_repository_is_mounted(run_main: Callable[..., int], tmp_path: Path) -> None:
+    mirror = tmp_path / 'mirror'
+    mirror.mkdir()
+    sources: list[str] = []
+
+    def respond(call: Call) -> RunResult | None:
+        if call.is_deps:
+            sources.append((call.targets['/extrarepos'].source / 'pdi.sources').read_text())
+        return tools_respond(call)
+
+    runner = FakeRunner(respond)
+    prepare = partial(add_extra, dist='debian', url=f'file://{mirror}/')
+    assert run_main(runner, {'debian': ['trixie']}, ['hello-undeclared'], prepare=prepare) == 0
+    (deps,) = [c for c in runner.calls if c.is_deps]
+    assert deps.targets['/extramirrors/pdi'].source == mirror
+    assert deps.targets['/extramirrors/pdi'].read_only
+    assert 'URIs: file:///extramirrors/pdi/\n' in sources[0]

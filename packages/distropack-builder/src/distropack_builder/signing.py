@@ -159,6 +159,23 @@ def _signer(key: pysequoia.Tsk, passphrase: str | None) -> pysequoia.PySigner:
         return pysequoia.Tsk.from_bytes(fixed).signer(None)
 
 
+def fingerprint(data: bytes) -> str:
+    """The fingerprint of the OpenPGP certificate in data, 40 upper-case hexadecimal digits."""
+    return str(pysequoia.Cert.from_bytes(data).fingerprint).upper()
+
+
+def check_public_key(data: bytes) -> None:
+    """Check that data, binary or armored, is an OpenPGP certificate (a public key).
+
+    Raises:
+        ValueError: it is not one; the message says why.
+    """
+    try:
+        pysequoia.Cert.from_bytes(data)
+    except (ValueError, RuntimeError) as error:
+        raise ValueError(str(error)) from error
+
+
 def _fingerprint(key: pysequoia.Tsk) -> str:
     return key.extract_certificate().fingerprint.upper()
 

@@ -24,8 +24,8 @@ from pydantic import (
 )
 from pydantic_core import PydanticCustomError
 
-from distro_releases import UnknownDistribution
-from distropack_builder import sources, targets
+from distro_releases import Release, UnknownDistribution
+from distropack_builder import signing, sources, targets
 
 # The release token that keeps, among the releases selected, those whose builder image exists.
 AVAILABLE = 'available'
@@ -131,6 +131,34 @@ class Gpg(_Model):
     """The user ID of the key to use, in the changelog entries (default: the key's first one)."""
 
 
+class ExtraRepository(_Model):
+    """A signed repository of other packages the builds depend on (another project's).
+
+    The builds install from it with a lower precedence than the project's own packages, and the
+    repository's page tells its users to add it first.
+    """
+
+    url: str
+    """Its URL: of the whole repository for the Debian family, of a release's directory for the
+    rpm families; ``{codename}``, ``{version}`` and ``{suite}`` are replaced from the release. A
+    ``file://`` URL names a directory of the build's host, mounted into the build."""
+
+    key: Path
+    """The file of the public key that signs it, relative to build.conf's directory."""
+
+    key_url: str | None = None
+    """The URL its users download that key from, for the page."""
+
+    name: str | None = None
+    """Its short name, in the file names of its configuration (default: extra-<its index>)."""
+
+    suite: str = '{codename}'
+    """The suite of a Debian family repository, a template as url."""
+
+    components: tuple[str, ...] = ('main',)
+    """The components of a Debian family repository."""
+
+
 class Distrib(_Model):
     """A distribution to build for, keyed by its id (``debian``, ``fedora``)."""
 
@@ -143,6 +171,9 @@ class Distrib(_Model):
 
     gpg: Gpg = Gpg()
     """The key that signs its packages and repository."""
+
+    extra_repositories: tuple[ExtraRepository, ...] = ()
+    """The repositories of other packages its builds depend on, signature-checked."""
 
 
 class Package(_Model):
@@ -211,9 +242,46 @@ def load(path: Path) -> BuildConfig:
     except ValidationError as error:
         raise ConfigError(f'{path}: {_describe(error)}') from error
     root = path.parent.resolve()
+    for dist_id, distrib in parsed.distribs.items():
+        for index, extra in enumerate(distrib.extra_repositories):
+            where = f'{path}: distribs.{dist_id}.extra_repositories.{index}'
+            _check_extra(where, root, targets.is_deb(targets.target(dist_id)), extra)
     for name in parsed.packages:
         _check_packaging(path, root, name)
     return BuildConfig(distribs=parsed.distribs, packages=parsed.packages, root=root)
+
+
+_FIELDS = {'codename': 'trixie', 'version': '13', 'suite': 'stable'}
+
+
+def expand(template: str, release: Release) -> str:
+    """template, its {codename}, {version} and {suite} replaced from release (empty when absent)."""
+    values = {
+        'codename': release.codename or '',
+        'version': release.version or '',
+        'suite': release.suite or '',
+    }
+    return template.format(**values)
+
+
+def _check_extra(where: str, root: Path, deb: bool, extra: ExtraRepository) -> None:
+    """Raise ConfigError if extra cannot be used: its key, its templates, its family's fields."""
+    for template in (extra.url, extra.suite):
+        try:
+            template.format(**_FIELDS)
+        except KeyError as error:
+            raise ConfigError(f'{where}: unknown field {{{error.args[0]}}} in {template}') from None
+    if not deb and (extra.suite, extra.components) != ('{codename}', ('main',)):
+        raise ConfigError(f'{where}: suite and components are for the Debian family')
+    key = root / extra.key
+    try:
+        data = key.read_bytes()
+    except OSError as error:
+        raise ConfigError(f'{where}.key: cannot read {key}: {error.strerror}') from error
+    try:
+        signing.check_public_key(data)
+    except ValueError as error:
+        raise ConfigError(f'{where}.key: {key} is not an OpenPGP public key: {error}') from error
 
 
 def _kind(data: object) -> str:

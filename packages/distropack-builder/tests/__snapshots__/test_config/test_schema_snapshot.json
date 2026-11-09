@@ -4,6 +4,15 @@
       "additionalProperties": false,
       "description": "A distribution to build for, keyed by its id (``debian``, ``fedora``).",
       "properties": {
+        "extra_repositories": {
+          "default": [],
+          "description": "The repositories of other packages its builds depend on, signature-checked.",
+          "items": {
+            "$ref": "#/$defs/ExtraRepository"
+          },
+          "title": "Extra Repositories",
+          "type": "array"
+        },
         "gpg": {
           "$ref": "#/$defs/Gpg",
           "default": {
@@ -53,6 +62,72 @@
         }
       },
       "title": "Distrib",
+      "type": "object"
+    },
+    "ExtraRepository": {
+      "additionalProperties": false,
+      "description": "A signed repository of other packages the builds depend on (another project's).\n\nThe builds install from it with a lower precedence than the project's own packages, and the\nrepository's page tells its users to add it first.",
+      "properties": {
+        "components": {
+          "default": [
+            "main"
+          ],
+          "description": "The components of a Debian family repository.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Components",
+          "type": "array"
+        },
+        "key": {
+          "description": "The file of the public key that signs it, relative to build.conf's directory.",
+          "format": "path",
+          "title": "Key",
+          "type": "string"
+        },
+        "key_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The URL its users download that key from, for the page.",
+          "title": "Key Url"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Its short name, in the file names of its configuration (default: extra-<its index>).",
+          "title": "Name"
+        },
+        "suite": {
+          "default": "{codename}",
+          "description": "The suite of a Debian family repository, a template as url.",
+          "title": "Suite",
+          "type": "string"
+        },
+        "url": {
+          "description": "Its URL: of the whole repository for the Debian family, of a release's directory for the\nrpm families; ``{codename}``, ``{version}`` and ``{suite}`` are replaced from the release. A\n``file://`` URL names a directory of the build's host, mounted into the build.",
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url",
+        "key"
+      ],
+      "title": "ExtraRepository",
       "type": "object"
     },
     "Gpg": {

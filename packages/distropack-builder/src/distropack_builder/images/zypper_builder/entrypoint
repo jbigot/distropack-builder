@@ -46,7 +46,17 @@ deps)
 	then
 		zypper --non-interactive addrepo --no-gpgcheck --priority 50 file:///localrepo/ localrepo
 	fi
-	zypper --non-interactive refresh
+	# the repositories of other packages build.conf names, signature-checked; the local one, at
+	# priority 50, wins over them (zypper's default is 99)
+	for extra in /extrarepos/*.repo
+	do
+		if [ -e "${extra}" ]
+		then
+			rpm --import "${extra%.repo}.asc"
+			zypper --non-interactive addrepo "${extra}"
+		fi
+	done
+	zypper --non-interactive --gpg-auto-import-keys refresh
 	zypper --non-interactive dist-upgrade --no-recommends
 	# rpmspec writes `name >= version`; zypper takes `name>=version`
 	mapfile -t requires < <(rpmspec -q --buildrequires /src/*.spec | sed 's/ //g')

@@ -1,0 +1,13 @@
+Source: hello-ext
+Section: misc
+Priority: optional
+Maintainer: distropack test <test@example.invalid>
+Build-Depends: debhelper-compat (= 13), hello-lib
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+
+Package: hello-ext
+Architecture: all
+Depends: ${misc:Depends}
+Description: package of the distropack-builder test fixture from another project
+ Built against hello-lib, from the fixture project's repository as an extra one.

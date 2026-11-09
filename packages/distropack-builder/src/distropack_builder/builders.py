@@ -27,9 +27,9 @@ from debian.changelog import Changelog, format_date
 from debian.deb822 import Deb822, _PkgRelationMixin
 
 from distro_releases import Release
-from distropack_builder import readme, repodata, rpmquery, sources, targets
+from distropack_builder import readme, repodata, rpmquery, signing, sources, targets
 from distropack_builder.bake import DEB_TOOLS, PROTOCOL, REGISTRY, tool_image
-from distropack_builder.config import BuildConfig, Distrib
+from distropack_builder.config import BuildConfig, Distrib, ExtraRepository, expand
 from distropack_builder.context import BuildContext
 from distropack_builder.docker import ContainerFailed, Mount, RunResult
 from distropack_builder.downloads import DownloadFailed, fetch_all, source_name
@@ -193,6 +193,8 @@ class PackageBuilder:
         self.outdir: Path | None = None
         self.bin_provides: set[str] = set()
         self.bin_depends: set[str] = set()
+        # the repositories of other packages its dependencies may come from, set by run_builds
+        self.extras: Sequence[ExtraRepository] = ()
 
     def __str__(self) -> str:
         """The package's name, as the report names the build a skipped one waited for."""
@@ -254,6 +256,7 @@ class PackageBuilder:
         # the builder image's name and tag, unique: distropack-build/fedora_builder-<id>:44-p3
         name, _, tag = builder_image(self.dist_release).partition(':')
         temporary = f'distropack-build/{name}-{uuid.uuid4().hex[:12]}:{tag}'
+        deps_mounts = [*deps_mounts, *self._extra_mounts()]
         run = self._context.run
         common: dict[str, Any] = {
             'env': env,
@@ -279,6 +282,40 @@ class PackageBuilder:
             remove_image=True,
             **common,
         )
+
+    def _extra_mounts(self) -> list[Mount]:
+        """The configuration of the extra repositories in /extrarepos, and their file:// trees.
+
+        For the Debian family, a deb822 .sources file each; for the rpm families, a .repo file
+        each; with each one's key beside it, as given. A file:// repository's directory is
+        mounted at /extramirrors/<name>: not under the read-only /extrarepos, where the engine
+        could not make its mount point.
+        """
+        if not self.extras:
+            return []
+        directory = self._context.workdir / f'{self.name}.{self.dist_release.uid}.extrarepos'
+        directory.mkdir()
+        mounts = [Mount('/extrarepos', directory, read_only=True)]
+        for index, extra in enumerate(self.extras):
+            name = extra.name or f'extra-{index}'
+            url = expand(extra.url, self.dist_release)
+            if url.startswith('file://'):
+                mirror = f'/extramirrors/{name}'
+                mounts.append(Mount(mirror, Path(url.removeprefix('file://')), read_only=True))
+                url = f'file://{mirror}' + ('/' if url.endswith('/') else '')
+            key = f'/extrarepos/{name}.asc'
+            (directory / f'{name}.asc').write_bytes((self._base_dir / extra.key).read_bytes())
+            if self.family == 'deb':
+                (directory / f'{name}.sources').write_text(
+                    f'Types: deb\nURIs: {url}\nSuites: {expand(extra.suite, self.dist_release)}'
+                    f'\nComponents: {" ".join(extra.components)}\nSigned-By: {key}\n'
+                )
+            else:
+                (directory / f'{name}.repo').write_text(
+                    f'[{name}]\nname={name}\nbaseurl={url}\nenabled=1\ngpgcheck=1\n'
+                    f'repo_gpgcheck=1\ngpgkey=file://{key}\n'
+                )
+        return mounts
 
     def _local_repository(
         self,
@@ -510,6 +547,7 @@ class DebRepoBuilder:
         name: str | None = None,
         description: str | None = None,
         pages: jinja2.Environment | None = None,
+        extras: Sequence[tuple[ExtraRepository, str]] = (),
         logger: logging.Logger | None = None,
         sign: bool = True,
     ) -> None:
@@ -519,6 +557,7 @@ class DebRepoBuilder:
         self._gpg = gpg
         self._public = None if url is None else Public.of(url, name, description)
         self._pages = pages
+        self._extras = extras
         self._aptly = Aptly(context, logger)
         self._sign = sign
 
@@ -571,7 +610,7 @@ class DebRepoBuilder:
             keyring = self._output_dir / f'{public.name}-archive-keyring.gpg'
             keyring.write_bytes(self._gpg.public_key(armored=False))
             listed = set(published) | {r for r in kept | failures.keys() if self.has_repository(r)}
-            _write_page(self._output_dir, self._pages, 'deb', public, listed)
+            _write_page(self._output_dir, self._pages, 'deb', public, listed, self._extras)
         return failures
 
     def _publish(
@@ -629,6 +668,7 @@ class RpmRepoBuilder:
         name: str | None = None,
         description: str | None = None,
         pages: jinja2.Environment | None = None,
+        extras: Sequence[tuple[ExtraRepository, str]] = (),
         logger: logging.Logger | None = None,
         sign: bool = True,
     ) -> None:
@@ -638,6 +678,7 @@ class RpmRepoBuilder:
         self._gpg = gpg
         self._public = None if url is None else Public.of(url, name, description)
         self._pages = pages
+        self._extras = extras
         self._sign = sign
 
     def has_repository(self, dist_release: Release) -> bool:
@@ -686,7 +727,7 @@ class RpmRepoBuilder:
             key = self._output_dir / f'{public.name}.key'
             key.write_bytes(self._gpg.public_key(armored=True))
             listed = set(published) | {r for r in kept | failures.keys() if self.has_repository(r)}
-            _write_page(self._output_dir, self._pages, 'rpm', public, listed)
+            _write_page(self._output_dir, self._pages, 'rpm', public, listed, self._extras)
         return failures
 
     def _publish(self, dist_release: Release) -> None:
@@ -717,10 +758,11 @@ def _write_page(
     family: Literal['deb', 'rpm'],
     public: Public,
     listed: Set[Release],
+    extras: Sequence[tuple[ExtraRepository, str]] = (),
 ) -> None:
     """Write index.html, the page of the releases listed, if there are templates."""
     if pages is not None:
-        page = readme.Page.of(family, public.url, public.name, public.description, listed)
+        page = readme.Page.of(family, public.url, public.name, public.description, listed, extras)
         (output_dir / 'index.html').write_text(readme.render(pages, page))
 
 
@@ -780,7 +822,13 @@ def run_builds(
             repository.name,
             repository.description,
             pages,
+            [
+                (extra, signing.fingerprint((root / extra.key).read_bytes()))
+                for extra in distrib.extra_repositories
+            ],
         )
+        for builder in dist_builders:
+            builder.extras = distrib.extra_repositories
         repo_builders.append((dist_id, repo_builder, dist_builders))
         builders += dist_builders
 

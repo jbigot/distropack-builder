@@ -32,7 +32,14 @@ deps)
 	if [ -d /localrepo/dists ]
 	then
 		echo "deb [trusted=yes] file:///localrepo/ ${DIST_CODENAME} main" > /etc/apt/sources.list.d/local.list
+		# the project's own packages win over any other repository's (file:// ones have no origin)
+		printf 'Package: *\nPin: origin ""\nPin-Priority: 990\n' > /etc/apt/preferences.d/localrepo
 	fi
+	# the repositories of other packages build.conf names, signature-checked
+	for extra in /extrarepos/*.sources
+	do
+		if [ -e "${extra}" ]; then cp "${extra}" /etc/apt/sources.list.d/; fi
+	done
 	cp -a /src /tmp/
 	cd "$(source_dir)"
 	bgrun find /tmp/src/ -maxdepth 1 -name '*.orig.tar.*' -exec tar -C "${PWD}" --strip-components=1 -xf '{}' ';'
@@ -41,8 +48,12 @@ deps)
 	bgrun apt-get -y dist-upgrade
 	bgrun apt-get -o Debug::pkgProblemResolver=yes -y --no-install-recommends \
 		${DISTROPACK_BUILD_PROFILES:+-P "${DISTROPACK_BUILD_PROFILES}"} build-dep ./
-	# the local repository is not mounted in the build container
-	rm -f /etc/apt/sources.list.d/local.list
+	# the local and extra repositories are not mounted in the build container
+	rm -f /etc/apt/sources.list.d/local.list /etc/apt/preferences.d/localrepo
+	for extra in /extrarepos/*.sources
+	do
+		if [ -e "${extra}" ]; then rm -f "/etc/apt/sources.list.d/$(basename "${extra}")"; fi
+	done
 	chown -R builder:builder /tmp/src
 	;;
 build)

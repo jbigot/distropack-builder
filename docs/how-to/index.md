@@ -9,6 +9,7 @@ SPDX-License-Identifier: MIT
 One guide per task.
 
 - [Add a package](add-package.md)
+- [Depend on another project's packages](extra-repositories.md)
 - [Add or drop a distribution release](releases.md)
 - [Build for Enterprise Linux](enterprise-linux.md)
 - [Build for openSUSE](opensuse.md)
@@ -22,6 +23,7 @@ One guide per task.
 :hidden:
 
 add-package
+extra-repositories
 releases
 enterprise-linux
 opensuse

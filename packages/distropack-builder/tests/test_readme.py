@@ -13,6 +13,7 @@ from syrupy.extensions.single_file import SingleFileSnapshotExtension, WriteMode
 
 from distro_releases import Release, distribution
 from distropack_builder import readme, targets
+from distropack_builder.config import ExtraRepository
 from distropack_builder.readme import Page, PageRelease, TemplateError
 
 DEB = Page(
@@ -196,3 +197,24 @@ def test_opensuse_page_uses_zypper() -> None:
     assert 'sudo zypper addrepo https://x/opensuse/16.0/ex.repo' in html
     assert 'sudo zypper --gpg-auto-import-keys refresh' in html
     assert 'dnf' not in html
+
+
+def test_extra_repository_listed_first() -> None:
+    trixie = Release(
+        distribution('debian'), '13', 'trixie', '13 (Trixie)', 13, 'stable', None, None, None, None
+    )
+    extra = ExtraRepository(
+        url='https://repo.pdi.dev/debian/',
+        key=Path('pdi.asc'),
+        key_url='https://repo.pdi.dev/debian/pdidev-archive-keyring.gpg',
+        name='pdi',
+    )
+    page = readme.Page.of('deb', 'https://x/debian', 'ex', 'Ex', [trixie], [(extra, 'ABCD1234')])
+    (release,) = page.releases
+    assert [(e.name, e.url, e.suite, e.fingerprint) for e in release.extras] == [
+        ('pdi', 'https://repo.pdi.dev/debian/', 'trixie', 'ABCD1234')
+    ]
+    html = readme.render(readme.environment(None), page)
+    first, own = html.index('/etc/apt/sources.list.d/pdi.sources'), html.index('ex.sources')
+    assert first < own
+    assert 'URIs: https://repo.pdi.dev/debian/' in html and 'ABCD1234' in html

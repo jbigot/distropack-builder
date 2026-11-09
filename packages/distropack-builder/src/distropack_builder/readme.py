@@ -11,7 +11,7 @@ the instructions of one release.
 """
 
 import traceback
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -20,6 +20,7 @@ import jinja2
 
 from distro_releases import Release
 from distropack_builder import targets
+from distropack_builder.config import ExtraRepository, expand
 
 TEMPLATE = 'README.html.j2'
 
@@ -33,6 +34,24 @@ _MANAGERS: dict[targets.Family, Literal['apt', 'dnf', 'zypper']] = {
     'rpm-dnf': 'dnf',
     'rpm-zypper': 'zypper',
 }
+
+
+@dataclass(frozen=True)
+class PageExtra:
+    """A repository of other packages the release's packages depend on, to add first."""
+
+    name: str
+    """Its short name, in its keyring and configuration file names."""
+    url: str
+    """Its URL for this release."""
+    suite: str
+    """Its suite for this release, for deb."""
+    components: tuple[str, ...]
+    """Its components, for deb."""
+    key_url: str | None
+    """The URL of its key, if build.conf gives one."""
+    fingerprint: str
+    """The fingerprint of its key, for its users to check."""
 
 
 @dataclass(frozen=True)
@@ -53,6 +72,8 @@ class PageRelease:
     """The URL of its .repo file, for rpm; None for deb."""
     prerequisites: tuple[tuple[str, str], ...] = ()
     """What a host must enable first, per host family: (host family, shell commands) pairs."""
+    extras: tuple[PageExtra, ...] = ()
+    """The repositories of other packages to add first."""
 
 
 @dataclass(frozen=True)
@@ -86,17 +107,23 @@ class Page:
         name: str,
         description: str,
         releases: Iterable[Release],
+        extras: Sequence[tuple[ExtraRepository, str]] = (),
     ) -> 'Page':
-        """The page of a repository of family at url, for its releases, of one distribution."""
+        """The page of a repository of family at url, for its releases, of one distribution.
+
+        extras are the repositories of other packages its builds use, with their keys'
+        fingerprints, which each release's instructions add first.
+        """
         url = url.rstrip('/')
         listed = sorted(releases, key=str)
         if family == 'deb':
             key_url = f'{url}/{name}-archive-keyring.gpg'
-            rows = [_release(r, url, None) for r in listed]
+            rows = [_release(r, url, None, extras) for r in listed]
         else:
             key_url = f'{url}/{name}.key'
             rows = [
-                _release(r, f'{url}/{r.version}', f'{url}/{r.version}/{name}.repo') for r in listed
+                _release(r, f'{url}/{r.version}', f'{url}/{r.version}/{name}.repo', extras)
+                for r in listed
             ]
         distribution = listed[0].distribution
         return cls(
@@ -112,7 +139,12 @@ class Page:
         )
 
 
-def _release(release: Release, url: str, repo_file: str | None) -> PageRelease:
+def _release(
+    release: Release,
+    url: str,
+    repo_file: str | None,
+    extras: Sequence[tuple[ExtraRepository, str]],
+) -> PageRelease:
     """A release of a page."""
     target = targets.TARGETS.get(release.distribution.id)
     prerequisites = () if target is None else target.prerequisites(release.version or '')
@@ -124,6 +156,17 @@ def _release(release: Release, url: str, repo_file: str | None) -> PageRelease:
         url,
         repo_file,
         prerequisites,
+        tuple(
+            PageExtra(
+                extra.name or f'extra-{index}',
+                expand(extra.url, release),
+                expand(extra.suite, release),
+                extra.components,
+                extra.key_url,
+                fingerprint,
+            )
+            for index, (extra, fingerprint) in enumerate(extras)
+        ),
     )
 
 
