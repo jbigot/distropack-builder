@@ -93,7 +93,8 @@ class Reporter:
             console: where the report goes.
             verbose: whether each build's output is printed as it comes, prefixed with the build,
                 rather than only for the builds that fail.
-            github: whether to report as a GitHub Actions job: one group per build, all printed.
+            github: whether to report as a GitHub Actions job: one group per build, holding its
+                output when it failed or was interrupted, or with verbose.
             summary: the file a GitHub Actions summary table is appended to, if any.
         """
         self._console = console
@@ -173,9 +174,12 @@ class Reporter:
             self._builds.pop(build_logger(package, release).name, None)
             output = self._buffers.pop((package, release), [])
             if self._github:
+                # every build gets its group, in order; only a failed or interrupted one's holds
+                # its output (a cancelled job's log is where a hang shows), unless verbose
                 self._print(f'::group::{line.plain}')
-                for message in output:
-                    self._print(message)
+                if self._verbose or isinstance(outcome, Failed | Interrupted):
+                    for message in output:
+                        self._print(message)
                 self._print('::endgroup::')
             else:
                 self._print(line)

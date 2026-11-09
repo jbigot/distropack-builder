@@ -29,7 +29,7 @@ def test_github_mode() -> None:
 
 def test_groups_do_not_interleave() -> None:
     con, out = console()
-    with Reporter(con, verbose=False, github=True) as reporter:
+    with Reporter(con, verbose=True, github=True) as reporter:
         reporter.started('lib', TRIXIE)
         reporter.started('app', FORKY)
         for i in range(3):
@@ -55,6 +55,34 @@ def test_groups_do_not_interleave() -> None:
         elif line == '::endgroup::':
             depth -= 1
     assert depth == 0
+
+
+def _github_groups(verbose: bool) -> dict[str, list[str]]:
+    """The groups of a GitHub report of one failed and one successful build, by title."""
+    con, out = console()
+    with Reporter(con, verbose=verbose, github=True) as reporter:
+        reporter.started('lib', TRIXIE)
+        reporter.started('app', FORKY)
+        build_logger('lib', TRIXIE).debug('lib line')
+        build_logger('app', FORKY).debug('app line')
+        reporter.finished('app', FORKY, Failed(RuntimeError('boom')))
+        reporter.finished('lib', TRIXIE, Succeeded())
+    groups = re.findall(r'^::group::(.*)\n((?:(?!::).*\n)*)::endgroup::$', out.getvalue(), re.M)
+    return {title: body.splitlines() for title, body in groups}
+
+
+def test_github_group_of_a_success_holds_no_output() -> None:
+    assert _github_groups(verbose=False)[f'built lib on {TRIXIE}'] == []
+
+
+def test_github_group_of_a_failure_holds_its_output() -> None:
+    assert _github_groups(verbose=False)[f'failed app on {FORKY}: boom'] == ['app line']
+
+
+def test_github_verbose_groups_hold_every_output() -> None:
+    groups = _github_groups(verbose=True)
+    assert groups[f'built lib on {TRIXIE}'] == ['lib line']
+    assert groups[f'failed app on {FORKY}: boom'] == ['app line']
 
 
 def test_interrupted_build_closes_its_group() -> None:

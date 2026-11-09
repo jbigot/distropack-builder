@@ -60,6 +60,10 @@ jobs:
 build fails the step, once the releases all of whose builds succeeded are published; to go on
 anyway, set `continue-on-error: true` on the step and read its `failed` output.
 
+The step's log has one group per build, in the order they end: a failed or interrupted build's
+group holds its whole output, a successful one's only its status line. Set `verbose: true` to get
+every build's output.
+
 ## One job per release
 
 The `plan` action lists the releases, so that each gets a job of its own: to spread a large set

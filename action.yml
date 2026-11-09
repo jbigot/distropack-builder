@@ -28,6 +28,10 @@ inputs:
   passphrase:
     description: The passphrase of the signing key; pass it from a secret.
     default: ''
+  verbose:
+    description: >-
+      `true` to print every build's output in its log group, not only the failed builds'.
+    default: 'false'
 outputs:
   failed:
     description: >-
@@ -58,9 +62,11 @@ runs:
       CONFIG: ${{ inputs.config }}
       DISTRIBUTIONS: ${{ inputs.distributions }}
       JOBS: ${{ inputs.jobs }}
+      VERBOSE: ${{ inputs.verbose }}
       DISTROPACK_GPG_PASSPHRASE: ${{ inputs.passphrase }}
     run: |
       . "$GITHUB_ACTION_PATH/action/patterns.sh"
       distribution_options "$DISTRIBUTIONS"
       if [ -n "$JOBS" ]; then options+=(-j "$JOBS"); fi
+      if [ "$VERBOSE" = true ]; then options+=(--verbose); fi
       "$GITHUB_ACTION_PATH/action/run-cli" run "${options[@]}" "$CONFIG"

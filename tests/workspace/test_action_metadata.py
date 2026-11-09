@@ -105,3 +105,33 @@ def test_uv_is_pinned_once() -> None:
                 assert path.name == 'upgrade.yml', path
                 continue
             assert settings.get('version-file') == expected.get(path, '.tool-versions'), path
+
+
+def run_step_arguments(tmp_path: Path, env: dict[str, str]) -> list[str]:
+    """The arguments the build action's run step passes to action/run-cli, with env as its env."""
+    action_path = tmp_path / 'action-path'
+    (action_path / 'action').mkdir(parents=True, exist_ok=True)
+    (action_path / 'action' / 'patterns.sh').write_text(
+        (REPO_ROOT / 'action' / 'patterns.sh').read_text()
+    )
+    stub = action_path / 'action' / 'run-cli'
+    stub.write_text('#!/bin/bash\nprintf "%s\\0" "$@"\n')
+    stub.chmod(0o755)
+    [run] = [step for step in steps(ACTIONS[0]) if step.get('id') == 'run']
+    defaults = {'CONFIG': 'build.conf', 'DISTRIBUTIONS': '', 'JOBS': '', 'VERBOSE': 'false'}
+    out = subprocess.run(
+        ['bash', '-euc', run['run']],
+        env={'PATH': '/usr/bin:/bin', 'GITHUB_ACTION_PATH': str(action_path), **defaults, **env},
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    return out.split('\0')[:-1]
+
+
+def test_verbose_input_reaches_the_cli(tmp_path: Path) -> None:
+    run = [step for step in steps(ACTIONS[0]) if step.get('id') == 'run'][0]
+    assert run['env']['VERBOSE'] == '${{ inputs.verbose }}'
+    assert load(ACTIONS[0])['inputs']['verbose']['default'] == 'false'
+    assert run_step_arguments(tmp_path, {'VERBOSE': 'true'}) == ['run', '--verbose', 'build.conf']
+    assert run_step_arguments(tmp_path, {'VERBOSE': 'false'}) == ['run', 'build.conf']
