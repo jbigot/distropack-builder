@@ -23,6 +23,7 @@ def test_the_distributions() -> None:
         'almalinux',
         'debian',
         'fedora',
+        'opensuse',
         'rhel',
         'rocky',
         'ubuntu',
@@ -85,3 +86,16 @@ def test_suites_follow_the_date(recorded: respx.MockRouter) -> None:
     assert suites(date(2025, 8, 9))['trixie'] == 'stable'
     assert suites(date(2025, 8, 9))['forky'] == 'testing'
     assert 'forky' not in suites(date(2025, 8, 8))
+
+
+def test_opensuse(recorded: respx.MockRouter) -> None:
+    opensuse = distribution('opensuse')
+    assert (opensuse.name, opensuse.os_release_ids, opensuse.id_like) == (
+        'openSUSE',
+        ('opensuse-leap', 'opensuse-tumbleweed'),
+        ('suse',),
+    )
+    releases = {r.version: r for r in opensuse.releases(date(2026, 11, 5))}
+    assert releases['tumbleweed'].is_supported(date(2026, 11, 5))
+    assert releases['tumbleweed'].is_supported(date(2099, 1, 1))
+    assert str(releases['16.0']) == 'openSUSE 16.0'

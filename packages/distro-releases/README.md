@@ -14,6 +14,7 @@ status, from each distribution's own data:
 | AlmaLinux OS | `almalinux` | endoflife.date |
 | Debian GNU/Linux | `debian` | distro-info-data |
 | Fedora | `fedora` | Bodhi, Fedora's update system |
+| openSUSE (Leap from 16.0, and Tumbleweed) | `opensuse` | endoflife.date, and Tumbleweed as a rolling release |
 | Red Hat Enterprise Linux | `rhel` | endoflife.date |
 | Rocky Linux | `rocky` | endoflife.date |
 | Ubuntu | `ubuntu` | distro-info-data |

@@ -21,14 +21,27 @@ def _date(value: str | None) -> date | None:
     return date.fromisoformat(value) if value else None
 
 
+def _order(name: str) -> int:
+    """The order of a release named by its version: the number of a major alone.
+
+    A major alone (RHEL's 10) is its own order; a dotted version (openSUSE Leap's 16.0) gets 0,
+    for the distribution's source to order.
+
+    Raises:
+        ValueError: the name is not a version.
+    """
+    parts = [int(part) for part in name.split('.')]
+    return parts[0] if len(parts) == 1 else 0
+
+
 def _rows(data: dict[str, Any], distribution: Distribution) -> tuple[Row, ...]:
-    """The releases of an endoflife.date product, majors numbered as integers."""
+    """The releases of an endoflife.date product, majors numbered as integers, sorted by order."""
     result = [
         Row(
             version=release['name'],
             codename=None,
             name=release['name'],
-            order=int(release['name']),
+            order=_order(release['name']),
             created=None,
             release_date=_date(release.get('releaseDate')),
             eol_date=_date(release.get('eolFrom')),

@@ -10,6 +10,7 @@ import httpx
 import pytest
 import respx
 
+from distro_releases import distribution
 from distro_releases._http import new_client
 from distro_releases.errors import SourceError
 from distro_releases.model import Distribution, Row
@@ -147,3 +148,22 @@ def test_unexpected_content_is_a_source_error(
     with pytest.raises(SourceError, match='unexpected content') as error:
         rows(distribution)
     assert error.value.url == url
+
+
+def test_opensuse_leap_and_tumbleweed(recorded: respx.MockRouter) -> None:
+    """Leap from 16.0 on, from endoflife.date; Tumbleweed after it, released, never at its end."""
+    opensuse = rows(distribution('opensuse'))
+    assert [row.version for row in opensuse] == ['16.0', 'tumbleweed']
+    leap, tumbleweed = opensuse
+    assert (leap.name, leap.release_date, leap.eol_date) == (
+        '16.0',
+        date(2025, 10, 1),
+        date(2027, 10, 31),
+    )
+    assert leap.cpe == 'cpe:/o:opensuse:leap:16.0'
+    assert (tumbleweed.name, tumbleweed.suite, tumbleweed.eol_date) == (
+        'Tumbleweed',
+        'tumbleweed',
+        None,
+    )
+    assert leap.order < tumbleweed.order

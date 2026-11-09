@@ -38,7 +38,15 @@ def rows(result: Result) -> list[list[str]]:
 
 def test_list_default(recorded: respx.MockRouter) -> None:
     table = rows(invoke())
-    assert {row[0] for row in table} == {'almalinux', 'debian', 'fedora', 'rhel', 'rocky', 'ubuntu'}
+    assert {row[0] for row in table} == {
+        'almalinux',
+        'debian',
+        'fedora',
+        'opensuse',
+        'rhel',
+        'rocky',
+        'ubuntu',
+    }
     assert {row[7] for row in table} == {'supported'}
     assert [
         'debian',
@@ -113,4 +121,4 @@ def test_list_source_down(recorded: respx.MockRouter) -> None:
     assert result.exit_code == 1
     assert BODHI in result.stderr
     distributions = {line.split()[0] for line in result.stdout.splitlines()[1:]}
-    assert distributions == {'almalinux', 'debian', 'rhel', 'rocky', 'ubuntu'}
+    assert distributions == {'almalinux', 'debian', 'opensuse', 'rhel', 'rocky', 'ubuntu'}

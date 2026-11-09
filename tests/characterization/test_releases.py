@@ -53,13 +53,13 @@ def test_distinfo_reproduced(recorded_http: respx.MockRouter, on: date) -> None:
     """Equal to distinfo's snapshot but for the intended differences.
 
     - docker_image is the builder's (distropack_builder.targets);
-    - rhel is new.
+    - rhel is new, and opensuse (Phase 10b).
     """
     expected = json.loads((DATA / f'distinfo-{on}.json').read_text())
     for dist in expected.values():
         del dist['docker_image']
     generated = dump(on)
-    del generated['rhel']
+    del generated['rhel'], generated['opensuse']
     assert generated == expected
 
 

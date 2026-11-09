@@ -17,7 +17,7 @@ from datetime import date
 from distro_releases import _http
 from distro_releases.errors import UnknownDistribution
 from distro_releases.model import Distribution, Release, Row
-from distro_releases.sources import Bodhi, DebianCsv, Endoflife
+from distro_releases.sources import Bodhi, DebianCsv, Endoflife, OpenSuse
 
 RHEL_LIKE = ('rhel', 'centos', 'fedora')
 
@@ -50,6 +50,15 @@ _DISTRIBUTIONS = {
             RHEL_LIKE,
             'cpe:/o:rocky:rocky',
             Endoflife('rocky-linux'),
+        ),
+        Distribution(
+            'opensuse',
+            'openSUSE',
+            ('opensuse-leap', 'opensuse-tumbleweed'),
+            # os-release's ID_LIKE is `suse opensuse`, but for the distribution itself
+            ('suse',),
+            None,
+            OpenSuse(),
         ),
         Distribution('ubuntu', 'Ubuntu', ('ubuntu',), ('debian',), None, DebianCsv()),
     )
