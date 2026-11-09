@@ -19,18 +19,18 @@ RUN apt-get update -y \
     aptly \
     ca-certificates \
     devscripts \
+    diffoscope \
     git \
     gpgv \
-    libwww-perl \
     libfile-dirlist-perl \
     libfile-touch-perl \
     liblwp-protocol-https-perl \
+    libwww-perl \
+    python3-rpm \
+    rpm2cpio \
     sqop \
     tini \
     xz-utils \
-    diffoscope \
-    python3-rpm \
-    rpm2cpio \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/* \
  && git config --system --add safe.directory '*'

@@ -88,6 +88,11 @@ def repack(src: Path, dst: Path, top_dir: str) -> None:
     The members keep their order and metadata; the gzip header holds no time nor file name, so
     that the same input gives the same bytes, whenever and wherever it is repacked.
     """
+    with tarfile.open(src) as listing:
+        tops = {member.name.split('/', 1)[0] for member in listing.getmembers()}
+        loose = [m.name for m in listing.getmembers() if '/' not in m.name and not m.isdir()]
+    if len(tops) != 1 or loose:
+        raise ValueError(f'{src} has no single top-level directory to rename')
     with (
         tarfile.open(src) as source,
         dst.open('wb') as raw,
@@ -97,6 +102,9 @@ def repack(src: Path, dst: Path, top_dir: str) -> None:
         for member in source.getmembers():
             _, _, rest = member.name.partition('/')
             member.name = f'{top_dir}/{rest}' if rest else top_dir
+            if member.islnk():  # a hard link names its target from the archive's root
+                _, _, linked = member.linkname.partition('/')
+                member.linkname = f'{top_dir}/{linked}'
             data = source.extractfile(member) if member.isfile() else None
             target.addfile(member, data)
 

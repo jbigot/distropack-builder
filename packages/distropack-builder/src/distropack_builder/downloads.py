@@ -9,6 +9,8 @@ others. Transient failures (transport errors, timeouts, server errors) are retri
 """
 
 import importlib.metadata
+import os
+import tempfile
 from collections.abc import Iterable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from hashlib import sha256
@@ -66,17 +68,23 @@ def _attempt(client: httpx.Client, url: str, path: Path, cancellation: Cancellat
         raise Cancelled()
     # written aside, then renamed: a file at path is always a complete download, which a directory
     # kept across runs may then reuse
-    partial = path.with_name(path.name + '.part')
+    # a name of its own: two runs sharing a kept directory download apart, and either's rename
+    # wins with the same bytes, the URLs being immutable
+    descriptor, name = tempfile.mkstemp(prefix=f'{path.name}.', suffix='.part', dir=path.parent)
+    partial = Path(name)
     try:
         with client.stream('GET', url) as response:
             response.raise_for_status()
-            with partial.open('wb') as file:
+            with os.fdopen(descriptor, 'wb') as file:
+                descriptor = -1
                 for chunk in response.iter_bytes():
                     if cancellation.cancelled:
                         raise Cancelled()
                     file.write(chunk)
-        partial.rename(path)
+        os.replace(partial, path)
     finally:
+        if descriptor != -1:
+            os.close(descriptor)
         partial.unlink(missing_ok=True)
 
 

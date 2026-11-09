@@ -4,10 +4,12 @@
 
 import _thread
 import importlib.metadata
+import tempfile
 import time
 from collections.abc import Iterator
 from hashlib import sha256
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -167,3 +169,25 @@ def test_interrupted_download_is_not_kept(tmp_path: Path) -> None:
     assert isinstance(fetch(URL, directory=tmp_path)[URL], DownloadFailed)
     assert list(tmp_path.iterdir()) == []
     assert fetch(URL, directory=tmp_path)[URL].read_bytes() == b'data'  # type: ignore[union-attr]
+
+
+def test_concurrent_downloads_do_not_share_their_partial_file(tmp_path: Path) -> None:
+    """Two runs sharing a kept directory write apart, so neither keeps the other's bytes."""
+    names: list[str] = []
+    original = tempfile.mkstemp
+
+    def spy(*args: Any, **kwargs: Any) -> tuple[int, str]:
+        descriptor, name = original(*args, **kwargs)
+        names.append(name)
+        return descriptor, name
+
+    for directory in ('a', 'b'):
+        (tmp_path / directory).mkdir()
+    with respx.mock, pytest.MonkeyPatch.context() as patch:
+        respx.get(URL).respond(200, content=b'data')
+        patch.setattr(tempfile, 'mkstemp', spy)
+        fetch(URL, directory=tmp_path / 'a')
+        fetch(URL, directory=tmp_path / 'b')
+    assert len(names) == 2
+    assert Path(names[0]).name != Path(names[1]).name  # not one fixed .part name
+    assert all(not Path(name).exists() for name in names)

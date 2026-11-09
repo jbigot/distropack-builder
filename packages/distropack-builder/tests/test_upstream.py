@@ -180,3 +180,30 @@ def test_on_branch(history: Path) -> None:
     two = git(history, 'rev-parse', '1.12.0')
     assert upstream.on_branch(history, fix, 'main')
     assert not upstream.on_branch(history, two, 'stable')
+
+
+def test_repack_renames_hard_link_targets(tmp_path: Path) -> None:
+    src = tmp_path / 'src.tar'
+    with tarfile.open(src, 'w') as tar:
+        info = tarfile.TarInfo('pdi-1/a')
+        info.size = 1
+        tar.addfile(info, io.BytesIO(b'A'))
+        link = tarfile.TarInfo('pdi-1/b')
+        link.type, link.linkname = tarfile.LNKTYPE, 'pdi-1/a'
+        tar.addfile(link)
+    dst = tmp_path / 'dst.tar.gz'
+    upstream.repack(src, dst, 'pdi-2')
+    with tarfile.open(dst) as tar:
+        assert tar.getmember('pdi-2/b').linkname == 'pdi-2/a'
+        tar.extractall(tmp_path / 'out', filter='data')
+    assert (tmp_path / 'out' / 'pdi-2' / 'b').read_bytes() == b'A'
+
+
+def test_repack_needs_a_single_top_directory(tmp_path: Path) -> None:
+    src = tmp_path / 'src.tar'
+    with tarfile.open(src, 'w') as tar:
+        for name in ('README', 'x/a', 'y/a'):
+            info = tarfile.TarInfo(name)
+            tar.addfile(info, io.BytesIO(b''))
+    with pytest.raises(ValueError, match='single top-level directory'):
+        upstream.repack(src, tmp_path / 'dst.tar.gz', 'top')
