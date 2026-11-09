@@ -89,11 +89,9 @@ def bake_definition(images_dir: Path, base_image_exists: Callable[[str], bool]) 
             if targets.is_deb(distrib):
                 release_tag = str(release.codename)
                 builder = 'deb_builder'
-            docker_release = release_tag
-            if distrib.id == 'debian' and release.codename != 'rc-buggy':
-                docker_release += '-slim'
+            target = targets.TARGETS[distrib.id]
+            base_image = target.base_image(release_tag)
             name = f'{distrib.id}_builder-{release_tag}'
-            base_image = f'{targets.BASE_IMAGES[distrib.id]}:{docker_release}'
             if not base_image_exists(base_image):
                 print(f'UNAVAILABLE {base_image} for {name}', file=sys.stderr)
                 continue
@@ -110,8 +108,8 @@ def bake_definition(images_dir: Path, base_image_exists: Callable[[str], bool]) 
                 'tags': tags,
                 'args': {
                     'DIST_ID': distrib.id,
-                    'DIST_IMAGE': targets.BASE_IMAGES[distrib.id],
-                    'DIST_RELEASE': docker_release,
+                    'DIST_IMAGE': target.repository,
+                    'DIST_RELEASE': base_image.rpartition(':')[2],
                     'DIST_CODENAME': str(release.codename),
                 },
             }
