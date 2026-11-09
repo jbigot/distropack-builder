@@ -164,16 +164,27 @@ def fingerprint(data: bytes) -> str:
     return str(pysequoia.Cert.from_bytes(data).fingerprint).upper()
 
 
+def armored(data: bytes) -> bytes:
+    """The OpenPGP certificate in data, binary or armored, armored."""
+    return str(pysequoia.Cert.from_bytes(data)).encode()
+
+
 def check_public_key(data: bytes) -> None:
-    """Check that data, binary or armored, is an OpenPGP certificate (a public key).
+    """Check that data, binary or armored, is an OpenPGP certificate (a public key), alone.
 
     Raises:
-        ValueError: it is not one; the message says why.
+        ValueError: it is not one, or it holds secret key material; the message says why.
     """
     try:
         pysequoia.Cert.from_bytes(data)
     except (ValueError, RuntimeError) as error:
         raise ValueError(str(error)) from error
+    try:
+        keys = pysequoia.Tsk.split_bytes(data)
+    except (ValueError, RuntimeError):
+        return
+    if any(_has_secret(key) for key in keys):
+        raise ValueError('it holds a secret key: give the public key alone')
 
 
 def _fingerprint(key: pysequoia.Tsk) -> str:

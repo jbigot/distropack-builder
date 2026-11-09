@@ -56,7 +56,9 @@ deps)
 			zypper --non-interactive addrepo "${extra}"
 		fi
 	done
-	zypper --non-interactive --gpg-auto-import-keys refresh
+	# no automatic key import: an extra repository is trusted with the key build.conf gives it,
+	# and no other
+	zypper --non-interactive refresh
 	zypper --non-interactive dist-upgrade --no-recommends
 	# rpmspec writes `name >= version`; zypper takes `name>=version`
 	mapfile -t requires < <(rpmspec -q --buildrequires /src/*.spec | sed 's/ //g')

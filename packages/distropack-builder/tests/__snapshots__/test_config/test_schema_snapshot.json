@@ -101,6 +101,7 @@
         "name": {
           "anyOf": [
             {
+              "pattern": "^[A-Za-z0-9_-]+$",
               "type": "string"
             },
             {
@@ -108,7 +109,7 @@
             }
           ],
           "default": null,
-          "description": "Its short name, in the file names of its configuration (default: extra-<its index>).",
+          "description": "Its short name, in the file names of its configuration (default: extra-<its index>):\nletters, digits, `_` and `-`, which apt and dnf accept in their file names.",
           "title": "Name"
         },
         "suite": {

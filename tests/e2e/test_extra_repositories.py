@@ -57,11 +57,14 @@ def test_package_from_another_project(
     """hello-ext build-depends on hello-lib, which only the fixture project's repository has."""
     other = project({dist: [release]}, ['hello-ext'])
     signer = Signer.load(other / 'key.gpg', FIXTURE_PASSPHRASE)
-    (other / 'lib.asc').write_bytes(signer.public_key(armored=True))
+    # binary, as an archive keyring is: the builder hands apt an armored copy
+    (other / 'lib.gpg').write_bytes(signer.public_key(armored=False))
     published = fixture_build / 'repositories' / dist
     url = f'file://{published}/' if dist == 'debian' else f'file://{published}/{{version}}'
     conf = yaml.safe_load((other / 'build.conf').read_text())
-    conf['distribs'][dist]['extra_repositories'] = [{'url': url, 'key': 'lib.asc', 'name': 'lib'}]
+    conf['distribs'][dist]['extra_repositories'] = [
+        {'url': url, 'key': 'lib.gpg', 'name': 'lib', 'key_url': 'http://repo.example.invalid/k'}
+    ]
     (other / 'build.conf').write_text(yaml.safe_dump(conf))
     result = run_pkgbuild(other)
     assert result.returncode == 0, result.stdout

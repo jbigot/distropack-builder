@@ -304,7 +304,9 @@ class PackageBuilder:
                 mounts.append(Mount(mirror, Path(url.removeprefix('file://')), read_only=True))
                 url = f'file://{mirror}' + ('/' if url.endswith('/') else '')
             key = f'/extrarepos/{name}.asc'
-            (directory / f'{name}.asc').write_bytes((self._base_dir / extra.key).read_bytes())
+            # armored, whatever the file: apt before 3.0 reads a Signed-By file by its extension
+            armored = signing.armored((self._base_dir / extra.key).read_bytes())
+            (directory / f'{name}.asc').write_bytes(armored)
             if self.family == 'deb':
                 (directory / f'{name}.sources').write_text(
                     f'Types: deb\nURIs: {url}\nSuites: {expand(extra.suite, self.dist_release)}'

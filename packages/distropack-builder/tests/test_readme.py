@@ -218,3 +218,19 @@ def test_extra_repository_listed_first() -> None:
     first, own = html.index('/etc/apt/sources.list.d/pdi.sources'), html.index('ex.sources')
     assert first < own
     assert 'URIs: https://repo.pdi.dev/debian/' in html and 'ABCD1234' in html
+
+
+def test_extra_key_saved_under_its_url_name() -> None:
+    trixie = Release(
+        distribution('debian'), '13', 'trixie', '13 (Trixie)', 13, 'stable', None, None, None, None
+    )
+    extra = ExtraRepository(
+        url='https://repo.pdi.dev/debian/',
+        key=Path('pdi.gpg'),
+        key_url='https://repo.pdi.dev/debian/pdidev-archive-keyring.gpg',
+        name='pdi',
+    )
+    page = readme.Page.of('deb', 'https://x/debian', 'ex', 'Ex', [trixie], [(extra, 'ABCD')])
+    html = readme.render(readme.environment(None), page)
+    assert '-o /usr/share/keyrings/pdidev-archive-keyring.gpg https://repo.pdi.dev/' in html
+    assert 'Signed-By: /usr/share/keyrings/pdidev-archive-keyring.gpg' in html

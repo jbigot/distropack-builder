@@ -31,9 +31,11 @@ distribs:
 - `url` is the whole repository for the Debian family, a release's directory for the rpm families;
   `{codename}`, `{version}` and `{suite}` are replaced from each release. `suite` (default
   `{codename}`) and `components` (default `[main]`) are the Debian family's.
-- `key` is mandatory: every extra repository is signature-checked, by apt (`Signed-By`) and by dnf
-  and zypper (`gpgcheck`, `repo_gpgcheck`). The key is read from the project, never downloaded
-  during a build.
+- `key` is mandatory, a public key, armored or binary: every extra repository is
+  signature-checked, by apt (`Signed-By`), dnf and zypper (`gpgcheck`, `repo_gpgcheck`), with that
+  key and no other. The key is read from the project, never downloaded during a build.
+- `key_url` is mandatory when the distribution's repository has a `url`, since its page tells its
+  users to download the key from it. `name`, in file names, takes letters, digits, `_` and `-`.
 - The builds install from it with the network they have while installing build dependencies, never
   while building. The project's own packages win over an extra repository's: a package the project
   builds itself is the one its other packages are built against.

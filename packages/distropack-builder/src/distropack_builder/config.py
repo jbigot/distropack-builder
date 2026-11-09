@@ -149,8 +149,9 @@ class ExtraRepository(_Model):
     key_url: str | None = None
     """The URL its users download that key from, for the page."""
 
-    name: str | None = None
-    """Its short name, in the file names of its configuration (default: extra-<its index>)."""
+    name: Annotated[str, Field(pattern=r'^[A-Za-z0-9_-]+$')] | None = None
+    """Its short name, in the file names of its configuration (default: extra-<its index>):
+    letters, digits, `_` and `-`, which apt and dnf accept in their file names."""
 
     suite: str = '{codename}'
     """The suite of a Debian family repository, a template as url."""
@@ -246,6 +247,11 @@ def load(path: Path) -> BuildConfig:
         for index, extra in enumerate(distrib.extra_repositories):
             where = f'{path}: distribs.{dist_id}.extra_repositories.{index}'
             _check_extra(where, root, targets.is_deb(targets.target(dist_id)), extra)
+            if distrib.repository.url is not None and extra.key_url is None:
+                raise ConfigError(
+                    f'{where}: key_url: the repository page tells its users to download this key'
+                    ' from it; give it, or no repository.url'
+                )
     for name in parsed.packages:
         _check_packaging(path, root, name)
     return BuildConfig(distribs=parsed.distribs, packages=parsed.packages, root=root)
@@ -281,6 +287,8 @@ def _check_extra(where: str, root: Path, deb: bool, extra: ExtraRepository) -> N
     try:
         signing.check_public_key(data)
     except ValueError as error:
+        if 'secret key' in str(error):
+            raise ConfigError(f'{where}.key: {key} holds a secret key: {error}') from error
         raise ConfigError(f'{where}.key: {key} is not an OpenPGP public key: {error}') from error
 
 

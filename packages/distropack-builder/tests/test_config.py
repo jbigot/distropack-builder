@@ -280,3 +280,28 @@ def test_expand_per_release() -> None:
         config.expand('https://x/{codename}/{version}/{suite}', trixie)
         == 'https://x/trixie/13/stable'
     )
+
+
+def test_extra_repository_key_must_not_be_secret(tmp_path: Path) -> None:
+    secret = str(pysequoia.Tsk.generate('Secret <secret@example.invalid>')).encode()
+    conf = write_extra(tmp_path, 'debian', '{url: "https://x/", key: key.asc}', key=secret)
+    with pytest.raises(ConfigError, match='holds a secret key'):
+        config.load(conf)
+
+
+def test_extra_repository_name_is_a_file_name(tmp_path: Path) -> None:
+    extra = '{url: "https://x/", key: key.asc, name: "my repo"}'
+    conf = write_extra(tmp_path, 'debian', extra, key=public_key())
+    with pytest.raises(ConfigError, match='extra_repositories.0.name'):
+        config.load(conf)
+
+
+def test_extra_repository_needs_key_url_for_a_published_page(tmp_path: Path) -> None:
+    (tmp_path / 'key.asc').write_bytes(public_key())
+    conf = tmp_path / 'build.conf'
+    conf.write_text(
+        'distribs: {debian: {repository: {url: "https://example.org/debian"},'
+        ' extra_repositories: [{url: "https://x/", key: key.asc}]}}\npackages: {}\n'
+    )
+    with pytest.raises(ConfigError, match='key_url'):
+        config.load(conf)

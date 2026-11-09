@@ -50,6 +50,8 @@ class PageExtra:
     """Its components, for deb."""
     key_url: str | None
     """The URL of its key, if build.conf gives one."""
+    key_file: str
+    """The file name to save the key as: its URL's, whose extension tells apt how to read it."""
     fingerprint: str
     """The fingerprint of its key, for its users to check."""
 
@@ -163,6 +165,7 @@ def _release(
                 expand(extra.suite, release),
                 extra.components,
                 extra.key_url,
+                extra.key_url.rsplit('/', 1)[-1] if extra.key_url else f'{extra.name}.asc',
                 fingerprint,
             )
             for index, (extra, fingerprint) in enumerate(extras)

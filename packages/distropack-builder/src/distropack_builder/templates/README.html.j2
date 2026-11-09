@@ -28,13 +28,13 @@ with <a href="{{ page.key_url }}">its key</a>.</p>
 <p>First, the repository of the packages these depend on, {{ extra.name }}, signed by the key of
 fingerprint <code>{{ extra.fingerprint }}</code>:</p>
 {% if page.family == 'deb' -%}
-<pre><code>{% if extra.key_url %}sudo curl -fsSL -o /usr/share/keyrings/{{ extra.name }}.asc {{ extra.key_url }}
+<pre><code>{% if extra.key_url %}sudo curl -fsSL -o /usr/share/keyrings/{{ extra.key_file }} {{ extra.key_url }}
 {% endif %}sudo tee /etc/apt/sources.list.d/{{ extra.name }}.sources &lt;&lt;'EOF'
 Types: deb
 URIs: {{ extra.url }}
 Suites: {{ extra.suite }}
 Components: {{ extra.components | join(' ') }}
-Signed-By: /usr/share/keyrings/{{ extra.name }}.asc
+Signed-By: /usr/share/keyrings/{{ extra.key_file }}
 EOF</code></pre>
 {% elif page.package_manager == 'zypper' -%}
 <pre><code>{% if extra.key_url %}sudo rpm --import {{ extra.key_url }}

@@ -26,6 +26,7 @@ import yaml
 from typer.testing import CliRunner
 
 from distro_releases import Release, distribution
+from distropack_builder import builders as builders_module
 from distropack_builder.bake import PROTOCOL
 from distropack_builder.context import BuildContext
 from distropack_builder.docker import Cancellation, Cancelled, ContainerFailed, RunResult
@@ -975,7 +976,9 @@ def add_extra(project: Path, dist: str, url: str) -> None:
     signer = Signer.load(project / 'key.gpg', FIXTURE_PASSPHRASE)
     (project / 'extra.asc').write_bytes(signer.public_key(armored=True))
     conf = yaml.safe_load((project / 'build.conf').read_text())
-    conf['distribs'][dist]['extra_repositories'] = [{'url': url, 'key': 'extra.asc', 'name': 'pdi'}]
+    conf['distribs'][dist]['extra_repositories'] = [
+        {'url': url, 'key': 'extra.asc', 'name': 'pdi', 'key_url': 'https://repo.pdi.dev/pdi.asc'}
+    ]
     (project / 'build.conf').write_text(yaml.safe_dump(conf))
 
 
@@ -1038,3 +1041,33 @@ def test_file_extra_repository_is_mounted(run_main: Callable[..., int], tmp_path
     assert deps.targets['/extramirrors/pdi'].source == mirror
     assert deps.targets['/extramirrors/pdi'].read_only
     assert 'URIs: file:///extramirrors/pdi/\n' in sources[0]
+
+
+def test_binary_extra_key_is_written_armored(run_main: Callable[..., int]) -> None:
+    """apt before 3.0 reads a Signed-By file by its extension: the .asc must be armored."""
+    seen: dict[str, bytes] = {}
+
+    def prepare(project: Path) -> None:
+        add_extra(project, dist='debian', url='https://repo.pdi.dev/debian/')
+        signer = Signer.load(project / 'key.gpg', FIXTURE_PASSPHRASE)
+        (project / 'extra.asc').write_bytes(signer.public_key(armored=False))
+
+    def respond(call: Call) -> RunResult | None:
+        if call.is_deps:
+            seen['key'] = (call.targets['/extrarepos'].source / 'pdi.asc').read_bytes()
+        return tools_respond(call)
+
+    assert (
+        run_main(FakeRunner(respond), {'debian': ['trixie']}, ['hello-undeclared'], prepare=prepare)
+        == 0
+    )
+    assert seen['key'].startswith(b'-----BEGIN PGP PUBLIC KEY BLOCK-----')
+
+
+def test_zypper_deps_trusts_only_the_configured_keys() -> None:
+    """--gpg-auto-import-keys would trust whatever key an extra repository presents."""
+    entrypoint = (
+        Path(builders_module.__file__).parent / 'images' / 'zypper_builder' / 'entrypoint'
+    ).read_text()
+    deps = entrypoint[entrypoint.index('deps)') : entrypoint.index('build)')]
+    assert '--gpg-auto-import-keys' not in deps
