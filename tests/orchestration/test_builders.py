@@ -12,7 +12,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable, Iterator
-from datetime import date
+from datetime import UTC, date, datetime
 from functools import partial
 from pathlib import Path
 from types import ModuleType
@@ -22,7 +22,9 @@ import httpx
 import pysequoia
 import pytest
 import respx
+import time_machine
 import yaml
+from debian.changelog import Changelog
 from typer.testing import CliRunner
 
 from distro_releases import Release, distribution
@@ -1071,3 +1073,32 @@ def test_zypper_deps_trusts_only_the_configured_keys() -> None:
     ).read_text()
     deps = entrypoint[entrypoint.index('deps)') : entrypoint.index('build)')]
     assert '--gpg-auto-import-keys' not in deps
+
+
+@pytest.mark.parametrize(
+    ('now', 'tz'),
+    [
+        (datetime(2026, 11, 9, 12, tzinfo=UTC), 'UTC'),
+        (datetime(2031, 1, 1, tzinfo=UTC), 'Asia/Tokyo'),
+    ],
+)
+def test_generated_entry_dated_from_the_packaging(
+    run_main: Callable[..., int], monkeypatch: pytest.MonkeyPatch, now: datetime, tz: str
+) -> None:
+    """The rebuild's entry: the base version, dated as the packaging's top entry, any clock."""
+    monkeypatch.setenv('TZ', tz)
+    entries: list[tuple[str, str | None]] = []
+
+    def respond(call: Call) -> RunResult | None:
+        if call.is_deps:
+            (source,) = [d for d in call.targets['/src'].source.iterdir() if d.is_dir()]
+            (top, *_) = Changelog((source / 'debian' / 'changelog').read_text())
+            entries.append((str(top.version), top.date))
+        return tools_respond(call)
+
+    packaged = Changelog(
+        (FIXTURE_PROJECT / 'hello-undeclared' / 'debian' / 'changelog').read_text()
+    )
+    with time_machine.travel(now, tick=False):
+        assert run_main(FakeRunner(respond), {'debian': ['trixie']}, ['hello-undeclared']) == 0
+    assert entries == [(f'{packaged.version}~bpo13', packaged.date)]

@@ -63,8 +63,9 @@ to Debian and Fedora, or by disabling a package for some releases in `build.conf
   releases after or before them ({source}`test_supported
   <packages/distro-releases/tests/test_selectors.py>`, {source}`test_after_and_before
   <packages/distro-releases/tests/test_selectors.py>`).
-- Each release gets its own version of the same changelog entry ({source}`test_versioned_release
-  <packages/distropack-builder/tests/test_versions.py>`).
+- Each release gets its own version of the same changelog entry ({source}`test_deb_base_version
+  <packages/distropack-builder/tests/test_versions.py>`), and a rebuild sorts after the build it
+  replaces ({source}`test_rebuilds_increase <packages/distropack-builder/tests/test_versions.py>`).
 - A package is left out of the releases `build.conf` disables for it ({source}`test_disabled
   <tests/orchestration/test_selection.py>`).
 

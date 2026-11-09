@@ -11,6 +11,7 @@ members = ["packages/*"]
 dev = [
     "distro-releases",
     "distropack-builder",
+    "hypothesis",
     "mypy",
     "pre-commit",
     "pytest",

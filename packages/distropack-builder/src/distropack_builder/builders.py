@@ -14,7 +14,6 @@ import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence, Set
 from configparser import ConfigParser
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from os import link
 from pathlib import Path
 from shutil import copy2, copytree, rmtree
@@ -23,7 +22,7 @@ from typing import Any, ClassVar, Literal
 from urllib.parse import urlparse
 
 import jinja2
-from debian.changelog import Changelog, format_date
+from debian.changelog import Changelog
 from debian.deb822 import Deb822, _PkgRelationMixin
 
 from distro_releases import Release
@@ -40,7 +39,7 @@ from distropack_builder.rpmquery import SpecFailed, SpecInfo
 from distropack_builder.scheduler import Succeeded, schedule
 from distropack_builder.signing import Signer
 from distropack_builder.uscan import OrigFiles, fetch_origs
-from distropack_builder.versions import deb_version
+from distropack_builder.versions import deb_base_version, deb_version
 
 # The files a build needs downloaded: each URL's file, or why it could not be.
 Files = Mapping[str, Path | DownloadFailed]
@@ -404,17 +403,18 @@ class DebPackageBuilder(PackageBuilder):
         else:
             raise ValueError(f'unsupported deb source format: {self._format}')
 
-        # the rebuild's own changelog entry
+        # the rebuild's own changelog entry, versioned and dated from the packaging alone, so that
+        # the same inputs give the same package (dpkg derives SOURCE_DATE_EPOCH from this date)
         changelog.new_block(
             package=changelog.package,
             version=deb_version(
-                str(changelog.version), changelog.date, self.dist_release, datetime.now(UTC)
+                deb_base_version(str(changelog.version), self.dist_release.version), 0
             ),
             distributions=release_codename,
             urgency=changelog.urgency,
             changes=['  * Rebuild for ' + str(self.dist_release)],
             author=self._gpg.uid,
-            date=format_date(),
+            date=changelog.date,
         )
         with (debian_dir / 'changelog').open('w') as raw_changelog:
             changelog.write_to_open_file(raw_changelog)

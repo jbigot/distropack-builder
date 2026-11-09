@@ -55,18 +55,22 @@ upstream version gets its own name for it from `mk-origtargz`, run in its direct
 The builds run in dependency order, `-j` of them at once. When one fails, every build that depends
 on it, directly or not, is skipped without running; the builds independent of it go on.
 
-Each build adds an entry to its package's changelog, for deb, whose version sorts the rebuild where
-it belongs:
+Each build adds an entry to its package's changelog, for deb, whose version sorts the build where
+it belongs, and whose date is that of the packaging's own top entry, never the clock's: the same
+inputs give the same version and the same `SOURCE_DATE_EPOCH`.
 
 ```text
-<version>~bpo<release version>.pdidev.<seconds>
+<version>~bpo<release version>[+b<rebuild>]
 ```
 
 The `~bpo<release version>` part, absent for a release without a version (Debian's sid), sorts the
-rebuild before `<version>` itself, and the rebuild for a release before the rebuild for a later
-one: upgrading a system to the next release upgrades the package too. The last part counts the
-seconds from the changelog entry's date to the build, so that a later rebuild of the same entry
-sorts after an earlier one.
+build before `<version>` itself, and the build for a release before the build for a later one:
+upgrading a system to the next release upgrades the package too, as the official backports do. A
+rebuild of the same version, its build dependencies having changed, adds a binNMU's `+b<n>`, and
+an rpm's release gains `.<n>`; the number comes from what a release keeps of its last build
+(Phase 12's state), 0 until then. A snapshot of an upstream branch takes its upstream version from
+the commit, `<last tag>+main.<commits since>.g<hash>`, with the epoch raised above the
+changelog's ({source}`versions.py <packages/distropack-builder/src/distropack_builder/versions.py>`).
 
 Ctrl-C and SIGTERM (`kill`, `timeout`, a cancelled CI job) take the same path: no build or download
 starts any more, the containers of the builds running are killed, nothing is published, the run's
