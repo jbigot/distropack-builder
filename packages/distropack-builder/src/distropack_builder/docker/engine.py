@@ -6,6 +6,7 @@
 
 import os
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -69,6 +70,11 @@ class Engine:
         except docker.errors.ImageNotFound:
             return False
         return True
+
+    def remove_image(self, reference: str) -> None:
+        """Remove the image reference, if the engine has it."""
+        with suppress(docker.errors.ImageNotFound):
+            self.client.images.remove(reference, force=True)
 
     def user(self, as_root: bool) -> str | None:
         """The user a container runs as on this engine (see `container_user`)."""

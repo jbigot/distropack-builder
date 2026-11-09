@@ -28,6 +28,10 @@ inputs:
   passphrase:
     description: The passphrase of the signing key; pass it from a secret.
     default: ''
+  check-reproducible:
+    description: >-
+      `true` to build every package twice, varied, and fail the packages whose files differ.
+    default: 'false'
   download-dir:
     description: >-
       Where to keep the downloaded sources from run to run (with `actions/cache`, say), relative
@@ -69,6 +73,7 @@ runs:
       JOBS: ${{ inputs.jobs }}
       VERBOSE: ${{ inputs.verbose }}
       DOWNLOAD_DIR: ${{ inputs.download-dir }}
+      CHECK_REPRODUCIBLE: ${{ inputs.check-reproducible }}
       DISTROPACK_GPG_PASSPHRASE: ${{ inputs.passphrase }}
     run: |
       . "$GITHUB_ACTION_PATH/action/patterns.sh"
@@ -76,4 +81,5 @@ runs:
       if [ -n "$JOBS" ]; then options+=(-j "$JOBS"); fi
       if [ "$VERBOSE" = true ]; then options+=(--verbose); fi
       if [ -n "$DOWNLOAD_DIR" ]; then options+=(--download-dir "$DOWNLOAD_DIR"); fi
+      if [ "$CHECK_REPRODUCIBLE" = true ]; then options+=(--check-reproducible); fi
       "$GITHUB_ACTION_PATH/action/run-cli" run "${options[@]}" "$CONFIG"

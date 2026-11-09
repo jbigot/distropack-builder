@@ -1,0 +1,13 @@
+Source: hello-unreproducible
+Section: misc
+Priority: optional
+Maintainer: distropack test <test@example.invalid>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+
+Package: hello-unreproducible
+Architecture: all
+Depends: ${misc:Depends}
+Description: package of the distropack-builder test fixture that must fail
+ Its build writes the time into its package, which no second build can reproduce.

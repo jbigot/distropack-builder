@@ -14,6 +14,7 @@ data are fetched.
 - [How a run is organized](architecture.md)
 - [Containers and engines](containers.md)
 - [How packages and repositories are signed](signing.md)
+- [Reproducible builds](reproducibility.md)
 
 ```{toctree}
 :hidden:
@@ -22,4 +23,5 @@ why
 architecture
 containers
 signing
+reproducibility
 ```

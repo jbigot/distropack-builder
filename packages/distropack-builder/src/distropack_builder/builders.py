@@ -35,12 +35,20 @@ from distropack_builder.docker import ContainerFailed, Mount, RunResult
 from distropack_builder.downloads import DownloadFailed, fetch_all, source_name
 from distropack_builder.graph import closure, dependencies
 from distropack_builder.publication import published
-from distropack_builder.report import Reporter, build_logger
+from distropack_builder.report import Reporter, Unreproducible, build_logger
 from distropack_builder.rpmquery import SpecFailed, SpecInfo
 from distropack_builder.scheduler import Succeeded, schedule
 from distropack_builder.signing import Signer
 from distropack_builder.uscan import OrigFiles, fetch_origs
 from distropack_builder.versions import deb_base_version, deb_version
+
+# The host name of the build containers, the same in every run.
+BUILD_HOSTNAME = 'builder'
+# The package files reproducibility is checked on; .changes and .buildinfo record the build.
+PACKAGE_FILES = ('.deb', '.rpm', '.dsc')
+# How many differing files of a build diffoscope reports on.
+DIFFOSCOPE_REPORTS = 3
+
 
 # The files a build needs downloaded: each URL's file, or why it could not be.
 Files = Mapping[str, Path | DownloadFailed]
@@ -252,13 +260,17 @@ class PackageBuilder:
         build_args: Sequence[str] = (),
         deps_mounts: Sequence[Mount],
         build_mounts: Sequence[Mount],
+        outputs: str,
         env: Mapping[str, str] | None = None,
     ) -> None:
         """Build in two containers of the release's builder image, as sbuild and mock do.
 
         The first installs the build dependencies, with the engine's default network, and is
         committed to a temporary image; the second builds from that image, with no network, as
-        the archives' builders do. The temporary image is removed after it, failed or not.
+        the archives' builders do, its host name fixed. The temporary image is removed after it,
+        failed or not. Checking reproducibility, a third container builds again from the same
+        image, varied, into another directory than build_mounts' outputs one, and the packages of
+        both are compared (Unreproducible).
         """
         # the builder image's name and tag, unique: distropack-build/fedora_builder-<id>:44-p3
         name, _, tag = builder_image(self.dist_release).partition(':')
@@ -292,15 +304,101 @@ class PackageBuilder:
         if (buildenv / 'unchanged').exists():
             self.unchanged = True
             return
-        run(
+        check = self._context.check_reproducible
+        try:
+            run(
+                self._context.engine,
+                temporary,
+                ['build', *build_args],
+                mounts=build_mounts,
+                network=False,
+                remove_image=not check,
+                hostname=BUILD_HOSTNAME,
+                **common,
+            )
+        except BaseException:
+            if check and self._context.engine is not None:
+                self._context.engine.remove_image(temporary)
+            raise
+        if check:
+            self._check_reproducible(temporary, build_args, build_mounts, outputs, common)
+
+    def _check_reproducible(
+        self,
+        image: str,
+        build_args: Sequence[str],
+        build_mounts: Sequence[Mount],
+        outputs: str,
+        common: Mapping[str, Any],
+    ) -> None:
+        """Build again from image, varied, and compare the packages of both builds.
+
+        What must not matter varies, as reprotest varies it: the umask, the time zone, the locale,
+        the parallelism, the time (a later start), and for deb the build path and the host name:
+        rpm records both in every package (the build host, and the spec expanded in the source
+        rpm), by design, and its archives' builders fix them, as mock's /builddir.
+
+        Raises:
+            Unreproducible: a package file differs, or one build made a package the other did not.
+        """
+        first = next(m.source for m in build_mounts if m.target == outputs)
+        second = self._context.workdir / f'{self.name}.{self.dist_release.uid}.again'
+        second.mkdir()
+        mounts = [m if m.target != outputs else Mount(outputs, second) for m in build_mounts]
+        jobs = [arg for arg in build_args if not arg.startswith('-j')]
+        varied_jobs = (
+            ['-j1' if self._context.jobs > 1 else '-j2'] if len(jobs) < len(build_args) else []
+        )
+        deb = self.family == 'deb'
+        env = {
+            **(common.get('env') or {}),
+            'TZ': 'Pacific/Kiritimati',
+            'LC_ALL': 'C.UTF-8',
+            'DISTROPACK_UMASK': '0002',
+            **({'DISTROPACK_BUILD_PATH': '/tmp/varied/build'} if deb else {}),
+        }
+        self._context.run(
             self._context.engine,
-            temporary,
-            ['build', *build_args],
-            mounts=build_mounts,
+            image,
+            ['build', *jobs, *varied_jobs],
+            mounts=mounts,
             network=False,
             remove_image=True,
-            **common,
+            hostname=f'{BUILD_HOSTNAME}-again' if deb else BUILD_HOSTNAME,
+            **{**common, 'env': env},
         )
+        packages = {
+            path.name
+            for directory in (first, second)
+            for path in directory.iterdir()
+            if path.is_file() and path.name.endswith(PACKAGE_FILES)
+        }
+        differing = sorted(
+            name
+            for name in packages
+            if not (first / name).is_file()
+            or not (second / name).is_file()
+            or (first / name).read_bytes() != (second / name).read_bytes()
+        )
+        if differing:
+            # its reports go to the build's output, shown with the failure: each differing pair,
+            # since one difference often follows from another (a binary rpm records its source
+            # rpm's digest)
+            pairs = [n for n in differing if (first / n).is_file() and (second / n).is_file()]
+            for name in pairs[:DIFFOSCOPE_REPORTS]:
+                self._context.run(
+                    self._context.engine,
+                    REGISTRY + tool_image(DEB_TOOLS),
+                    ['diffoscope', '--text', '-', f'/first/{name}', f'/second/{name}'],
+                    mounts=[
+                        Mount('/first', first, read_only=True),
+                        Mount('/second', second, read_only=True),
+                    ],
+                    check=False,
+                    cancellation=self._context.cancellation,
+                    logger=self.logger,
+                )
+            raise Unreproducible(differing)
 
     def _extra_mounts(self) -> list[Mount]:
         """The configuration of the extra repositories in /extrarepos, and their file:// trees.
@@ -451,6 +549,7 @@ class DebPackageBuilder(PackageBuilder):
             build_args=[f'-j{self._context.jobs}', '-sa', f'-P{profiles}'],
             deps_mounts=[Mount('/src', pkg_dir), Mount('/localrepo', localrepo)],
             build_mounts=[Mount('/src', pkg_dir)],
+            outputs='/src',
             env={'DH_VERBOSE': '1', 'DISTROPACK_BUILD_PROFILES': profiles},
         )
         rmtree(localrepo)
@@ -528,6 +627,7 @@ class RpmPackageBuilder(PackageBuilder):
                 Mount('/localrepo', localrepo / version(self.dist_release), read_only=True),
             ],
             build_mounts=[Mount('/src', pkg_dir, read_only=True), Mount('/output', outdir)],
+            outputs='/output',
         )
         rmtree(localrepo)
 
@@ -668,6 +768,14 @@ class DebRepoBuilder:
                 )
                 if self._sign:
                     self._sign_release(self._output_dir / 'dists' / distribution / 'Release')
+        # the .buildinfo beside its .dsc, which aptly does not publish: the environment a package
+        # was built in, for anyone to rebuild it there
+        for pkg in pkgs:
+            assert pkg.outdir is not None
+            for buildinfo in pkg.outdir.glob('*.buildinfo'):
+                for dsc in pkg.outdir.glob('*.dsc'):
+                    for in_pool in (self._output_dir / 'pool').rglob(dsc.name):
+                        copy2(buildinfo, in_pool.parent / buildinfo.name)
 
     def _sign_release(self, release: Path) -> None:
         """Write Release.gpg and InRelease beside release, whose trailing spaces go first.

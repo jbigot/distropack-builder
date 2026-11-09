@@ -33,6 +33,7 @@ class Call:
     commit_to: str | None = None
     remove_image: bool = False
     commit_unless: Path | None = None
+    hostname: str | None = None
 
     @property
     def targets(self) -> dict[str, Mount]:
@@ -96,6 +97,7 @@ class FakeRunner:
         commit_to: str | None = None,
         remove_image: bool = False,
         commit_unless: Path | None = None,
+        hostname: str | None = None,
     ) -> RunResult:
         call = Call(
             image,
@@ -108,9 +110,14 @@ class FakeRunner:
             commit_to,
             remove_image,
             commit_unless,
+            hostname,
         )
         self.calls.append(call)
-        return self.respond(call) or RunResult(0, '', '')
+        result = self.respond(call) or RunResult(0, '', '')
+        # as the runner streams a container's output to its logger
+        for line in result.output.splitlines():
+            (logger or logging.getLogger('distropack_builder.docker')).debug('%s', line)
+        return result
 
 
 def answer_queries(call: Call) -> None:

@@ -24,8 +24,11 @@ bgrun() {
 	wait "$!"
 }
 
+# Where the source is built: /tmp/src, or elsewhere when a reproducibility check varies it.
+SRC=/tmp/src
+
 source_dir() {
-	find /tmp/src/ -mindepth 1 -maxdepth 1 -type d
+	find "${SRC}/" -mindepth 1 -maxdepth 1 -type d
 }
 
 # With /buildenv mounted, what the dependency container installed, sorted, in /buildenv/installed:
@@ -88,18 +91,25 @@ deps)
 	chown -R builder:builder /tmp/src
 	;;
 build)
+	umask "${DISTROPACK_UMASK:-022}"
+	if [ -n "${DISTROPACK_BUILD_PATH:-}" ]
+	then
+		mkdir -p "$(dirname "${DISTROPACK_BUILD_PATH}")"
+		mv /tmp/src "${DISTROPACK_BUILD_PATH}"
+		SRC=${DISTROPACK_BUILD_PATH}
+	fi
 	cd "$(source_dir)"
 	# the build itself as an unprivileged user, as the archives build: packaging that needs root
 	# fails
 	bgrun setpriv --reuid=builder --regid=builder --init-groups \
 		env HOME=/home/builder dpkg-buildpackage -rfakeroot "$@"
-	chown -R "$(stat -c '%u:%g' /src)" /tmp/src
-	if [ -e /tmp/src/.binnmu ]
+	chown -R "$(stat -c '%u:%g' /src)" "${SRC}"
+	if [ -e "${SRC}/.binnmu" ]
 	then
-		find /tmp/src -maxdepth 1 -type f \( -name '*.deb' -o -name '*.buildinfo' -o -name '*.changes' \) \
+		find "${SRC}" -maxdepth 1 -type f \( -name '*.deb' -o -name '*.buildinfo' -o -name '*.changes' \) \
 			-execdir mv -t /src -- '{}' '+'
 	else
-		find /tmp/src -maxdepth 1 -type f -execdir mv -t /src -- '{}' '+'
+		find "${SRC}" -maxdepth 1 -type f -execdir mv -t /src -- '{}' '+'
 	fi
 	;;
 *)

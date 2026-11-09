@@ -18,6 +18,7 @@ One guide per task.
 - [Use distro-releases from Python](use-distro-releases.md)
 - [Run with rootless Docker or Podman](rootless.md)
 - [Rotate the signing key](rotate-key.md)
+- [Check that your packages build reproducibly](reproducible.md)
 
 ```{toctree}
 :hidden:
@@ -32,4 +33,5 @@ build-images
 use-distro-releases
 rootless
 rotate-key
+reproducible
 ```

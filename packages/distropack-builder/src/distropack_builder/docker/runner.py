@@ -169,6 +169,7 @@ def run(
     commit_to: str | None = None,
     remove_image: bool = False,
     commit_unless: Path | None = None,
+    hostname: str | None = None,
 ) -> RunResult:
     """Run image with args in a new container, and remove it.
 
@@ -190,6 +191,7 @@ def run(
         commit_to: the reference of an image to commit the container to, once it exited 0.
         commit_unless: a host path whose existence, once the container exited, cancels that
             commit (a container saying there is nothing more to do with it).
+        hostname: the container's host name, the engine's choice otherwise.
         remove_image: whether to remove image once the container is removed, whatever happened:
             a temporary image, such as one commit_to made.
 
@@ -214,6 +216,7 @@ def run(
             network=network,
             commit_to=commit_to,
             commit_unless=commit_unless,
+            hostname=hostname,
         )
     finally:
         if remove_image:
@@ -237,6 +240,7 @@ def _run(
     network: bool,
     commit_to: str | None,
     commit_unless: Path | None,
+    hostname: str | None,
 ) -> RunResult:
     """run, but for the removal of its image."""
     if cancellation.cancelled:
@@ -257,6 +261,7 @@ def _run(
         security_opt=['label=disable'],
         pids_limit=-1,
         network_mode=None if network else 'none',
+        hostname=hostname,
         labels={LABEL.split('=')[0]: LABEL.split('=')[1]},
     )
     try:

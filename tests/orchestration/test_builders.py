@@ -1187,3 +1187,89 @@ def test_known_environment_builds_nothing(
     assert not [c for c in runner.calls if c.is_build]
     assert under.unchanged and under.env_key == known
     assert list(under.outdir.iterdir()) == []  # no package: the stored ones stand
+
+
+def reproducibility(differ: set[str] | None = None) -> Callable[[Call], RunResult | None]:
+    """Builders writing the same packages twice, but the files of differ in the second build."""
+    builds: list[int] = [0]
+
+    def respond(call: Call) -> RunResult | None:
+        if call.is_build:
+            builds[0] += 1
+            out = call.targets.get('/output', call.targets['/src']).source
+            for name in ('hello-undeclared_1.0~bpo13_all.deb', 'hello-undeclared_1.0~bpo13.dsc'):
+                content = name.encode()
+                if builds[0] == 2 and differ and name in differ:
+                    content += b' differs'
+                (out / name).write_bytes(content)
+            # a .buildinfo records the build: it may differ, and is not compared
+            (out / 'hello-undeclared_1.0~bpo13_amd64.buildinfo').write_text(f'build {builds[0]}\n')
+            return None
+        if call.args[:1] == ('diffoscope',):
+            return RunResult(1, '--- a/x.deb\n+++ b/x.deb\n│ -x\n│ +x differs\n', '')
+        return tools_respond(call)
+
+    return respond
+
+
+def test_check_reproducible_builds_twice_varied(run_main: Callable[..., int]) -> None:
+    runner = FakeRunner(reproducibility())
+    status = run_main(runner, {'debian': ['trixie']}, ['hello-undeclared'], '--check-reproducible')
+    assert status == 0
+    first, second = [c for c in runner.calls if c.is_build]
+    assert first.image == second.image
+    assert not first.remove_image and second.remove_image
+    assert first.hostname == 'builder' and second.hostname != 'builder'
+    varied = {k: v for k, v in second.env.items() if first.env.get(k) != v}
+    assert set(varied) >= {'TZ', 'LC_ALL', 'DISTROPACK_UMASK', 'DISTROPACK_BUILD_PATH'}
+    assert first.args != second.args  # -j
+
+
+def test_unreproducible_package_fails(
+    run_main: Callable[..., int], capsys: pytest.CaptureFixture[str]
+) -> None:
+    runner = FakeRunner(reproducibility({'hello-undeclared_1.0~bpo13_all.deb'}))
+    status = run_main(runner, {'debian': ['trixie']}, ['hello-undeclared'], '--check-reproducible')
+    assert status == 1
+    out = capsys.readouterr().out
+    assert (
+        'unreproducible hello-undeclared on Debian GNU/Linux 13 (Trixie):'
+        ' hello-undeclared_1.0~bpo13_all.deb' in out
+    )
+    assert '+x differs' in out  # diffoscope's report, in the failed build's output
+    diffoscopes = [c for c in runner.calls if c.args[:1] == ('diffoscope',)]
+    assert [c.args[-1] for c in diffoscopes] == ['/second/hello-undeclared_1.0~bpo13_all.deb']
+    assert diffoscopes[0].image.endswith('/deb_tools:p' + str(PROTOCOL))
+
+
+def test_differing_buildinfo_alone_passes(run_main: Callable[..., int]) -> None:
+    runner = FakeRunner(reproducibility())
+    status = run_main(runner, {'debian': ['trixie']}, ['hello-undeclared'], '--check-reproducible')
+    assert status == 0
+    assert not [c for c in runner.calls if c.args[:1] == ('diffoscope',)]
+
+
+def test_build_has_a_fixed_host_name_and_no_host_variable(run_main: Callable[..., int]) -> None:
+    runner = FakeRunner(tools_respond)
+    assert run_main(runner, {'debian': ['trixie']}, ['hello-undeclared']) == 0
+    (build,) = [c for c in runner.calls if c.is_build]
+    assert build.hostname == 'builder'
+    assert set(build.env) == {'DH_VERBOSE', 'DISTROPACK_BUILD_PROFILES'}
+
+
+def test_rpm_check_keeps_the_host_name(run_main: Callable[..., int]) -> None:
+    """rpm records the build host in every package: varying it would make none reproducible."""
+
+    def respond(call: Call) -> RunResult | None:
+        if call.is_build:
+            out = call.targets['/output'].source
+            (out / 'hello-undeclared-1.0-1.fc44.noarch.rpm').write_bytes(RPM)
+            return None
+        return tools_respond(call)
+
+    runner = FakeRunner(respond)
+    status = run_main(runner, {'fedora': ['44']}, ['hello-undeclared'], '--check-reproducible')
+    assert status == 0
+    first, second = [c for c in runner.calls if c.is_build]
+    assert first.hostname == second.hostname == 'builder'
+    assert 'DISTROPACK_BUILD_PATH' not in second.env  # the source rpm records the spec expanded

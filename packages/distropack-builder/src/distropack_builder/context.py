@@ -34,6 +34,7 @@ class Runner(Protocol):
         commit_to: str | None = None,
         remove_image: bool = False,
         commit_unless: Path | None = None,
+        hostname: str | None = None,
     ) -> RunResult:
         """Run image with args in a new container, and remove it (see docker.run)."""
         ...
@@ -49,6 +50,7 @@ class BuildContext:
         cancellation: what cancels the run: its containers, and its downloads.
         workdir: the directory of the run's temporary files, removed when the run ends.
         jobs: how many builds run at once, and the parallelism of each.
+        check_reproducible: whether each build runs twice, varied, its packages compared.
     """
 
     engine: Engine
@@ -56,3 +58,4 @@ class BuildContext:
     cancellation: Cancellation
     workdir: Path
     jobs: int
+    check_reproducible: bool = False

@@ -228,6 +228,7 @@ def make_app(
         passphrase: str | None,
         docker_host: str | None,
         download_dir: Path | None = None,
+        check_reproducible: bool = False,
     ) -> tuple[bool, dict[str, str]]:
         """Build and publish; whether anything failed, and the repositories by distribution id."""
         # One date for the whole run, so that a run crossing midnight sees one list of releases.
@@ -268,7 +269,9 @@ def make_app(
 
         with ExitStack() as stack:
             workdir = Path(stack.enter_context(TemporaryDirectory(prefix='distropack-build.')))
-            context = BuildContext(engine, runner, Cancellation(), workdir, jobs)
+            context = BuildContext(
+                engine, runner, Cancellation(), workdir, jobs, check_reproducible
+            )
             summary = os.environ.get('GITHUB_STEP_SUMMARY')
             reporter = stack.enter_context(
                 Reporter(
@@ -331,6 +334,15 @@ def make_app(
                 " Docker context, Docker's socket, then Podman's).",
             ),
         ] = None,
+        check_reproducible: Annotated[
+            bool,
+            typer.Option(
+                '--check-reproducible',
+                help='Build every package twice, varying what must not matter (build path, host'
+                ' name, umask, time zone, locale, parallelism, time), and fail the packages whose'
+                " files differ, with diffoscope's report.",
+            ),
+        ] = False,
         download_dir: Annotated[
             Path | None,
             typer.Option(
@@ -358,6 +370,7 @@ def make_app(
                     read_passphrase(passphrase_file, os.environ),
                     docker_host,
                     download_dir,
+                    check_reproducible,
                 )
         except typer.Exit:
             _write_outputs_once_stopped(stopped)

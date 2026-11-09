@@ -30,3 +30,4 @@ packages:
   hello-needs-root: {}
   hello-needs-network: {}
   hello-ext: {}
+  hello-unreproducible: {}

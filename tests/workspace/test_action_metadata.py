@@ -124,6 +124,7 @@ def run_step_arguments(tmp_path: Path, env: dict[str, str]) -> list[str]:
         'JOBS': '',
         'VERBOSE': 'false',
         'DOWNLOAD_DIR': '',
+        'CHECK_REPRODUCIBLE': 'false',
     }
     out = subprocess.run(
         ['bash', '-euc', run['run']],
@@ -146,3 +147,8 @@ def test_verbose_input_reaches_the_cli(tmp_path: Path) -> None:
 def test_download_dir_input_reaches_the_cli(tmp_path: Path) -> None:
     args = run_step_arguments(tmp_path, {'DOWNLOAD_DIR': 'cache/sources'})
     assert args == ['run', '--download-dir', 'cache/sources', 'build.conf']
+
+
+def test_check_reproducible_input_reaches_the_cli(tmp_path: Path) -> None:
+    args = run_step_arguments(tmp_path, {'CHECK_REPRODUCIBLE': 'true'})
+    assert args == ['run', '--check-reproducible', 'build.conf']

@@ -94,8 +94,16 @@ deps)
 	;;
 build)
 	set -x
+	umask "${DISTROPACK_UMASK:-022}"
+	top=/tmp/build
+	if [ -n "${DISTROPACK_BUILD_PATH:-}" ]
+	then
+		mkdir -p "$(dirname "${DISTROPACK_BUILD_PATH}")"
+		mv /tmp/build "${DISTROPACK_BUILD_PATH}"
+		top=${DISTROPACK_BUILD_PATH}
+	fi
 	setpriv --reuid=builder --regid=builder --init-groups env HOME=/home/builder rpmbuild \
-		--define "_topdir    /tmp/build" \
+		--define "_topdir    ${top}" \
 		--define "_tmppath   %{_topdir}" \
 		--define "_builddir  %{_topdir}/BUILD" \
 		--define "_sourcedir /tmp/src" \

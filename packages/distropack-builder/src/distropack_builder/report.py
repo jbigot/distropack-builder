@@ -12,7 +12,7 @@ becomes one collapsed group of the job's log, and the summary a table of the job
 
 import logging
 import threading
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import TracebackType
 from typing import Self
@@ -30,6 +30,15 @@ ROOT = 'distropack_builder'
 type Build = tuple[str, Release]
 
 
+class Unreproducible(Exception):
+    """A build whose second, varied run made different packages."""
+
+    def __init__(self, files: Sequence[str]) -> None:
+        """The failure of a build whose files differ between its two runs."""
+        super().__init__(', '.join(files))
+        self.files = list(files)
+
+
 def build_logger(package: str, release: Release) -> logging.Logger:
     """The logger of the build of package for release."""
     return logging.getLogger(f'{ROOT}.build.{release.uid}.{package}')
@@ -45,6 +54,8 @@ def status(outcome: Outcome) -> tuple[str, str | None]:
     match outcome:
         case Succeeded():
             return 'built', None
+        case Failed(Unreproducible() as error):
+            return 'unreproducible', str(error)
         case Failed(error):
             return 'failed', str(error) or type(error).__name__
         case Skipped(because):

@@ -109,3 +109,11 @@ def test_tampered_repository_is_refused(fixture_build: Path, tmp_path: Path, dis
     signed.write_text(signed.read_text().replace(old, new))
     result = install(dist, repository)
     assert result.returncode != 0, result.stdout
+
+
+@pytest.mark.e2e
+@pytest.mark.parametrize('dist', ['debian', 'ubuntu'])
+def test_buildinfo_published_beside_the_dsc(fixture_build: Path, dist: str) -> None:
+    pool = fixture_build / 'repositories' / dist / 'pool'
+    for dsc in pool.rglob('*.dsc'):
+        assert list(dsc.parent.glob('*.buildinfo')), dsc
