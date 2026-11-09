@@ -159,6 +159,26 @@ def _signer(key: pysequoia.Tsk, passphrase: str | None) -> pysequoia.PySigner:
         return pysequoia.Tsk.from_bytes(fixed).signer(None)
 
 
+def verify_detached(data: bytes, signature: bytes, keyring: bytes) -> str:
+    """The fingerprint of the key of keyring whose valid signature of data signature is.
+
+    Raises:
+        ValueError: signature is not a valid one of data by a key of keyring.
+    """
+    try:
+        certificates = pysequoia.Cert.split_bytes(keyring)
+        result = pysequoia.verify(
+            bytes=data,
+            store=lambda ids: certificates,
+            signature=pysequoia.Sig.from_bytes(signature),
+        )
+    except (ValueError, RuntimeError) as error:
+        raise ValueError(str(error)) from error
+    if not result.valid_sigs:
+        raise ValueError('no valid signature')
+    return str(result.valid_sigs[0].certificate).upper()
+
+
 def fingerprint(data: bytes) -> str:
     """The fingerprint of the OpenPGP certificate in data, 40 upper-case hexadecimal digits."""
     return str(pysequoia.Cert.from_bytes(data).fingerprint).upper()

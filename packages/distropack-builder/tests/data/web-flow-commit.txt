@@ -1,0 +1,25 @@
+tree 6f9c82dd30e659b369f99d3cc39b6a4056ed6029
+parent df4f4f68e83c55f4365c8b120da375ea6336746e
+author JAuriac <56091659+JAuriac@users.noreply.github.com> 1793954143 +0100
+committer GitHub <noreply@github.com> 1793954143 +0100
+gpgsig -----BEGIN PGP SIGNATURE-----
+ 
+ wsFcBAABCAAQBQJq7ZFgCRC1aQ7uu5UhlAAAvNsQAIsOa8xzjKolDWRfnkGQVvP9
+ ck+F4JW1k5dJikVGF63q8LvrUI5pmK8poDpPcdjlm6A786fcWGjD1psHDBI9nBCS
+ QUvzmi8CPHTbT14WcT3fsPmz9FDP/eo7crMHskQHTVAkCm+gqnx38gtbl8dLDaXs
+ jQbaW47FtGvRybM7E63M8CZhaecLLR1PkuanA9sAhjhbX4r5rpS/yMABXxcCnWuz
+ dkcZxDZX5AF3yPCKn50NZDZA8COzJfxd8JfSoaA6UfrX0GxfFVXjebHsMq7UkiLH
+ 67AJXe4lb/dJYcefY1yZXTjCL85BHxoldRyqrceRWDS/tJFa1bSSZRCX5DFv2may
+ 1sDk+ENJvI/hxCjuyochkRbY+L5X6e2FhSCOLzObPCA8C4wCK+YHNGJ8Bgrk8qO0
+ FfiXIhcN+/wu2nwSIRxQxNheOGq2l4gobQE+/BlC1R/WWos+mz9/+UXAETCFB3qb
+ YgnXkyJ0ecrbqM5qHHPUe0Hau468nIJ79ExaToS7mVzql7iaugCA8uFoHD4LlPX6
+ EfM5oGg6rOe0KU+R0yYTXvKT/j1t88uNmosJSis1Y3iTl5+pnGZiW8IjSwEq8mKF
+ dn/Ym+RTRdO7voCFxl4xT0bXnBy7OvnRDbYlFt+0lFsLFv5XkRbZ8Ve91hAu7PAo
+ pt652xs0naC5/RdBRyfn
+ =OSpa
+ -----END PGP SIGNATURE-----
+ 
+
+Fix #737, with random_init of distribution_safe_integral (#738)
+
+* Fix #737, with random_init of distribution_safe_integral
