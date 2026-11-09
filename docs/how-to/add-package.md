@@ -62,6 +62,10 @@ start, and the builds that depend on them are skipped:
   `debian/upstream/signing-key.asc` holds the upstream's key, as Debian checks it. Such a tarball
   needs no line.
 
+A deb upstream tarball that several packages share (same `debian/watch`, same upstream version)
+is downloaded once, named after one of them: its line is matched by its digest, whatever name it
+gives the file.
+
 `distropack-build sources build.conf <package>…` downloads what each package's builds need and
 writes its `sources` file. Run it when an upstream version changes, check the new lines (the
 release announcement may give the digest), and commit them with the new version. A line for a file

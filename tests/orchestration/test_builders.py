@@ -651,8 +651,8 @@ def add_quilt_package(project: Path, name: str, version: str) -> None:
     (target / 'debian' / 'watch').write_text((project / 'hello-lib/debian/watch').read_text())
     for spec in target.glob('*.spec'):
         spec.unlink()
-    # hello-lib's line is copied; the fake uscan writes a placeholder for any other upstream
-    placeholder = hashlib.sha512(f'{name} {version}\n'.encode()).hexdigest()
+    # hello-lib's line is copied; the fake uscan writes a placeholder for another version
+    placeholder = hashlib.sha512(f'hello-lib {version}\n'.encode()).hexdigest()
     with (target / 'sources').open('a') as lines:
         lines.write(f'SHA512 ({name}-{version}.tar.gz) = {placeholder}\n')
     conf = yaml.safe_load((project / 'build.conf').read_text())
@@ -785,7 +785,7 @@ def test_unlisted_source_fails_the_package_only(
     out = capsys.readouterr().out
     assert (
         'failed hello-lib on Debian GNU/Linux 13 (Trixie): while downloading hello-lib-1.0.tar.gz:'
-        ' hello-lib-1.0.tar.gz does not match its sources line' in out
+        ' hello-lib-1.0.tar.gz matches no line of the sources file' in out
     )
 
 
@@ -865,3 +865,69 @@ def test_sources_unknown_package(
     result = CliRunner().invoke(app, ['sources', str(project / 'build.conf'), 'nosuch'])
     assert result.exit_code == 2
     assert 'nosuch is not a package of' in result.stderr
+
+
+def test_sources_of_one_member_of_a_shared_download(
+    cli: ModuleType,
+    recorded_http: respx.MockRouter,
+    frozen: date,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """sources run for one package alone suits a run where another downloads their tarball.
+
+    hello-lib2 shares hello-lib's watch file and version; its tarball is named after whichever
+    package runs uscan, hello-lib in a full run, hello-lib2 when sources runs for it alone.
+    """
+    project = make_project(tmp_path / 'project', ORIG_BASE, {'debian': ['trixie']}, ['hello-lib'])
+    add_quilt_package(project, 'hello-lib2', '1.0')
+    (project / 'hello-lib2' / 'sources').unlink()
+    monkeypatch.chdir(project)
+    env = {'DISTROPACK_GPG_PASSPHRASE': FIXTURE_PASSPHRASE}
+    app = cli.make_app(runner=FakeRunner(tools_respond), connect=lambda host: cast(Any, None))
+    result = CliRunner().invoke(app, ['sources', 'build.conf', 'hello-lib2'], env=env)
+    assert result.exit_code == 0, result.output
+    assert 'hello-lib2-1.0.tar.gz' in (project / 'hello-lib2' / 'sources').read_text()
+    runner = FakeRunner(tools_respond)
+    app = cli.make_app(runner=runner, connect=lambda host: cast(Any, None))
+    result = CliRunner().invoke(app, ['run', 'build.conf'], env=env)
+    assert result.exit_code == 0, result.output
+    assert uscan_calls(runner)[0].workdir == '/project/hello-lib'
+
+
+def test_sources_says_when_a_package_downloads_nothing(
+    cli: ModuleType,
+    recorded_http: respx.MockRouter,
+    frozen: date,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    versions = {'debian': ['trixie'], 'fedora': ['44']}
+    make_project(tmp_path / 'project', ORIG_BASE, versions, ['hello-lib', 'hello-app'])
+    monkeypatch.chdir(tmp_path / 'project')
+    app = cli.make_app(runner=FakeRunner(tools_respond), connect=lambda host: cast(Any, None))
+    result = CliRunner().invoke(app, ['sources', '-D', 'fedora', 'build.conf', 'hello-app'])
+    assert result.exit_code == 0, result.output
+    assert 'hello-app downloads nothing for the releases selected' in result.stderr
+
+
+def test_sources_query_failure_is_a_message(
+    cli: ModuleType,
+    recorded_http: respx.MockRouter,
+    frozen: date,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    make_project(tmp_path / 'project', ORIG_BASE, {'fedora': ['44']}, ['hello-lib'])
+    monkeypatch.chdir(tmp_path / 'project')
+
+    def respond(call: Call) -> RunResult | None:
+        if call.args[:1] == ('query',):
+            raise ContainerFailed(125, [call.image], output='manifest unknown\n')
+        return tools_respond(call)
+
+    app = cli.make_app(runner=FakeRunner(respond), connect=lambda host: cast(Any, None))
+    result = CliRunner().invoke(app, ['sources', 'build.conf', 'hello-lib'])
+    assert result.exit_code == 1, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert 'hello-lib:' in result.stderr

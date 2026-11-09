@@ -273,7 +273,9 @@ def make_app(
             )
             for release, reason in unpublished.items():
                 reporter.release_failed(release, reason)
-            failed = run_builds(context, reporter, loaded, selected, disabled, signer_for)
+            failed = run_builds(
+                context, reporter, loaded, selected, disabled, signer_for, set(unpublished)
+            )
         return failed or bool(unpublished), output_dirs
 
     @app.command()
@@ -388,8 +390,11 @@ def make_app(
             context = BuildContext(engine, runner, Cancellation(), Path(workdir), jobs)
             failures = write_sources(context, loaded, selected, disabled, packages)
         for name, failure in failures.items():
-            typer.echo(f'{PROG}: {name}: {failure}', err=True)
-        if failures:
+            if failure is None:
+                typer.echo(f'{PROG}: {name} downloads nothing for the releases selected', err=True)
+            else:
+                typer.echo(f'{PROG}: {name}: {failure}', err=True)
+        if any(failure is not None for failure in failures.values()):
             raise typer.Exit(1)
 
     @images.command('bake-file')

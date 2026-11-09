@@ -106,18 +106,23 @@ def host_path(call: Call, path: str) -> Path:
 def answer_uscan(call: Call) -> None:
     """Download the upstream tarball as uscan does: the file, and the orig symlink to it.
 
-    The package and its upstream version are its changelog's; the file holds the fixture's
-    tarball of that upstream if there is one, a placeholder otherwise.
+    The file is named after the package running uscan, as the GitHub watch files of the docs name
+    it (@PACKAGE@), and holds what the watch file's upstream, upstream/<name>.git, has at the
+    changelog's version: the fixture's tarball of <name>-<version> if there is one, a placeholder
+    `<name> <version>` otherwise.
     """
     package, version = changelog_version(call)
+    assert call.workdir is not None
+    watch = (host_path(call, call.workdir) / 'debian' / 'watch').read_text()
+    (upstream_name,) = re.findall(r'upstream/([^/\s]+)\.git', watch)
     destdir = host_path(call, call.args[call.args.index('--destdir') + 1])
     destdir.mkdir(parents=True, exist_ok=True)
     upstream = destdir / f'{package}-{version}.tar.gz'
-    tree = Path(__file__).parent / 'e2e' / 'project' / 'upstream' / f'{package}-{version}'
+    tree = Path(__file__).parent / 'e2e' / 'project' / 'upstream' / f'{upstream_name}-{version}'
     if tree.is_dir():
         write_tarball(tree, upstream)
     else:
-        upstream.write_bytes(f'{package} {version}\n'.encode())
+        upstream.write_bytes(f'{upstream_name} {version}\n'.encode())
     (destdir / f'{package}_{version}.orig.tar.gz').symlink_to(upstream.name)
 
 

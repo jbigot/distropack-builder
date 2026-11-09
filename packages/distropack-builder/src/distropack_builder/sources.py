@@ -64,6 +64,16 @@ def read(package_dir: Path) -> dict[str, str]:
     return result
 
 
+def check_any(name: str, path: Path, expected: Mapping[str, str]) -> DownloadFailed | None:
+    """Why the file at path matches no line of expected, whatever the name; None when one does.
+
+    For a deb upstream tarball, named after whichever package of a shared download ran uscan.
+    """
+    if _digest(path) not in expected.values():
+        return DownloadFailed(name, f'{name} matches no line of the sources file')
+    return None
+
+
 def check(name: str, path: Path, expected: Mapping[str, str]) -> DownloadFailed | None:
     """Why the file at path, named name, is not what expected lists for it; None when it is."""
     if name not in expected:

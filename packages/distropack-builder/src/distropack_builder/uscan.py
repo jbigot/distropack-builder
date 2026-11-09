@@ -68,7 +68,9 @@ def origin(package_dir: Path) -> Origin:
 def verified(package_dir: Path) -> bool:
     """Whether uscan checks the upstream signature of the package's tarball."""
     debian = package_dir / 'debian'
-    watch = (debian / 'watch').read_text()
+    # a line commented out checks nothing
+    lines = (debian / 'watch').read_text().splitlines()
+    watch = '\n'.join(line for line in lines if not line.lstrip().startswith('#'))
     return bool(_CHECKED.search(watch)) and (debian / 'upstream' / 'signing-key.asc').is_file()
 
 

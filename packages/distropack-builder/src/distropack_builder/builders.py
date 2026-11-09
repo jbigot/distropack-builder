@@ -30,7 +30,7 @@ from distropack_builder import readme, repodata, rpmquery, sources, targets
 from distropack_builder.bake import DEB_TOOLS, PROTOCOL, REGISTRY, tool_image
 from distropack_builder.config import BuildConfig, Distrib
 from distropack_builder.context import BuildContext
-from distropack_builder.docker import Mount, RunResult
+from distropack_builder.docker import ContainerFailed, Mount, RunResult
 from distropack_builder.downloads import DownloadFailed, fetch_all, source_name
 from distropack_builder.graph import closure, dependencies
 from distropack_builder.publication import published
@@ -296,7 +296,7 @@ class DebPackageBuilder(PackageBuilder):
     def _check_own_downloads(self, expected: Mapping[str, str]) -> None:
         """The upstream tarball matches its sources line, unless uscan verified its signature."""
         if isinstance(self.orig, OrigFiles) and not self.orig.verified:
-            mismatch = sources.check(self.orig.upstream.name, self.orig.upstream, expected)
+            mismatch = sources.check_any(self.orig.upstream.name, self.orig.upstream, expected)
             if mismatch is not None:
                 raise mismatch
 
@@ -691,8 +691,13 @@ def run_builds(
     selected: Mapping[str, Set[Release]],
     disabled: Mapping[str, Set[Release]],
     signer_for: Callable[[Distrib], Signer],
+    unbuilt: Set[Release] = frozenset(),
 ) -> bool:
-    """Download, build and publish; whether any build or publication did not succeed."""
+    """Download, build and publish; whether any build or publication did not succeed.
+
+    unbuilt are releases failed before any build (their builder image is missing): their
+    repositories are left as they were, and stay listed, as those of the releases whose builds fail.
+    """
     builders: list[PackageBuilder] = []
     repo_builders: list[tuple[str, DebRepoBuilder | RpmRepoBuilder, list[PackageBuilder]]] = []
     root = config.root
@@ -770,6 +775,7 @@ def run_builds(
     failed = any(not isinstance(outcome, Succeeded) for outcome in outcomes.values())
     for dist_id, repo_builder, dist_builders in repo_builders:
         kept = {b.dist_release for b in dist_builders} - releases
+        kept |= {r for r in unbuilt if r.distribution.id == dist_id}
         try:
             failures = {
                 str(release): error
@@ -791,7 +797,7 @@ def write_sources(
     selected: Mapping[str, Set[Release]],
     disabled: Mapping[str, Set[Release]],
     names: Sequence[str],
-) -> dict[str, DownloadFailed]:
+) -> dict[str, DownloadFailed | None]:
     """Write the sources file of each package named: the line of each file its builds download.
 
     The deb upstream tarball comes from uscan; the rpm sources are those the spec names in the
@@ -799,7 +805,8 @@ def write_sources(
     downloads nothing gets no file.
 
     Returns:
-        The packages whose sources could not all be downloaded, and why; theirs is not written.
+        The packages whose sources could not all be downloaded, and why (theirs is not written),
+        and the packages that download nothing for the releases selected, with None.
     """
     root = config.root
     files: dict[str, dict[str, Path]] = {name: {} for name in names}
@@ -827,11 +834,15 @@ def write_sources(
             releases = sorted(selected[dist_id] - disabled[name], key=lambda r: r.uid)
             if not releases or not RpmPackageBuilder.applies(root, name):
                 continue
-            spec = rpmquery.query(
-                context,
-                REGISTRY + builder_image(releases[0]),
-                {name: RpmPackageBuilder.spec_file(root, name)},
-            )[name]
+            try:
+                spec = rpmquery.query(
+                    context,
+                    REGISTRY + builder_image(releases[0]),
+                    {name: RpmPackageBuilder.spec_file(root, name)},
+                )[name]
+            except ContainerFailed as error:
+                failures[name] = DownloadFailed(name, f'its spec could not be read: {error}')
+                continue
             if isinstance(spec, SpecFailed):
                 failures[name] = DownloadFailed(name, spec.message)
                 continue
@@ -851,8 +862,13 @@ def write_sources(
                 failures.setdefault(name, file)
             else:
                 files[name][source_name(url)] = file
+    result: dict[str, DownloadFailed | None] = dict(failures)
     for name in names:
-        if name not in failures and files[name]:
-            lines = [sources.line(file, path) for file, path in sorted(files[name].items())]
-            (root / name / sources.FILE).write_text(''.join(f'{line}\n' for line in lines))
-    return failures
+        if name in failures:
+            continue
+        if not files[name]:
+            result[name] = None
+            continue
+        lines = [sources.line(file, path) for file, path in sorted(files[name].items())]
+        (root / name / sources.FILE).write_text(''.join(f'{line}\n' for line in lines))
+    return result

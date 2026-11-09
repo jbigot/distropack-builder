@@ -411,3 +411,17 @@ def test_registry_error_fails_the_run(project: Path, unpublished: set[str]) -> N
     assert 'cannot tell whether the registry publishes' in result.output
     assert 'no builder image' not in result.output
     assert not runner.calls
+
+
+def test_unpublished_release_stays_on_the_page(
+    project: Path, unpublished: set[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A release failed for its missing image stays listed on the page, as a failed build does."""
+    unpublished.add('bookworm-p2')
+    release = project / 'repositories' / 'debian' / 'dists' / 'bookworm' / 'Release'
+    release.parent.mkdir(parents=True)
+    release.write_text('Codename: bookworm\n')
+    result, _ = run_with_bookworm(project, monkeypatch)
+    assert result.exit_code == 1, result.output
+    page = (project / 'repositories' / 'debian' / 'index.html').read_text()
+    assert 'Bookworm' in page and 'Trixie' in page
