@@ -112,7 +112,7 @@ jobs:
         zypper_builder)
           check='rpmbuild --version && zypper --version && test -x /entrypoint && rpm -E %dist && grep -q /buildenv /entrypoint' ;;
         deb_tools)
-          check='aptly version && uscan --version && mk-origtargz --help > /dev/null' ;;
+          check='aptly version && uscan --version && mk-origtargz --help > /dev/null && diffoscope --version && zstd --version' ;;
         rpm_sign)
           check='rpmsign --help > /dev/null && gpg --version && test -x /usr/local/bin/sign' ;;
         *)

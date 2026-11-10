@@ -11,8 +11,9 @@ VOLUME /project
 VOLUME /downloads
 
 # aptly; uscan and mk-origtargz (devscripts), with what they need to download over HTTPS, check
-# upstream signatures, read git repositories and repack tarballs. The project is mounted read-only
-# and owned by whoever runs the engine: git may read any repository in it.
+# upstream signatures, read git repositories and repack tarballs; diffoscope, with what it needs to
+# look into debs (zstd for Ubuntu's) and rpms. The project is mounted read-only and owned by
+# whoever runs the engine: git may read any repository in it.
 RUN apt-get update -y \
  && apt-get dist-upgrade -y \
  && apt-get install -y --no-install-recommends \
@@ -31,6 +32,7 @@ RUN apt-get update -y \
     sqop \
     tini \
     xz-utils \
+    zstd \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/* \
  && git config --system --add safe.directory '*'
