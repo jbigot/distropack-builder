@@ -208,9 +208,8 @@ class Reporter:
             if self._progress is not None and self._task is not None:
                 self._progress.advance(self._task)
 
-    def release_failed(self, release: Release, reason: str) -> None:
-        """No build of release can run: the registry does not publish its builder image."""
-        message = f'no builder image for {release}: {reason}'
+    def release_failed(self, release: Release, message: str) -> None:
+        """No build of release can run, as message says (its builder image, its fallback)."""
         with self._lock:
             if self._github:
                 self._print(f'::error::{message}')

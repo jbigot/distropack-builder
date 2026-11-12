@@ -233,6 +233,7 @@ def make_app(
         state_dir: Path | None = None,
         publish: bool = True,
         build_packages: bool = True,
+        channel: str | None = None,
     ) -> tuple[bool, dict[str, str]]:
         """Build and publish; whether anything failed, and the repositories by distribution id."""
         if not build_packages and not publish:
@@ -244,6 +245,8 @@ def make_app(
         # The configuration's errors, the release data and the images available come before any
         # work; then the engine, before any container.
         loaded, selected = _selection(build_conf, patterns, on)
+        if channel is not None and channel not in loaded.channels:
+            _fail(2, ValueError(f'unknown channel {channel}'))
         # publishing from lasting states publishes every configured release, whatever -D selects
         all_releases = (
             _selection(build_conf, [], on)[1] if patterns and publish and state_dir else None
@@ -302,7 +305,7 @@ def make_app(
                 )
             )
             for release, reason in unpublished.items():
-                reporter.release_failed(release, reason)
+                reporter.release_failed(release, f'no builder image for {release}: {reason}')
             failed = run_builds(
                 context,
                 reporter,
@@ -316,6 +319,7 @@ def make_app(
                 publish=publish,
                 build=build_packages,
                 all_releases=all_releases,
+                channel=channel or loaded.release_channel,
             )
         return failed or bool(unpublished), output_dirs
 
@@ -403,6 +407,14 @@ def make_app(
                 ' release of build.conf that has one.',
             ),
         ] = False,
+        channel: Annotated[
+            str | None,
+            typer.Option(
+                '--channel',
+                metavar='NAME',
+                help="The channel to build (default: build.conf's release channel).",
+            ),
+        ] = None,
     ) -> None:
         """Builds the packages of build.conf, and publishes their signed repositories."""
         # SIGTERM (kill, timeout, a CI job cancelled) takes the path of Ctrl-C: the builds are
@@ -424,6 +436,7 @@ def make_app(
                     state_dir,
                     not no_publish,
                     not publish_only,
+                    channel,
                 )
         except typer.Exit:
             _write_outputs_once_stopped(stopped)

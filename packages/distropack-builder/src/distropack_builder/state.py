@@ -27,8 +27,6 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 # version) until its version is bumped: the bump needs its own migration of the stored keys.
 KEY_VERSION = 1
 SCHEMA = 1
-# The channel of the releases until there are others (Phase 13): the state's first path component.
-RELEASE_CHANNEL = 'stable'
 MANIFEST = 'manifest.json'
 
 

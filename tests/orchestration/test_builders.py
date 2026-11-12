@@ -10,6 +10,7 @@ import importlib
 import re
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -40,11 +41,20 @@ from distropack_builder.scheduler import Interrupted, Reused, schedule
 from distropack_builder.signing import Signer
 from distropack_builder.uscan import OrigFiles
 from fake_runner import INSTALLED, Call, FakeRunner, StopBuild, tools_respond
-from support import FIXTURE_PASSPHRASE, FIXTURE_PROJECT, make_project, write_tarball
+from support import (
+    FIXTURE_PASSPHRASE,
+    FIXTURE_PROJECT,
+    add_upstream_commit,
+    make_project,
+    write_tarball,
+)
 
 REGISTRY = 'ghcr.io/jbigot/distropack-builder/'
 ORIG_BASE = 'https://orig.test'
 HELLO_LIB_ORIG = f'{ORIG_BASE}/hello-lib-1.0.tar.gz'
+
+# The release channel of build.conf without channels:.
+STABLE = 'stable'
 
 
 def release(dist: str, name: str, on: date) -> Release:
@@ -88,9 +98,13 @@ def builder(builders: ModuleType, context: BuildContext, rel: Release) -> Any:
     """The fixture project's builder of hello-app for rel."""
     signer = Signer.load(FIXTURE_PROJECT / 'key.gpg', FIXTURE_PASSPHRASE)
     if builders.targets.is_deb(rel.distribution):
-        return builders.DebPackageBuilder(context, rel, FIXTURE_PROJECT, signer, 'hello-app')
+        return builders.DebPackageBuilder(
+            context, rel, FIXTURE_PROJECT / 'hello-app', signer, 'hello-app', channel=STABLE
+        )
     spec = SpecInfo(frozenset({'hello-lib'}), frozenset({'hello-app'}), (), '1.0', '1.fc44')
-    return builders.RpmPackageBuilder(context, rel, FIXTURE_PROJECT, signer, 'hello-app', spec=spec)
+    return builders.RpmPackageBuilder(
+        context, rel, FIXTURE_PROJECT / 'hello-app', signer, 'hello-app', channel=STABLE, spec=spec
+    )
 
 
 def build(builders: ModuleType, context: BuildContext, rel: Release) -> None:
@@ -1265,7 +1279,7 @@ def fixture_signer() -> Signer:
 
 def app_key() -> str:
     """The static key of the fixture's hello-app deb: its whole directory, native."""
-    return state.static_key(FIXTURE_PROJECT / 'hello-app', {}, state.RELEASE_CHANNEL)
+    return state.static_key(FIXTURE_PROJECT / 'hello-app', {}, STABLE)
 
 
 def write_app_sources(directory: Path, version: str) -> None:
@@ -1293,7 +1307,7 @@ def stored_app(
     (built / APP_ALL).write_bytes(b'doc deb')
     (built / f'hello-app_{version}_amd64.deb').write_bytes(b'app deb')
     root = tmp_path / 'state'
-    writer = state.ReleaseStateWriter(root, state.RELEASE_CHANNEL, 'debian-13-trixie')
+    writer = state.ReleaseStateWriter(root, STABLE, 'debian-13-trixie')
     writer.add(
         'hello-app',
         static_key=app_key() if key is None else key,
@@ -1308,7 +1322,7 @@ def stored_app(
         arch_all_files=[APP_ALL],
     )
     writer.commit()
-    found = state.ReleaseState(root, state.RELEASE_CHANNEL, 'debian-13-trixie').package('hello-app')
+    found = state.ReleaseState(root, STABLE, 'debian-13-trixie').package('hello-app')
     assert found is not None
     return found
 
@@ -1316,7 +1330,9 @@ def stored_app(
 def app_builder(
     builders: ModuleType, context: BuildContext, rel: Release, stored: Any = None
 ) -> Any:
-    under = builders.DebPackageBuilder(context, rel, FIXTURE_PROJECT, fixture_signer(), 'hello-app')
+    under = builders.DebPackageBuilder(
+        context, rel, FIXTURE_PROJECT / 'hello-app', fixture_signer(), 'hello-app', channel=STABLE
+    )
     under.stored = stored
     return under
 
@@ -1502,7 +1518,7 @@ def test_missing_stored_file_builds_sourceful(
     """A stored file deleted by hand: the package is absent from the state, built sourceful."""
     stored = stored_app(tmp_path)
     (stored.directory / APP_SOURCE[1]).unlink()
-    reread = state.ReleaseState(tmp_path / 'state', state.RELEASE_CHANNEL, 'debian-13-trixie')
+    reread = state.ReleaseState(tmp_path / 'state', STABLE, 'debian-13-trixie')
     assert reread.package('hello-app') is None
     runner.respond = deb_build()
     under = app_builder(builders, context, release('debian', 'trixie', frozen), None)
@@ -1526,21 +1542,24 @@ def test_arch_all_only_rebuild_candidate_is_reused(
     """hello-lib builds Architecture: all packages only, which a binNMU never rebuilds."""
     trixie = release('debian', 'trixie', frozen)
     under = builders.DebPackageBuilder(
-        context, trixie, FIXTURE_PROJECT, fixture_signer(), 'hello-lib'
+        context,
+        trixie,
+        FIXTURE_PROJECT / 'hello-lib',
+        fixture_signer(),
+        'hello-lib',
+        channel=STABLE,
     )
     tarball_path = context.workdir / 'hello-lib-1.0.tar.gz'
     tarball_path.write_bytes(b'upstream')
     orig = context.workdir / 'hello-lib_1.0.orig.tar.gz'
     orig.symlink_to(tarball_path.name)
     under.orig = OrigFiles(tarball_path, orig, True)
-    key = state.static_key(
-        FIXTURE_PROJECT / 'hello-lib' / 'debian', {orig.name: orig}, state.RELEASE_CHANNEL
-    )
+    key = state.static_key(FIXTURE_PROJECT / 'hello-lib' / 'debian', {orig.name: orig}, STABLE)
     built = tmp_path / 'built'
     built.mkdir()
     (built / 'hello-lib_1.0-1~bpo13_all.deb').write_bytes(b'lib deb')
     root = tmp_path / 'state'
-    writer = state.ReleaseStateWriter(root, state.RELEASE_CHANNEL, trixie.uid)
+    writer = state.ReleaseStateWriter(root, STABLE, trixie.uid)
     writer.add(
         'hello-lib',
         static_key=key,
@@ -1555,7 +1574,7 @@ def test_arch_all_only_rebuild_candidate_is_reused(
         arch_all_files=['hello-lib_1.0-1~bpo13_all.deb'],
     )
     writer.commit()
-    under.stored = state.ReleaseState(root, state.RELEASE_CHANNEL, trixie.uid).package('hello-lib')
+    under.stored = state.ReleaseState(root, STABLE, trixie.uid).package('hello-lib')
     assert under.build(frozenset(), {}) == Reused()
     assert runner.calls == []
     assert under.outdir == under.stored.directory and under.version == '1.0-1~bpo13'
@@ -1611,10 +1630,10 @@ def stored_rpm(tmp_path: Path, spec: Path = APP_SPEC, *, key: str | None = None)
     (built / f'hello-app-{APP_RPM_BASE}.src.rpm').write_bytes(b'stored srpm')
     (built / f'hello-app-{APP_RPM_BASE}.noarch.rpm').write_bytes(b'stored rpm')
     root = tmp_path / 'state'
-    writer = state.ReleaseStateWriter(root, state.RELEASE_CHANNEL, 'fedora-44')
+    writer = state.ReleaseStateWriter(root, STABLE, 'fedora-44')
     writer.add(
         'hello-app',
-        static_key=state.static_key(spec, {}, state.RELEASE_CHANNEL) if key is None else key,
+        static_key=state.static_key(spec, {}, STABLE) if key is None else key,
         env_key='stored-environment',
         base_version=APP_RPM_BASE,
         rebuild=0,
@@ -1626,7 +1645,7 @@ def stored_rpm(tmp_path: Path, spec: Path = APP_SPEC, *, key: str | None = None)
         arch_all_files=[],
     )
     writer.commit()
-    return state.ReleaseState(root, state.RELEASE_CHANNEL, 'fedora-44').package('hello-app')
+    return state.ReleaseState(root, STABLE, 'fedora-44').package('hello-app')
 
 
 def rpm_signs(runner: FakeRunner) -> list[Call]:
@@ -1643,7 +1662,7 @@ def test_rpm_no_state_builds_as_written(
     assert seen['spec'] == APP_SPEC.read_text()
     assert 'DISTROPACK_KNOWN_ENV' not in builder_call(runner).env
     assert (under.base_version, under.rebuild, under.version) == (APP_RPM_BASE, 0, APP_RPM_BASE)
-    assert under.static_key == state.static_key(APP_SPEC, {}, state.RELEASE_CHANNEL)
+    assert under.static_key == state.static_key(APP_SPEC, {}, STABLE)
     assert under.packaging_hash == state.packaging_key(APP_SPEC)
     assert under.source_files == [f'hello-app-{APP_RPM_BASE}.src.rpm']
     assert under.arch_all_files == []
@@ -1684,7 +1703,13 @@ def test_rpm_without_changelog_bumps_release_only(
     runner.respond = rpm_build('1.fc44.1', seen=seen)
     info = SpecInfo(frozenset({'hello-lib'}), frozenset({'hello-app'}), (), '1.0', '1.fc44')
     under = builders.RpmPackageBuilder(
-        context, release('fedora', '44', frozen), project, fixture_signer(), 'hello-app', spec=info
+        context,
+        release('fedora', '44', frozen),
+        project / 'hello-app',
+        fixture_signer(),
+        'hello-app',
+        channel=STABLE,
+        spec=info,
     )
     under.stored = stored_rpm(tmp_path, spec)
     under.build(frozenset(), {})
@@ -1754,14 +1779,14 @@ def environment(
 
 def kept_state(state_dir: Path, uid: str) -> dict[str, bytes]:
     """Every file of a release's state, by path: what must not change."""
-    directory = state_dir / state.RELEASE_CHANNEL / uid
+    directory = state_dir / STABLE / uid
     return {
         str(p.relative_to(directory)): p.read_bytes() for p in directory.rglob('*') if p.is_file()
     }
 
 
 def stored_version(state_dir: Path, uid: str, package: str) -> str | None:
-    found = state.ReleaseState(state_dir, state.RELEASE_CHANNEL, uid).package(package)
+    found = state.ReleaseState(state_dir, STABLE, uid).package(package)
     return None if found is None else found.version
 
 
@@ -1832,7 +1857,7 @@ def test_removed_package_not_carried_over(run_main: Callable[..., int], tmp_path
     fresh(tmp_path)
     assert run_main(FakeRunner(environment()), BOTH, ['hello-lib'], '--state-dir', str(states)) == 0
     for uid in ('debian-13-trixie', 'fedora-44'):
-        stored = state.ReleaseState(states, state.RELEASE_CHANNEL, uid).packages()
+        stored = state.ReleaseState(states, STABLE, uid).packages()
         assert sorted(stored) == ['hello-lib']
 
 
@@ -1842,7 +1867,7 @@ def test_reused_dependency_feeds_its_dependent(
     """hello-lib reused (Architecture: all), hello-app rebuilt against the stored hello-lib."""
     states = tmp_path / 'states'
     assert run_main(FakeRunner(environment()), BOTH, APPS, '--state-dir', str(states)) == 0
-    lib = state.ReleaseState(states, state.RELEASE_CHANNEL, 'debian-13-trixie').package('hello-lib')
+    lib = state.ReleaseState(states, STABLE, 'debian-13-trixie').package('hello-lib')
     assert lib is not None
     files = sorted(lib.directory.iterdir())
     assert files
@@ -1876,7 +1901,7 @@ def test_interrupt_commits_nothing_more(
 
     assert run_main(FakeRunner(respond), BOTH, APPS, '--state-dir', str(states), '-j', '1') == 130
     assert {uid: kept_state(states, uid) for uid in before} == before
-    assert sorted(p.name for p in (states / state.RELEASE_CHANNEL).iterdir()) == [
+    assert sorted(p.name for p in (states / STABLE).iterdir()) == [
         'debian-13-trixie',
         'fedora-44',
     ]
@@ -1914,7 +1939,7 @@ def test_publish_only_runs_no_build(run_main: Callable[..., int], tmp_path: Path
     assert not [c for c in runner.calls if '_builder:' in c.image]
     assert debian_dists(tmp_path) == ['stable', 'trixie']
     assert indexed(tmp_path / 'project') == ['44']
-    stored = state.ReleaseState(states, state.RELEASE_CHANNEL, 'debian-13-trixie').packages()
+    stored = state.ReleaseState(states, STABLE, 'debian-13-trixie').packages()
     added = {c.targets['/data'].source for c in runner.calls if c.args[2:4] == ('repo', 'add')}
     assert added == {package.directory for package in stored.values()}
 
@@ -2030,7 +2055,13 @@ def rebuilt_spec(
     runner.respond = rpm_build('1.fc44.1', seen=seen)
     info = SpecInfo(frozenset(), frozenset({'hello-app'}), (), '1.0', '1.fc44')
     under = builders.RpmPackageBuilder(
-        context, release('fedora', '44', frozen), project, fixture_signer(), 'hello-app', spec=info
+        context,
+        release('fedora', '44', frozen),
+        project / 'hello-app',
+        fixture_signer(),
+        'hello-app',
+        channel=STABLE,
+        spec=info,
     )
     under.stored = stored_rpm(tmp_path, spec)
     under.build(frozenset(), {})
@@ -2111,3 +2142,305 @@ def test_rpm_lower_release_refused(
     under.stored = dataclasses.replace(stored, base_version='1.0-2^1.fc44')
     with pytest.raises(builders.LowerVersion, match='below the stored 1.0-2\\^1.fc44'):
         under.build(frozenset(), {})
+
+
+# Snapshot channels (Phase 13).
+SNAP = 'hello-snap'
+
+
+def use_channels(project: Path, release_channel: str = STABLE, snapshot: str = 'weekly') -> None:
+    """Declare the channels: release_channel, and the snapshot channel, epoch_bump 1."""
+    conf_path = project / 'build.conf'
+    conf = yaml.safe_load(conf_path.read_text())
+    conf['channels'] = {
+        release_channel: {'kind': 'release'},
+        snapshot: {'kind': 'snapshot', 'epoch_bump': 1},
+    }
+    if 'fedora' in conf['distribs']:
+        conf['distribs']['fedora']['repository']['channels'] = {
+            snapshot: {
+                'path': f'repositories/{snapshot}.fedora',
+                'url': f'http://repo.example.invalid/{snapshot}.fedora',
+            }
+        }
+    conf_path.write_text(yaml.safe_dump(conf))
+
+
+def add_snapshot_package(project: Path, snapshot: str = 'weekly') -> None:
+    """hello-snap: hello-app as a quilt source, built in snapshot from hello-lib's upstream main.
+
+    Its rpm spec unpacks the snapshot's <name>-<commit> directory, as a snapshot spec does.
+    """
+    target = project / SNAP
+    shutil.copytree(FIXTURE_PROJECT / 'hello-app', target)
+    for path in target.rglob('*'):
+        if path.is_file():
+            path.write_text(path.read_text().replace('hello-app', SNAP))
+    (target / 'hello-app.spec').rename(target / f'{SNAP}.spec')
+    changelog = target / 'debian' / 'changelog'
+    changelog.write_text(changelog.read_text().replace(f'{SNAP} (1.0)', f'{SNAP} (1.0-1)', 1))
+    (target / 'debian' / 'source' / 'format').write_text('3.0 (quilt)\n')
+    (target / 'debian' / 'watch').write_text((project / 'hello-lib/debian/watch').read_text())
+    spec = target / f'{SNAP}.spec'
+    spec.write_text(
+        spec.read_text().replace(
+            '%description', f'Source0: {ORIG_BASE}/{SNAP}-%{{version}}.tar.gz\n\n%description', 1
+        )
+    )
+    conf_path = project / 'build.conf'
+    conf = yaml.safe_load(conf_path.read_text())
+    conf['packages'][SNAP] = {
+        'channels': {
+            snapshot: {
+                'git': f'file://{project}/upstream/hello-lib.git',
+                'ref': 'main',
+                'verify': 'none',
+            }
+        }
+    }
+    conf_path.write_text(yaml.safe_dump(conf))
+
+
+def weekly(project: Path) -> None:
+    use_channels(project)
+    add_snapshot_package(project)
+    add_upstream_commit(project / 'upstream' / 'hello-lib.git', 'one')
+
+
+def built_packages(runner: FakeRunner) -> set[tuple[str, str]]:
+    """The (package, builder image) of each build container."""
+    return {
+        (
+            c.targets['/src'].source.parent.name.split('.')[0],
+            c.image.rpartition('/')[2].split('_builder')[0],
+        )
+        for c in runner.calls
+        if c.is_build
+    }
+
+
+def stable_then(
+    run_main: Callable[..., int],
+    tmp_path: Path,
+    runner: FakeRunner,
+    *args: str,
+    versions: dict[str, list[str]] = BOTH,
+    prepare: Callable[[Path], None] = weekly,
+    stable_prepare: Callable[[Path], None] = lambda project: None,
+) -> int:
+    """Build hello-lib in the release channel, then the weekly channel with runner."""
+    states = str(tmp_path / 'states')
+    assert (
+        run_main(
+            FakeRunner(environment()),
+            BOTH,
+            ['hello-lib'],
+            '--state-dir',
+            states,
+            prepare=stable_prepare,
+        )
+        == 0
+    )
+    fresh(tmp_path)
+    return run_main(
+        runner,
+        versions,
+        ['hello-lib'],
+        '--state-dir',
+        states,
+        '--channel',
+        'weekly',
+        *args,
+        prepare=prepare,
+    )
+
+
+def test_snapshot_builds_only_declaring_packages(
+    run_main: Callable[..., int], tmp_path: Path
+) -> None:
+    runner = FakeRunner(environment())
+    assert stable_then(run_main, tmp_path, runner) == 0
+    assert built_packages(runner) == {(SNAP, 'debian'), (SNAP, 'fedora')}
+
+
+def seen_at_build(
+    runner_respond: Callable[[Call], RunResult | None], seen: dict[str, Any]
+) -> Callable[[Call], RunResult | None]:
+    """runner_respond, recording what each build container's /src holds, by image family."""
+
+    def respond(call: Call) -> RunResult | None:
+        if call.is_build or call.is_deps:
+            src = call.targets['/src'].source
+            family = call.image.rpartition('/')[2].split('_builder')[0]
+            seen[f'{family}.{call.args[0]}'] = {
+                str(p.relative_to(src)): p.read_bytes() for p in src.rglob('*') if p.is_file()
+            }
+        return runner_respond(call)
+
+    return respond
+
+
+def test_snapshot_uses_channel_directory(run_main: Callable[..., int], tmp_path: Path) -> None:
+    def prepare(project: Path) -> None:
+        weekly(project)
+        own = project / f'{SNAP}-weekly'
+        shutil.copytree(project / SNAP, own)
+        control = own / 'debian' / 'control'
+        control.write_text(control.read_text().replace('hello-lib', 'hello-lib, weekly-only'))
+
+    seen: dict[str, Any] = {}
+    runner = FakeRunner(seen_at_build(environment(), seen))
+    assert stable_then(run_main, tmp_path, runner, prepare=prepare) == 0
+    controls = [v for k, v in seen['debian.deps'].items() if k.endswith('debian/control')]
+    assert controls and b'weekly-only' in controls[0]
+
+
+def test_snapshot_deb_version_and_entry(run_main: Callable[..., int], tmp_path: Path) -> None:
+    seen: dict[str, Any] = {}
+    runner = FakeRunner(seen_at_build(environment(), seen))
+    assert stable_then(run_main, tmp_path, runner) == 0
+    head = git_head(tmp_path / 'project' / 'upstream' / 'hello-lib.git')
+    upstream = f'1.0+main.1.g{head[:7]}'
+    (changelog_path,) = (k for k in seen['debian.build'] if k.endswith('debian/changelog'))
+    assert changelog_path == f'{SNAP}-{upstream}/debian/changelog'
+    changelog = Changelog(seen['debian.build'][changelog_path].decode())
+    assert str(changelog.version) == f'1:{upstream}-1~bpo13'
+    assert f'* Snapshot of main at {head}, not verified' in [
+        line.strip() for line in changelog[0].changes()
+    ]
+    assert (
+        changelog.date
+        == Changelog((FIXTURE_PROJECT / 'hello-app' / 'debian' / 'changelog').read_text()).date
+    )
+    assert f'{SNAP}_{upstream}.orig.tar.gz' in seen['debian.build']
+
+
+def git_head(bare: Path) -> str:
+    return subprocess.run(
+        ['git', '-C', str(bare), 'rev-parse', 'main'], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+def test_snapshot_rpm_spec_and_tarball(run_main: Callable[..., int], tmp_path: Path) -> None:
+    seen: dict[str, Any] = {}
+    runner = FakeRunner(seen_at_build(environment(), seen))
+    download = tmp_path / 'download'
+    assert stable_then(run_main, tmp_path, runner, '--download-dir', str(download)) == 0
+    head = git_head(tmp_path / 'project' / 'upstream' / 'hello-lib.git')
+    files = seen['fedora.build']
+    assert files[f'{SNAP}.spec'].decode().startswith(f'%global commit {head}\n')
+    tarball = download / 'snapshots' / f'{SNAP}-{head}.tar.gz'
+    assert files[f'{SNAP}-1.0+main.1.g{head[:7]}.tar.gz'] == tarball.read_bytes()
+
+
+def test_dependencies_from_fallback_state(run_main: Callable[..., int], tmp_path: Path) -> None:
+    runner = FakeRunner(environment())
+    assert stable_then(run_main, tmp_path, runner) == 0
+    states = tmp_path / 'states'
+    lib = state.ReleaseState(states, STABLE, 'debian-13-trixie').package('hello-lib')
+    assert lib is not None
+    local = [
+        c.targets['/data'].source
+        for c in runner.calls
+        if c.args[2:4] == ('repo', 'add') and '/localrepo' not in c.targets
+    ]
+    assert lib.directory in local
+
+
+def test_no_fallback_state_fails_the_release(
+    run_main: Callable[..., int], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    states = str(tmp_path / 'states')
+    debian = {'debian': ['trixie']}
+    assert run_main(FakeRunner(environment()), debian, ['hello-lib'], '--state-dir', states) == 0
+    fresh(tmp_path)
+    capsys.readouterr()
+    runner = FakeRunner(environment())
+    status = run_main(
+        runner, BOTH, ['hello-lib'], '--state-dir', states, '--channel', 'weekly', prepare=weekly
+    )
+    out = capsys.readouterr()
+    assert status == 1
+    assert 'no stable state for Fedora 44: build the stable channel first' in (out.out + out.err)
+    assert built_packages(runner) == {(SNAP, 'debian')}
+    assert not [c for c in runner.calls if 'fedora_builder' in c.image and c.is_deps]
+
+
+def test_snapshot_failure_leaves_fallback_state(
+    run_main: Callable[..., int], tmp_path: Path
+) -> None:
+    states = tmp_path / 'states'
+    assert run_main(FakeRunner(environment()), BOTH, ['hello-lib'], '--state-dir', str(states)) == 0
+    before = {uid: kept_state(states, uid) for uid in ('debian-13-trixie', 'fedora-44')}
+    fresh(tmp_path)
+    failing = environment(fail=(SNAP, 'debian_builder'))
+    status = run_main(
+        FakeRunner(failing),
+        BOTH,
+        ['hello-lib'],
+        '--state-dir',
+        str(states),
+        '--channel',
+        'weekly',
+        prepare=weekly,
+    )
+    assert status == 1
+    assert {uid: kept_state(states, uid) for uid in before} == before
+
+
+def test_snapshot_state_records_commit(run_main: Callable[..., int], tmp_path: Path) -> None:
+    assert stable_then(run_main, tmp_path, FakeRunner(environment())) == 0
+    head = git_head(tmp_path / 'project' / 'upstream' / 'hello-lib.git')
+    stored = state.ReleaseState(tmp_path / 'states', 'weekly', 'debian-13-trixie').package(SNAP)
+    assert stored is not None
+    assert stored.snapshot_commit == head
+    assert stored.version == f'1:1.0+main.1.g{head[:7]}-1~bpo13'
+
+
+def same_commit(project: Path) -> None:
+    """The weekly channel, upstream unchanged since the last run."""
+    use_channels(project)
+    add_snapshot_package(project)
+
+
+def test_unchanged_snapshot_reused(
+    run_main: Callable[..., int], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    download = str(tmp_path / 'download')
+    assert (
+        stable_then(run_main, tmp_path, FakeRunner(environment()), '--download-dir', download) == 0
+    )
+    fresh(tmp_path)
+    capsys.readouterr()
+    runner = FakeRunner(environment())
+    status = run_main(
+        runner,
+        BOTH,
+        ['hello-lib'],
+        '--state-dir',
+        str(tmp_path / 'states'),
+        '--download-dir',
+        download,
+        '--channel',
+        'weekly',
+        prepare=same_commit,
+    )
+    out = capsys.readouterr().out
+    assert status == 0, out
+    assert out.count('reused ') == 2 and 'built ' not in out
+    assert not [c for c in runner.calls if c.is_build]
+
+
+def test_channels_named_freely(run_main: Callable[..., int], tmp_path: Path) -> None:
+    def rel(project: Path) -> None:
+        use_channels(project, 'rel')
+
+    def snapshot(project: Path) -> None:
+        use_channels(project, 'rel')
+        add_snapshot_package(project)
+        add_upstream_commit(project / 'upstream' / 'hello-lib.git', 'one')
+
+    runner = FakeRunner(environment())
+    assert stable_then(run_main, tmp_path, runner, prepare=snapshot, stable_prepare=rel) == 0
+    assert built_packages(runner) == {(SNAP, 'debian'), (SNAP, 'fedora')}
+    assert sorted(p.name for p in (tmp_path / 'states').iterdir()) == ['rel', 'weekly']

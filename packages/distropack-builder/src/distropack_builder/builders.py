@@ -42,15 +42,18 @@ from distropack_builder.inputs import (
     Files,
     builder_image,
     fetch,
+    snapshot_entry,
     source_format,
+    spec_file,
 )
 from distropack_builder.publication import published
 from distropack_builder.report import Reporter, Unreproducible, build_logger
 from distropack_builder.rpmquery import SpecFailed, SpecInfo
 from distropack_builder.scheduler import Reused, Succeeded, schedule
 from distropack_builder.signing import Signer
+from distropack_builder.snapshots import Record, SnapshotFailed
+from distropack_builder.snapshots import tarball as snapshot_tarball
 from distropack_builder.state import (
-    RELEASE_CHANNEL,
     ReleaseState,
     ReleaseStateWriter,
     StoredPackage,
@@ -209,6 +212,23 @@ class LowerVersion(Exception):
         super().__init__(f'{package}: version {version} is below the stored {stored}')
 
 
+@dataclass(frozen=True)
+class SnapshotBuild:
+    """What a build of a snapshot channel takes from its snapshot.
+
+    Attributes:
+        record: the commit, and how it was checked.
+        upstream: its upstream version, `<tag>+<label>.<n>.g<sha7>`.
+        epoch_bump: what the channel adds to the deb epoch.
+        tarball: the snapshot's tarball, shared by every channel and distribution.
+    """
+
+    record: Record
+    upstream: str
+    epoch_bump: int
+    tarball: Path
+
+
 class PackageBuilder:
     """The build of one package for one release, the base of the builders of each family.
 
@@ -223,20 +243,37 @@ class PackageBuilder:
     family: ClassVar[Literal['deb', 'rpm']]
 
     def __init__(
-        self, context: BuildContext, dist_release: Release, base_dir: Path, gpg: Signer, name: str
+        self,
+        context: BuildContext,
+        dist_release: Release,
+        packaging: Path,
+        gpg: Signer,
+        name: str,
+        *,
+        channel: str,
+        snapshot: SnapshotBuild | None = None,
     ) -> None:
-        """The build of the package name of base_dir for dist_release, signed by gpg."""
+        """The build of package name, from its packaging directory, for dist_release in channel.
+
+        A build of a snapshot channel takes its upstream source and version from snapshot.
+        """
         self._context = context
         self.dist_release = dist_release
-        self._base_dir = base_dir
+        self._packaging_dir = packaging
         self._gpg = gpg
         self.name = name
+        self.channel = channel
+        self.snapshot = snapshot
         self.logger = build_logger(name, dist_release)
         self.outdir: Path | None = None
         self.bin_provides: set[str] = set()
         self.bin_depends: set[str] = set()
-        # the repositories of other packages its dependencies may come from, set by run_builds
+        # the repositories of other packages its dependencies may come from, their keys' paths
+        # absolute, set by run_builds
         self.extras: Sequence[ExtraRepository] = ()
+        # the stored packages of the fallback channel its local repository holds, beside the
+        # outputs of its dependencies: those this channel does not build, set by run_builds
+        self.fallback: Sequence[Path] = ()
         # what the release's state stores of the package, set by run_builds
         self.stored: StoredPackage | None = None
         # the environment key of a rebuild candidate: a dependency container that installs the
@@ -261,8 +298,8 @@ class PackageBuilder:
         return self.name
 
     @classmethod
-    def applies(cls, base_dir: Path, name: str) -> bool:
-        """Whether the package has packaging for this family."""
+    def applies(cls, packaging: Path, name: str) -> bool:
+        """Whether the packaging directory of package name has packaging for this family."""
         raise NotImplementedError
 
     def sources(self) -> list[str]:
@@ -280,7 +317,7 @@ class PackageBuilder:
                 the package's sources line.
             UnversionedChange: the sources or packaging changed, the base version did not.
         """
-        expected = sources.read(self._base_dir / self.name)
+        expected = sources.read(self._packaging_dir)
         for url in self.sources():
             file = files[url]
             if isinstance(file, DownloadFailed):
@@ -292,7 +329,7 @@ class PackageBuilder:
         self._prepare()
         packaging = self._packaging()
         self.base_version = self._base_version()
-        self.static_key = static_key(packaging, self._source_files(files), RELEASE_CHANNEL)
+        self.static_key = static_key(packaging, self._source_files(files), self.channel)
         self.packaging_hash = packaging_key(packaging)
         stored = self.stored
         if stored is not None and self._below(self.base_version, stored.base_version):
@@ -536,7 +573,7 @@ class PackageBuilder:
                 url = f'file://{mirror}' + ('/' if url.endswith('/') else '')
             key = f'/extrarepos/{name}.asc'
             # armored, whatever the file: apt before 3.0 reads a Signed-By file by its extension
-            armored = signing.armored((self._base_dir / extra.key).read_bytes())
+            armored = signing.armored(extra.key.read_bytes())
             (directory / f'{name}.asc').write_bytes(armored)
             if self.family == 'deb':
                 (directory / f'{name}.sources').write_text(
@@ -556,10 +593,15 @@ class PackageBuilder:
         localrepo: Path,
         deps: Set['PackageBuilder'],
     ) -> None:
-        """Publish the outputs of deps at localrepo, unsigned, for the builder container."""
+        """Publish at localrepo, unsigned, for the builder container, the outputs of deps.
+
+        It holds the stored fallback packages too, which this channel does not build.
+        """
+        outputs = [Output(dep.dist_release, dep.outdir) for dep in deps if dep.outdir is not None]
+        outputs += [Output(self.dist_release, directory) for directory in self.fallback]
         failures = family(
             self._context, localrepo, self._gpg, logger=self.logger, sign=False
-        ).build(Output(dep.dist_release, dep.outdir) for dep in deps if dep.outdir is not None)
+        ).build(outputs)
         for error in failures.values():
             raise error
 
@@ -573,13 +615,18 @@ class DebPackageBuilder(PackageBuilder):
         self,
         context: BuildContext,
         dist_release: Release,
-        base_dir: Path,
+        packaging: Path,
         gpg: Signer,
         name: str,
+        *,
+        channel: str,
+        snapshot: SnapshotBuild | None = None,
     ) -> None:
-        """The build of base_dir/name/debian."""
-        super().__init__(context, dist_release, base_dir, gpg, name)
-        self._debian_dir = base_dir / name / 'debian'
+        """The build of packaging/debian."""
+        super().__init__(
+            context, dist_release, packaging, gpg, name, channel=channel, snapshot=snapshot
+        )
+        self._debian_dir = packaging / 'debian'
         self._format = source_format(self._debian_dir)
         # the upstream tarball of a 3.0 (quilt) source, which run_builds downloads with uscan
         self.orig: OrigFiles | DownloadFailed | None = None
@@ -602,9 +649,9 @@ class DebPackageBuilder(PackageBuilder):
             }
 
     @classmethod
-    def applies(cls, base_dir: Path, name: str) -> bool:
-        """Whether the package has a debian/ directory."""
-        return (base_dir / name / 'debian').is_dir()
+    def applies(cls, packaging: Path, name: str) -> bool:
+        """Whether the packaging has a debian/ directory."""
+        return (packaging / 'debian').is_dir()
 
     @property
     def needs_orig(self) -> bool:
@@ -639,8 +686,19 @@ class DebPackageBuilder(PackageBuilder):
         return {}
 
     def _base_version(self) -> str:
-        """The changelog's version, made release-specific (`~bpo<version>`) where it has one."""
-        return deb_base_version(str(self._changelog.version), self.dist_release.version)
+        """The changelog's version, made release-specific (`~bpo<version>`) where it has one.
+
+        A snapshot's upstream version replaces the changelog's, its epoch raised by the channel's
+        bump.
+        """
+        if self.snapshot is None:
+            return deb_base_version(str(self._changelog.version), self.dist_release.version)
+        return deb_base_version(
+            str(self._changelog.version),
+            self.dist_release.version,
+            self.snapshot.upstream,
+            self.snapshot.epoch_bump,
+        )
 
     def _version(self, rebuild: int) -> str:
         """The base version, then `+b<rebuild>` for a binNMU."""
@@ -659,7 +717,8 @@ class DebPackageBuilder(PackageBuilder):
         # a fresh copy of the changelog, to which the release may add its own entry
         with (self._debian_dir / 'changelog').open() as raw_changelog:
             changelog = Changelog(raw_changelog)
-        source_dir = pkg_dir / f'{changelog.package}-{changelog.upstream_version}'
+        upstream = changelog.upstream_version if self.snapshot is None else self.snapshot.upstream
+        source_dir = pkg_dir / f'{changelog.package}-{upstream}'
         if self.needs_orig:
             debian_dir = Path(copytree(self._debian_dir, source_dir / 'debian'))
         else:
@@ -667,14 +726,19 @@ class DebPackageBuilder(PackageBuilder):
 
         # the release's own changelog entry when the base version is not the changelog's,
         # versioned and dated from the packaging alone, so that the same inputs give the same
-        # package (dpkg derives SOURCE_DATE_EPOCH from this date)
+        # package (dpkg derives SOURCE_DATE_EPOCH from this date); a snapshot's says which
         if self.base_version != str(changelog.version):
+            why = (
+                f'Rebuild for {self.dist_release}'
+                if self.snapshot is None
+                else snapshot_entry(self.snapshot.record)
+            )
             changelog.new_block(
                 package=changelog.package,
                 version=self.version,
                 distributions=codename(self.dist_release),
                 urgency=changelog.urgency,
-                changes=['  * Rebuild for ' + str(self.dist_release)],
+                changes=['  * ' + why],
                 author=self._gpg.uid,
                 date=changelog.date,
             )
@@ -768,15 +832,25 @@ class RpmPackageBuilder(PackageBuilder):
         self,
         context: BuildContext,
         dist_release: Release,
-        base_dir: Path,
+        packaging: Path,
         gpg: Signer,
         name: str,
         *,
+        channel: str,
+        snapshot: SnapshotBuild | None = None,
         spec: SpecInfo | SpecFailed,
+        built_spec: Path | None = None,
     ) -> None:
-        """The build of base_dir/name/name.spec, which the release's rpm read as spec says."""
-        super().__init__(context, dist_release, base_dir, gpg, name)
-        self._spec = self.spec_file(base_dir, name)
+        """The build of packaging/name.spec, which the release's rpm read as spec says.
+
+        built_spec is the spec rpmbuild builds, the packaging's by default; a snapshot's, rewritten
+        for its commit. The snapshot's tarball is its first Source.
+        """
+        super().__init__(
+            context, dist_release, packaging, gpg, name, channel=channel, snapshot=snapshot
+        )
+        self._spec = self.spec_file(packaging, name)
+        self._built_spec = built_spec or self._spec
         self._spec_info = spec
         self._sources: list[str] = []
         if isinstance(spec, SpecInfo):
@@ -785,18 +859,26 @@ class RpmPackageBuilder(PackageBuilder):
             self._sources = list(spec.sources)
 
     @staticmethod
-    def spec_file(base_dir: Path, name: str) -> Path:
-        """The spec of the package name of base_dir."""
-        return base_dir / name / (name + '.spec')
+    def spec_file(packaging: Path, name: str) -> Path:
+        """The spec of package name in its packaging directory."""
+        return spec_file(packaging, name)
 
     @classmethod
-    def applies(cls, base_dir: Path, name: str) -> bool:
-        """Whether the package has a spec."""
-        return cls.spec_file(base_dir, name).is_file()
+    def applies(cls, packaging: Path, name: str) -> bool:
+        """Whether the packaging has a spec."""
+        return cls.spec_file(packaging, name).is_file()
 
     def sources(self) -> list[str]:
-        """The URLs of the spec's Source: lines."""
-        return list(self._sources)
+        """The URLs of the spec's Source: lines, but a snapshot's tarball, which is no download."""
+        return list(self._sources[1:] if self.snapshot is not None else self._sources)
+
+    def _source_file(self, url: str, files: Files) -> Path:
+        """The file of a Source: line, the snapshot's tarball for a snapshot's first."""
+        if self.snapshot is not None and url == self._sources[0]:
+            return self.snapshot.tarball
+        file = files[url]
+        assert isinstance(file, Path)  # build raised the download's failure
+        return file
 
     def _prepare(self) -> None:
         """Raise when the release's rpm could not read the spec."""
@@ -813,12 +895,7 @@ class RpmPackageBuilder(PackageBuilder):
 
     def _source_files(self, files: Files) -> dict[str, Path]:
         """The files of the spec's Source: lines, by name."""
-        found: dict[str, Path] = {}
-        for url in self._sources:
-            file = files[url]
-            assert isinstance(file, Path)  # build raised the download's failure
-            found[source_name(url)] = file
-        return found
+        return {source_name(url): self._source_file(url, files) for url in self._sources}
 
     def _base_version(self) -> str:
         """The spec's Version-Release, expanded by the release's rpm."""
@@ -835,16 +912,14 @@ class RpmPackageBuilder(PackageBuilder):
     def _build(self, wk_dir: Path, outdir: Path, deps: Set[PackageBuilder], files: Files) -> None:
         pkg_dir = wk_dir / 'pkg'
         pkg_dir.mkdir()
-        spec = self._spec.read_text()
+        spec = self._built_spec.read_text()
         (pkg_dir / self._spec.name).write_text(spec if self.rebuild == 0 else self._rebuilt(spec))
 
         localrepo = wk_dir / 'repo'
         self._local_repository(RpmRepoBuilder, localrepo, deps)
 
         for url in self._sources:
-            file = files[url]
-            assert isinstance(file, Path)  # build raised the download's failure
-            link_or_copy(file, pkg_dir / source_name(url))
+            link_or_copy(self._source_file(url, files), pkg_dir / source_name(url))
 
         self._run_builder(
             deps_mounts=[
@@ -1170,8 +1245,14 @@ def run_builds(
     publish: bool = True,
     build: bool = True,
     all_releases: Mapping[str, Set[Release]] | None = None,
+    channel: str,
+    snapshots: Mapping[str, str] | None = None,
 ) -> bool:
     """Download, build and publish; whether any build or publication did not succeed.
+
+    channel's packages are built, in a snapshot channel from the commits download_dir's
+    snapshots.json records, or snapshots gives, or else resolved now; the dependencies it does not
+    build come from its fallback channel's state, and a release without one fails before any build.
 
     unbuilt are releases failed before any build (their builder image is missing): their
     repositories are left as they were, and stay listed, as those of the releases whose builds fail.
@@ -1195,28 +1276,89 @@ def run_builds(
     root = config.root
     pages = readme.environment(readme.project_dir(root))
     keep_dir = download_dir or context.workdir
-    to_build = selected if build else {dist_id: set() for dist_id in selected}
-    channel = config.release_channel
-    found = fetch(context, config, channel, to_build, disabled, keep_dir, {})
+    to_build: dict[str, set[Release]] = {
+        dist_id: set(releases) if build else set() for dist_id, releases in selected.items()
+    }
+    snapshot_channel = channel != config.release_channel
+    fallback = config.fallback(channel) if snapshot_channel else None
+    no_fallback: set[Release] = set()
+    if fallback is not None:
+        for releases in to_build.values():
+            for dist_release in sorted(releases, key=str):
+                if not ReleaseState(states, fallback, dist_release.uid).exists():
+                    reporter.release_failed(
+                        dist_release,
+                        f'no {fallback} state for {dist_release}: build the {fallback} channel'
+                        ' first',
+                    )
+                    no_fallback.add(dist_release)
+            releases -= no_fallback
+    unbuilt = set(unbuilt) | no_fallback
+    found = fetch(context, config, channel, to_build, disabled, keep_dir, snapshots or {})
+    names = config.channel_packages(channel)
+    packaging = {name: config.packaging_dir(name, channel) for name in names}
+    snapshot_builds: dict[str, SnapshotBuild] = {}
+    for name, record in found.snapshots.items():
+        if isinstance(record, SnapshotFailed):
+            continue
+        upstream = record.snapshot().upstream(config.label(channel, name))
+        epoch_bump = config.channels[channel].epoch_bump
+        try:
+            tarball = snapshot_tarball(keep_dir, name, record)
+        except Exception:  # noqa: BLE001 -- its orig and specs carry the failure already
+            continue
+        snapshot_builds[name] = SnapshotBuild(record, upstream, epoch_bump, tarball)
     for dist_id, distrib in config.distribs.items():
         gpg = signer_for(distrib)
         deb = targets.is_deb(targets.target(dist_id))
+        extras = [
+            extra.model_copy(update={'key': root / extra.key})
+            for extra in distrib.extra_repositories
+        ]
         dist_builders: list[PackageBuilder] = []
         for dist_release in sorted(to_build[dist_id], key=lambda r: r.uid):
+            built_here = [name for name in names if dist_release not in disabled[name]]
             if deb:
-                dist_builders += [
-                    DebPackageBuilder(context, dist_release, root, gpg, name)
-                    for name in config.channel_packages(channel)
-                    if dist_release not in disabled[name] and DebPackageBuilder.applies(root, name)
+                release_builders: list[PackageBuilder] = [
+                    DebPackageBuilder(
+                        context,
+                        dist_release,
+                        packaging[name],
+                        gpg,
+                        name,
+                        channel=channel,
+                        snapshot=snapshot_builds.get(name),
+                    )
+                    for name in built_here
+                    if DebPackageBuilder.applies(packaging[name], name)
                 ]
-                continue
-            dist_builders += [
-                RpmPackageBuilder(
-                    context, dist_release, root, gpg, name, spec=found.specs[name, dist_release.uid]
-                )
-                for name in config.channel_packages(channel)
-                if dist_release not in disabled[name] and RpmPackageBuilder.applies(root, name)
-            ]
+            else:
+                release_builders = [
+                    RpmPackageBuilder(
+                        context,
+                        dist_release,
+                        packaging[name],
+                        gpg,
+                        name,
+                        channel=channel,
+                        snapshot=snapshot_builds.get(name),
+                        spec=found.specs[name, dist_release.uid],
+                        built_spec=found.built_specs.get(name),
+                    )
+                    for name in built_here
+                    if RpmPackageBuilder.applies(packaging[name], name)
+                ]
+            if fallback is not None:
+                built = {builder.name for builder in release_builders}
+                fallback_state = ReleaseState(states, fallback, dist_release.uid).packages()
+                fallback_dirs = [
+                    package.directory
+                    for n, package in sorted(fallback_state.items())
+                    if n not in built
+                ]
+                for builder in release_builders:
+                    builder.fallback = fallback_dirs
+            dist_builders += release_builders
 
         repository = distrib.repository
         output_dirs.add(root / repository.path)
@@ -1235,8 +1377,8 @@ def run_builds(
             ],
         )
         for builder in dist_builders:
-            builder.extras = distrib.extra_repositories
-            stored = ReleaseState(states, RELEASE_CHANNEL, builder.dist_release.uid)
+            builder.extras = extras
+            stored = ReleaseState(states, channel, builder.dist_release.uid)
             builder.stored = stored.package(builder.name)
         repo_builders.append((dist_id, repo_builder, dist_builders))
         builders += dist_builders
@@ -1261,11 +1403,13 @@ def run_builds(
     reporter.summarize({(b.name, b.dist_release): outcome for b, outcome in outcomes.items()})
 
     releases = published(outcomes)
-    _commit_states(states, [b for b in builders if b.dist_release in releases])
+    _commit_states(states, channel, [b for b in builders if b.dist_release in releases])
     if build:
         for release in sorted({b.dist_release for b in builders} - releases | unbuilt, key=str):
             reporter.state_kept(release)
-    failed = any(not isinstance(outcome, Succeeded | Reused) for outcome in outcomes.values())
+    failed = bool(no_fallback) or any(
+        not isinstance(outcome, Succeeded | Reused) for outcome in outcomes.values()
+    )
     if not publish:
         return failed
 
@@ -1284,7 +1428,7 @@ def run_builds(
             kept |= {r for r in unbuilt if r.distribution.id == dist_id}
         outputs: list[Output] = []
         for release in sorted(to_publish, key=str):
-            stored = ReleaseState(states, RELEASE_CHANNEL, release.uid)
+            stored = ReleaseState(states, config.release_channel, release.uid)
             if not stored.exists():
                 reporter.no_state(release)
                 continue
@@ -1301,10 +1445,10 @@ def run_builds(
     return failed
 
 
-def _commit_states(states: Path, builders: Sequence[PackageBuilder]) -> None:
-    """Make the builds of each of their releases its state, the packages of no build dropped."""
+def _commit_states(states: Path, channel: str, builders: Sequence[PackageBuilder]) -> None:
+    """Make the builds of each of their releases its state in channel, others dropped."""
     for release in sorted({b.dist_release for b in builders}, key=str):
-        writer = ReleaseStateWriter(states, RELEASE_CHANNEL, release.uid)
+        writer = ReleaseStateWriter(states, channel, release.uid)
         for builder in (b for b in builders if b.dist_release == release):
             assert builder.outdir is not None and builder.env_key is not None  # built or reused
             writer.add(
@@ -1314,7 +1458,9 @@ def _commit_states(states: Path, builders: Sequence[PackageBuilder]) -> None:
                 base_version=builder.base_version,
                 rebuild=builder.rebuild,
                 version=builder.version,
-                snapshot_commit=None,
+                snapshot_commit=None
+                if builder.snapshot is None
+                else builder.snapshot.record.commit,
                 packaging_hash=builder.packaging_hash,
                 outdir=builder.outdir,
                 source_files=builder.source_files,
@@ -1346,7 +1492,7 @@ def write_sources(
     quilt = [
         name
         for name in names
-        if DebPackageBuilder.applies(root, name)
+        if DebPackageBuilder.applies(root / name, name)
         and source_format(root / name / 'debian') == '3.0 (quilt)'
         and any(
             targets.is_deb(targets.target(dist_id)) and selected[dist_id] - disabled[name]
@@ -1364,13 +1510,13 @@ def write_sources(
             continue
         for name in names:
             releases = sorted(selected[dist_id] - disabled[name], key=lambda r: r.uid)
-            if not releases or not RpmPackageBuilder.applies(root, name):
+            if not releases or not RpmPackageBuilder.applies(root / name, name):
                 continue
             try:
                 spec = rpmquery.query(
                     context,
                     REGISTRY + builder_image(releases[0]),
-                    {name: RpmPackageBuilder.spec_file(root, name)},
+                    {name: RpmPackageBuilder.spec_file(root / name, name)},
                 )[name]
             except ContainerFailed as error:
                 failures[name] = DownloadFailed(name, f'its spec could not be read: {error}')

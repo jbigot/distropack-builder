@@ -66,6 +66,9 @@ mkdir -p %{buildroot}/usr/share/tiny
 - Initial release.
 """
 
+# The release channel of build.conf without channels:.
+STABLE = 'stable'
+
 
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
@@ -99,7 +102,9 @@ def signer() -> Signer:
 
 
 def deb_builder(ctx: BuildContext, project: Path) -> builders.DebPackageBuilder:
-    return builders.DebPackageBuilder(ctx, release('debian', 'trixie'), project, signer(), 'tiny')
+    return builders.DebPackageBuilder(
+        ctx, release('debian', 'trixie'), project / 'tiny', signer(), 'tiny', channel=STABLE
+    )
 
 
 def test_deb_environment_reported_and_known(project: Path, tmp_path: Path) -> None:
@@ -114,7 +119,7 @@ def test_deb_environment_reported_and_known(project: Path, tmp_path: Path) -> No
     assert first.outdir is not None and list(first.outdir.glob('tiny_*_amd64.deb'))
     # stored, then built again in the same environment: nothing is built, the stored package stands
     root = tmp_path / 'state'
-    writer = state.ReleaseStateWriter(root, state.RELEASE_CHANNEL, 'debian-13-trixie')
+    writer = state.ReleaseStateWriter(root, STABLE, 'debian-13-trixie')
     writer.add(
         'tiny',
         static_key=first.static_key,
@@ -130,9 +135,7 @@ def test_deb_environment_reported_and_known(project: Path, tmp_path: Path) -> No
     )
     writer.commit()
     second = deb_builder(context(tmp_path / 'again'), project)
-    second.stored = state.ReleaseState(root, state.RELEASE_CHANNEL, 'debian-13-trixie').package(
-        'tiny'
-    )
+    second.stored = state.ReleaseState(root, STABLE, 'debian-13-trixie').package('tiny')
     assert second.build(frozenset({second}), {}) == Reused()
     assert second.stored is not None and second.outdir == second.stored.directory
 
@@ -141,7 +144,7 @@ def test_rpm_environment_reported(project: Path, tmp_path: Path) -> None:
     ctx = context(tmp_path)
     spec = SpecInfo(frozenset({'make'}), frozenset({'tiny'}), (), '1.0', '1.fc44')
     rpm = builders.RpmPackageBuilder(
-        ctx, release('fedora', '44'), project, signer(), 'tiny', spec=spec
+        ctx, release('fedora', '44'), project / 'tiny', signer(), 'tiny', channel=STABLE, spec=spec
     )
     rpm.build(frozenset({rpm}), {})
     installed = (ctx.workdir / 'tiny.fedora-44.buildenv' / 'installed').read_text().splitlines()

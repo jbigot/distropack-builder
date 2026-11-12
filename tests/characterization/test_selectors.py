@@ -132,7 +132,12 @@ def test_deb_build_order(
     context = BuildContext(cast(Any, None), FakeRunner(), Cancellation(), tmp_path, 1)
     lib, app = (
         builders.DebPackageBuilder(
-            context, trixie, REPO_ROOT / 'tests' / 'e2e' / 'project', None, name
+            context,
+            trixie,
+            REPO_ROOT / 'tests' / 'e2e' / 'project' / name,
+            None,
+            name,
+            channel='stable',
         )
         for name in ('hello-lib', 'hello-app')
     )

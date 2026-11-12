@@ -168,7 +168,6 @@ def test_packaging_key_ignores_sources_and_channel(tmp_path: Path) -> None:
     source.write_bytes(b'upstream')
     assert state.packaging_key(pack) == state.static_key(pack, {}, '')
     assert state.packaging_key(pack) != state.static_key(pack, {'pdi-1.0.tar.gz': source}, '')
-    assert state.RELEASE_CHANNEL == 'stable'
 
 
 def test_commit_interrupted_between_renames_keeps_the_previous_state(
