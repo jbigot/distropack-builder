@@ -222,7 +222,14 @@ class Reporter:
 
     def state_kept(self, release: Release) -> None:
         """Not all builds of release succeeded: it keeps its previous state, if it had one."""
-        message = f'kept the previous state of {release}'
+        self._warn(f'kept the previous state of {release}')
+
+    def no_state(self, release: Release) -> None:
+        """The release has no state yet: nothing of it is published."""
+        self._warn(f'no state for {release}')
+
+    def _warn(self, message: str) -> None:
+        """Tell message, a warning, and list it in the summary."""
         with self._lock:
             if self._github:
                 self._print(f'::warning::{message}')

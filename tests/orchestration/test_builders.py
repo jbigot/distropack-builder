@@ -1735,9 +1735,16 @@ def environment(
             package = call.targets['/src'].source.parent.name.split('.')[0]
             if fail is not None and package == fail[0] and fail[1] in call.image:
                 raise ContainerFailed(1, 'build failed')
-            out = call.targets.get('/output', call.targets['/src']).source
-            if outputs:
-                (out / f'{package}-{len(installed)}.pkg').write_text(installed)
+            if not outputs:
+                pass
+            elif '/output' in call.targets:  # an rpm builder: an rpm its repository indexes
+                tag = call.image.rpartition(':')[2].removesuffix(f'-p{PROTOCOL}')
+                rpm = call.targets['/output'].source / f'{package}-1.0-1.fc{tag}.noarch.rpm'
+                rpm.write_bytes(RPM)
+            else:
+                (call.targets['/src'].source / f'{package}-{len(installed)}.pkg').write_text(
+                    installed
+                )
         return tools_respond(call)
 
     return respond
@@ -1871,3 +1878,134 @@ def test_interrupt_commits_nothing_more(
         'debian-13-trixie',
         'fedora-44',
     ]
+
+
+# Publishing from the states (Phase 12).
+def debian_dists(tmp_path: Path) -> list[str]:
+    dists = tmp_path / 'project' / 'repositories' / 'debian' / 'dists'
+    return sorted(d.name for d in dists.iterdir()) if dists.is_dir() else []
+
+
+def test_no_publish_writes_no_repository(run_main: Callable[..., int], tmp_path: Path) -> None:
+    states = tmp_path / 'states'
+    runner = FakeRunner(environment())
+    assert run_main(runner, BOTH, APPS, '--state-dir', str(states), '--no-publish') == 0
+    assert stored_version(states, 'debian-13-trixie', 'hello-app') == '1.0~bpo13'
+    assert not (tmp_path / 'project' / 'repositories').exists()
+    repositories = tmp_path / 'project' / 'repositories'
+    assert not [
+        c
+        for c in runner.calls
+        if 'publish' in c.args and c.targets['/aptlyout'].source.is_relative_to(repositories)
+    ]
+
+
+def test_publish_only_runs_no_build(run_main: Callable[..., int], tmp_path: Path) -> None:
+    states = tmp_path / 'states'
+    assert (
+        run_main(FakeRunner(environment()), BOTH, APPS, '--state-dir', str(states), '--no-publish')
+        == 0
+    )
+    fresh(tmp_path)
+    runner = FakeRunner(environment())
+    assert run_main(runner, BOTH, APPS, '--state-dir', str(states), '--publish-only') == 0
+    assert not [c for c in runner.calls if '_builder:' in c.image]
+    assert debian_dists(tmp_path) == ['stable', 'trixie']
+    assert indexed(tmp_path / 'project') == ['44']
+    stored = state.ReleaseState(states, state.RELEASE_CHANNEL, 'debian-13-trixie').packages()
+    added = {c.targets['/data'].source for c in runner.calls if c.args[2:4] == ('repo', 'add')}
+    assert added == {package.directory for package in stored.values()}
+
+
+def test_publish_only_skips_a_release_without_state(
+    run_main: Callable[..., int], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    states = str(tmp_path / 'states')
+    assert (
+        run_main(
+            FakeRunner(environment()),
+            BOTH,
+            APPS,
+            '--state-dir',
+            states,
+            '-D',
+            'fedora',
+            '--no-publish',
+        )
+        == 0
+    )
+    fresh(tmp_path)
+    capsys.readouterr()
+    assert (
+        run_main(FakeRunner(environment()), BOTH, APPS, '--state-dir', states, '--publish-only')
+        == 0
+    )
+    assert 'no state for Debian GNU/Linux 13 (Trixie)' in capsys.readouterr().out
+    assert indexed(tmp_path / 'project') == ['44']
+    assert debian_dists(tmp_path) == []
+
+
+def test_publish_only_needs_state_dir(
+    run_main: Callable[..., int], capsys: pytest.CaptureFixture[str]
+) -> None:
+    runner = FakeRunner(environment())
+    assert run_main(runner, BOTH, APPS, '--publish-only') == 2
+    assert '--publish-only needs --state-dir' in capsys.readouterr().err
+    assert runner.calls == []
+
+
+def test_publish_modes_exclusive(
+    run_main: Callable[..., int], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runner = FakeRunner(environment())
+    args = ('--state-dir', str(tmp_path / 's'), '--publish-only', '--no-publish')
+    assert run_main(runner, BOTH, APPS, *args) == 2
+    assert '--publish-only and --no-publish' in capsys.readouterr().err
+    assert runner.calls == []
+
+
+def test_readme_lists_the_releases_with_state(run_main: Callable[..., int], tmp_path: Path) -> None:
+    """A -D run publishes every release with a state, not only those it built (§8's defect)."""
+    states = str(tmp_path / 'states')
+    two = {'debian': ['bookworm', 'trixie']}
+    assert run_main(FakeRunner(environment()), two, ['hello-app'], '--state-dir', states) == 0
+    fresh(tmp_path)
+    runner = FakeRunner(environment())
+    assert run_main(runner, two, ['hello-app'], '--state-dir', states, '-D', 'debian:trixie') == 0
+    assert not [c for c in runner.calls if c.is_deps and 'bookworm' in c.image]
+    readme = (tmp_path / 'project' / 'repositories' / 'debian' / 'index.html').read_text()
+    assert 'codename bookworm' in readme and 'codename trixie' in readme
+    assert debian_dists(tmp_path) == ['bookworm', 'oldstable', 'stable', 'trixie']
+
+
+def test_state_dir_rebuilds_the_repository(run_main: Callable[..., int], tmp_path: Path) -> None:
+    """With --state-dir, what the repository held before is gone: it is the states' alone."""
+
+    def stale(project: Path) -> None:
+        old = project / 'repositories' / 'debian' / 'dists' / 'buster'
+        old.mkdir(parents=True)
+        (old / 'Release').write_text('a release no longer configured\n')
+
+    states = str(tmp_path / 'states')
+    runner = FakeRunner(environment())
+    assert run_main(runner, BOTH, APPS, '--state-dir', states, prepare=stale) == 0
+    assert debian_dists(tmp_path) == ['stable', 'trixie']
+
+
+def test_temporary_state_keeps_failed_release_repository(
+    run_main: Callable[..., int], tmp_path: Path
+) -> None:
+    """Without --state-dir there is no previous state: a failed release keeps its repository."""
+
+    def previous_run(project: Path) -> None:
+        forky = project / 'repositories' / 'debian' / 'dists' / 'forky'
+        forky.mkdir(parents=True)
+        (forky / 'Release').write_text('previous run\n')
+
+    failing = environment(fail=('hello-app', ':forky'))
+    two = {'debian': ['trixie', 'forky']}
+    assert run_main(FakeRunner(failing), two, APPS, prepare=previous_run) == 1
+    forky = tmp_path / 'project' / 'repositories' / 'debian' / 'dists' / 'forky' / 'Release'
+    assert forky.read_text() == 'previous run\n'
+    readme = (tmp_path / 'project' / 'repositories' / 'debian' / 'index.html').read_text()
+    assert 'codename forky' in readme and 'codename trixie' in readme

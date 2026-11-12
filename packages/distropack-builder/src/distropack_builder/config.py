@@ -244,6 +244,14 @@ def load(path: Path) -> BuildConfig:
         raise ConfigError(f'{path}: {_describe(error)}') from error
     root = path.parent.resolve()
     for dist_id, distrib in parsed.distribs.items():
+        # publication removes the repository before writing it again: never the project's
+        # directory, nor anything outside it
+        output = (root / distrib.repository.path).resolve()
+        if output == root or not output.is_relative_to(root):
+            raise ConfigError(
+                f'{path}: distribs.{dist_id}.repository.path: {distrib.repository.path} must be a'
+                ' directory inside the project'
+            )
         for index, extra in enumerate(distrib.extra_repositories):
             where = f'{path}: distribs.{dist_id}.extra_repositories.{index}'
             _check_extra(where, root, targets.is_deb(targets.target(dist_id)), extra)

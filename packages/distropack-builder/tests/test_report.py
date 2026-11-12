@@ -220,3 +220,12 @@ def test_state_kept_github_warning() -> None:
     with Reporter(con, verbose=False, github=True) as reporter:
         reporter.state_kept(TRIXIE)
     assert out.getvalue() == f'::warning::kept the previous state of {TRIXIE}\n'
+
+
+def test_no_state_line(tmp_path: Path) -> None:
+    con, out = console()
+    summary = tmp_path / 'summary.md'
+    with Reporter(con, verbose=False, github=False, summary=summary) as reporter:
+        reporter.no_state(TRIXIE)
+    assert out.getvalue() == f'no state for {TRIXIE}\n'
+    assert summary.read_text() == f'\n- no state for {TRIXIE}\n'

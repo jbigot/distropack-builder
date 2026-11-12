@@ -305,3 +305,25 @@ def test_extra_repository_needs_key_url_for_a_published_page(tmp_path: Path) -> 
     )
     with pytest.raises(ConfigError, match='key_url'):
         config.load(conf)
+
+
+@pytest.mark.parametrize('path', ['.', '..', '../elsewhere', '/srv/repo', 'a/../..'])
+def test_repository_path_outside_project_refused(tmp_path: Path, path: str) -> None:
+    """Publishing from the states removes the repository first: never the project, nor outside."""
+    project = tmp_path / 'project'
+    project.mkdir()
+    conf = project / 'build.conf'
+    conf.write_text(f'distribs: {{debian: {{repository: {{path: "{path}"}}}}}}\npackages: {{}}\n')
+    with pytest.raises(ConfigError) as caught:
+        config.load(conf)
+    assert str(caught.value) == (
+        f'{conf}: distribs.debian.repository.path: {path} must be a directory inside the project'
+    )
+
+
+def test_repository_path_inside_project_accepted(tmp_path: Path) -> None:
+    conf = tmp_path / 'build.conf'
+    conf.write_text(
+        'distribs: {debian: {repository: {path: "out/../repos/debian"}}}\npackages: {}\n'
+    )
+    assert config.load(conf).distribs['debian'].repository.path == Path('out/../repos/debian')

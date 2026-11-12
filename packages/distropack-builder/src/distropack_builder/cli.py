@@ -230,13 +230,23 @@ def make_app(
         download_dir: Path | None = None,
         check_reproducible: bool = False,
         state_dir: Path | None = None,
+        publish: bool = True,
+        build_packages: bool = True,
     ) -> tuple[bool, dict[str, str]]:
         """Build and publish; whether anything failed, and the repositories by distribution id."""
+        if not build_packages and not publish:
+            _fail(2, ValueError('--publish-only and --no-publish exclude each other'))
+        if not build_packages and state_dir is None:
+            _fail(2, ValueError('--publish-only needs --state-dir'))
         # One date for the whole run, so that a run crossing midnight sees one list of releases.
         on = date.today()
         # The configuration's errors, the release data and the images available come before any
         # work; then the engine, before any container.
         loaded, selected = _selection(build_conf, patterns, on)
+        # publishing from lasting states publishes every configured release, whatever -D selects
+        all_releases = (
+            _selection(build_conf, [], on)[1] if patterns and publish and state_dir else None
+        )
         readme.check(readme.project_dir(loaded.root))
         # The repositories this run publishes, for the step running it under GitHub Actions.
         output_dirs = {
@@ -294,6 +304,9 @@ def make_app(
                 set(unpublished),
                 download_dir.resolve() if download_dir else None,
                 state_dir.resolve() if state_dir else None,
+                publish=publish,
+                build=build_packages,
+                all_releases=all_releases,
             )
         return failed or bool(unpublished), output_dirs
 
@@ -366,6 +379,21 @@ def make_app(
                 ' changed (default: a temporary directory, so that everything is built).',
             ),
         ] = None,
+        no_publish: Annotated[
+            bool,
+            typer.Option(
+                '--no-publish',
+                help="Build, and keep the releases' states, but write no repository.",
+            ),
+        ] = False,
+        publish_only: Annotated[
+            bool,
+            typer.Option(
+                '--publish-only',
+                help='Build nothing: write the repositories from the states of --state-dir, every'
+                ' release of build.conf that has one.',
+            ),
+        ] = False,
     ) -> None:
         """Builds the packages of build.conf, and publishes their signed repositories."""
         # SIGTERM (kill, timeout, a CI job cancelled) takes the path of Ctrl-C: the builds are
@@ -385,6 +413,8 @@ def make_app(
                     download_dir,
                     check_reproducible,
                     state_dir,
+                    not no_publish,
+                    not publish_only,
                 )
         except typer.Exit:
             _write_outputs_once_stopped(stopped)

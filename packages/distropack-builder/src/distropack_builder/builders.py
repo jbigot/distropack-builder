@@ -557,7 +557,7 @@ class PackageBuilder:
         """Publish the outputs of deps at localrepo, unsigned, for the builder container."""
         failures = family(
             self._context, localrepo, self._gpg, logger=self.logger, sign=False
-        ).build(deps)
+        ).build(Output(dep.dist_release, dep.outdir) for dep in deps if dep.outdir is not None)
         for error in failures.values():
             raise error
 
@@ -915,6 +915,16 @@ class Public:
 Failures = dict[Release, Exception]
 
 
+@dataclass(frozen=True)
+class Output:
+    """The packages of one build for one release, as a repository publishes them."""
+
+    release: Release
+    """The release they are built for."""
+    directory: Path
+    """The directory holding them: a build's output, or a package of a release's state."""
+
+
 class DebRepoBuilder:
     """A deb repository, published by aptly, its Release files signed by the Signer."""
 
@@ -945,18 +955,14 @@ class DebRepoBuilder:
         """Whether the output directory has a repository of dist_release already."""
         return (self._output_dir / 'dists' / codename(dist_release) / 'Release').is_file()
 
-    def build(self, pkgs: Iterable[PackageBuilder], kept: Set[Release] = frozenset()) -> Failures:
-        """Publish the releases of pkgs, each on its own; the releases whose publication failed.
+    def build(self, outputs: Iterable[Output], kept: Set[Release] = frozenset()) -> Failures:
+        """Publish the releases of outputs, each on its own; the releases whose publication failed.
 
         The page lists the releases published, and those of kept (left as they were) whose
         repository is still there. Without a release to publish, nothing is touched.
         """
         built = [
-            p
-            for p in pkgs
-            if targets.is_deb(p.dist_release.distribution)
-            and p.outdir is not None
-            and p.outdir.is_dir()
+            o for o in outputs if targets.is_deb(o.release.distribution) and o.directory.is_dir()
         ]
         if not built:
             return {}
@@ -976,10 +982,12 @@ class DebRepoBuilder:
                     'aptly', '-config=/aptlyroot/aptly.conf', *args, shm_size='5g', mounts=mounts
                 )
 
-            for dist_release in sorted({p.dist_release for p in built}, key=str):
+            for dist_release in sorted({o.release for o in built}, key=str):
                 try:
                     self._publish(
-                        aptly, dist_release, [p for p in built if p.dist_release == dist_release]
+                        aptly,
+                        dist_release,
+                        [o.directory for o in built if o.release == dist_release],
                     )
                     published.append(dist_release)
                 except Exception as error:
@@ -994,12 +1002,12 @@ class DebRepoBuilder:
         return failures
 
     def _publish(
-        self, aptly: Callable[..., None], dist_release: Release, pkgs: list[PackageBuilder]
+        self, aptly: Callable[..., None], dist_release: Release, directories: list[Path]
     ) -> None:
-        """Publish dist_release, with the outputs of pkgs, under its codename and its suite."""
+        """Publish dist_release, with the packages of directories, under its codename and suite."""
         aptly('repo', 'create', dist_release.uid)
-        for pkg in pkgs:
-            aptly('repo', 'add', dist_release.uid, '/data', data=pkg.outdir)
+        for directory in directories:
+            aptly('repo', 'add', dist_release.uid, '/data', data=directory)
         publish_repo = ['publish', 'repo', '-force-overwrite', '-skip-signing']
         if self._public is not None:
             publish_repo += [
@@ -1025,10 +1033,9 @@ class DebRepoBuilder:
                     self._sign_release(self._output_dir / 'dists' / distribution / 'Release')
         # the .buildinfo beside its .dsc, which aptly does not publish: the environment a package
         # was built in, for anyone to rebuild it there
-        for pkg in pkgs:
-            assert pkg.outdir is not None
-            for buildinfo in pkg.outdir.glob('*.buildinfo'):
-                for dsc in pkg.outdir.glob('*.dsc'):
+        for directory in directories:
+            for buildinfo in directory.glob('*.buildinfo'):
+                for dsc in directory.glob('*.dsc'):
                     for in_pool in (self._output_dir / 'pool').rglob(dsc.name):
                         copy2(buildinfo, in_pool.parent / buildinfo.name)
 
@@ -1073,18 +1080,16 @@ class RpmRepoBuilder:
         """Whether the output directory has a repository of dist_release already."""
         return (self._output_dir / version(dist_release) / 'repodata' / 'repomd.xml').is_file()
 
-    def build(self, pkgs: Iterable[PackageBuilder], kept: Set[Release] = frozenset()) -> Failures:
-        """Publish the releases of pkgs, each on its own; the releases whose publication failed.
+    def build(self, outputs: Iterable[Output], kept: Set[Release] = frozenset()) -> Failures:
+        """Publish the releases of outputs, each on its own; the releases whose publication failed.
 
         The page lists the releases published, and those of kept (left as they were) whose
         repository is still there. Without a release to publish, nothing is touched.
         """
         built = [
-            (p.dist_release, p.outdir)
-            for p in pkgs
-            if targets.is_rpm(p.dist_release.distribution)
-            and p.outdir is not None
-            and p.outdir.is_dir()
+            (o.release, o.directory)
+            for o in outputs
+            if targets.is_rpm(o.release.distribution) and o.directory.is_dir()
         ]
         if not built:
             return {}
@@ -1164,6 +1169,10 @@ def run_builds(
     unbuilt: Set[Release] = frozenset(),
     download_dir: Path | None = None,
     state_dir: Path | None = None,
+    *,
+    publish: bool = True,
+    build: bool = True,
+    all_releases: Mapping[str, Set[Release]] | None = None,
 ) -> bool:
     """Download, build and publish; whether any build or publication did not succeed.
 
@@ -1174,17 +1183,25 @@ def run_builds(
     starts from what its release's state stores of its package, and once every build is settled,
     a release all of whose builds were built or reused has its state replaced by them; the others
     keep theirs.
+
+    Without build, nothing is built: the repositories are published from the states. Without
+    publish, no repository is written. Publishing from a state_dir given removes the repositories
+    and writes them again from the state of every release of all_releases (the configuration's,
+    selected releases by default), so that they hold, and their pages list, the releases with a
+    state; with the temporary one, only the releases of this run are published, and the
+    repositories of the others are left as they were.
     """
     states = state_dir if state_dir is not None else context.workdir / 'state'
     builders: list[PackageBuilder] = []
     repo_builders: list[tuple[str, DebRepoBuilder | RpmRepoBuilder, list[PackageBuilder]]] = []
+    output_dirs: set[Path] = set()
     root = config.root
     pages = readme.environment(readme.project_dir(root))
     for dist_id, distrib in config.distribs.items():
         gpg = signer_for(distrib)
         deb = targets.is_deb(targets.target(dist_id))
         dist_builders: list[PackageBuilder] = []
-        for dist_release in sorted(selected[dist_id], key=lambda release: release.uid):
+        for dist_release in sorted(selected[dist_id] if build else (), key=lambda r: r.uid):
             if deb:
                 dist_builders += [
                     DebPackageBuilder(context, dist_release, root, gpg, name)
@@ -1209,6 +1226,7 @@ def run_builds(
             ]
 
         repository = distrib.repository
+        output_dirs.add(root / repository.path)
         repo_family = DebRepoBuilder if deb else RpmRepoBuilder
         repo_builder = repo_family(
             context,
@@ -1260,18 +1278,36 @@ def run_builds(
 
     releases = published(outcomes)
     _commit_states(states, [b for b in builders if b.dist_release in releases])
-    for release in sorted({b.dist_release for b in builders} - releases | unbuilt, key=str):
-        reporter.state_kept(release)
+    if build:
+        for release in sorted({b.dist_release for b in builders} - releases | unbuilt, key=str):
+            reporter.state_kept(release)
     failed = any(not isinstance(outcome, Succeeded | Reused) for outcome in outcomes.values())
+    if not publish:
+        return failed
+
+    # with states that last, the repositories are theirs alone, written again
+    from_states = state_dir is not None
+    if from_states:
+        for output_dir in output_dirs:
+            rmtree(output_dir, ignore_errors=True)
     for dist_id, repo_builder, dist_builders in repo_builders:
-        kept = {b.dist_release for b in dist_builders} - releases
-        kept |= {r for r in unbuilt if r.distribution.id == dist_id}
+        if from_states:
+            to_publish = (all_releases or selected)[dist_id]
+            kept: set[Release] = set()
+        else:
+            to_publish = {b.dist_release for b in dist_builders} & releases
+            kept = {b.dist_release for b in dist_builders} - releases
+            kept |= {r for r in unbuilt if r.distribution.id == dist_id}
+        outputs: list[Output] = []
+        for release in sorted(to_publish, key=str):
+            stored = ReleaseState(states, RELEASE_CHANNEL, release.uid)
+            if not stored.exists():
+                reporter.no_state(release)
+                continue
+            outputs += [Output(release, p.directory) for _, p in sorted(stored.packages().items())]
         try:
             failures = {
-                str(release): error
-                for release, error in repo_builder.build(
-                    [b for b in dist_builders if b.dist_release in releases], kept
-                ).items()
+                str(release): error for release, error in repo_builder.build(outputs, kept).items()
             }
         except Exception as error:
             failures = {dist_id: error}
