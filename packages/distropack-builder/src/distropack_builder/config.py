@@ -210,8 +210,7 @@ class ReleaseTool(_Model):
     """The settings of the release tool (``distropack-build pending`` and ``release``)."""
 
     author: str | None = None
-    """The author of the changelog entries it writes, ``Name <email>`` (default: from git's
-    ``user.name`` and ``user.email``)."""
+    """The author of the changelog entries it writes, ``Name <email>``; the tool needs it."""
 
     packages: tuple[str, ...] | None = None
     """Globs of the packages a release updates (default: every package with a snapshot

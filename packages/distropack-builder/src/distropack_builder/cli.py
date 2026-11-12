@@ -15,7 +15,7 @@ import os
 import signal
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager, suppress
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import FrameType
@@ -27,6 +27,7 @@ from rich.console import Console
 
 from distro_releases import Release, SelectorError, SourceError, UnknownDistribution
 from distropack_builder import bake, config, readme, snapshots, targets
+from distropack_builder import release as release_tool
 from distropack_builder.availability import AvailabilityError, image_available
 from distropack_builder.builders import run_builds, write_sources
 from distropack_builder.config import AVAILABLE, BuildConfig, ConfigError, Distrib
@@ -606,6 +607,71 @@ def make_app(
             typer.echo(f'{PROG}: {failure}', err=True)
         if failures:
             raise typer.Exit(1)
+
+    @app.command('pending')
+    def pending_command(
+        build_conf: Annotated[
+            Path, typer.Argument(metavar='BUILD_CONF', help='The build configuration.')
+        ],
+        channel: Annotated[str, typer.Argument(metavar='CHANNEL', help='The snapshot channel.')],
+        packages: Annotated[
+            list[str], typer.Argument(metavar='PACKAGE...', help='The packages whose changes wait.')
+        ],
+    ) -> None:
+        """Copies the packaging of packages to <name>-<channel>/, pending the next release.
+
+        The snapshot channel builds from that directory, where its changes wait for the release
+        that needs them. Run it in a clean git working tree; it commits nothing.
+        """
+        with _errors():
+            loaded = config.load(build_conf)
+        try:
+            release_tool.pending(loaded, channel, packages, datetime.now(UTC))
+        except release_tool.ReleaseError as error:
+            _fail(2, error)
+
+    @app.command('release')
+    def release_command(
+        build_conf: Annotated[
+            Path, typer.Argument(metavar='BUILD_CONF', help='The build configuration.')
+        ],
+        version: Annotated[
+            str, typer.Argument(metavar='VERSION', help='The upstream release tag (1.3.0-rc1).')
+        ],
+        from_channel: Annotated[
+            str | None,
+            typer.Option(
+                '--from',
+                metavar='CHANNEL',
+                help='The channel whose pending changes the release takes (default: the only'
+                ' one that has some).',
+            ),
+        ] = None,
+        ported: Annotated[
+            bool,
+            typer.Option(
+                '--ported',
+                help="Go on although packages' directories changed since their changes were set"
+                ' pending: those changes are in the pending directories already.',
+            ),
+        ] = False,
+    ) -> None:
+        """Makes the pending packaging the packaging, and writes the release's entries.
+
+        Every package release.packages selects gets a changelog entry for VERSION, `-` made `~`
+        (1.3.0-rc1 is 1.3.0~rc1). Run it in a clean git working tree; it commits nothing.
+        """
+        with _errors():
+            loaded = config.load(build_conf)
+        try:
+            release_tool.release(
+                loaded, version, from_channel=from_channel, ported=ported, now=datetime.now(UTC)
+            )
+        except release_tool.ReleaseError as error:
+            _fail(2, error)
+        except release_tool.UnportedCommits as error:
+            typer.echo(f'{PROG}: error: {error}', err=True)
+            raise typer.Exit(1) from error
 
     @app.command('sources')
     def sources_command(

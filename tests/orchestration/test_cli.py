@@ -21,6 +21,7 @@ from distropack_builder import cli, config
 from distropack_builder.bake import PROTOCOL
 from distropack_builder.docker import RunResult
 from fake_runner import Call, FakeRunner, tools_respond
+from git_history import git
 from support import (
     FIXTURE_PASSPHRASE,
     SNAP,
@@ -31,6 +32,7 @@ from support import (
 )
 
 PASSPHRASE_ENV = 'DISTROPACK_GPG_PASSPHRASE'
+FIXTURE_ROOT = Path(__file__).parents[1] / 'e2e' / 'project'
 
 
 def invoke(
@@ -717,3 +719,75 @@ def test_run_snapshot_refused(snapshot_project: Path) -> None:
     result = run_channel('--channel', 'weekly', '--snapshot', 'hello-lib=abc')
     assert result.exit_code == 2
     assert 'hello-lib: ' in result.output
+
+
+# The release tool (Phase 13).
+@pytest.fixture
+def packaging_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The fixture's hello-lib in a git repository, in channels stable and weekly."""
+    root = tmp_path / 'packaging'
+    root.mkdir()
+    lib = root / 'hello-lib'
+    for path in (FIXTURE_ROOT / 'hello-lib').rglob('*'):
+        if path.is_file() and path.suffix != '.in':
+            target = lib / path.relative_to(FIXTURE_ROOT / 'hello-lib')
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(path.read_bytes())
+    conf = {
+        'channels': {'stable': {'kind': 'release'}, 'weekly': {'kind': 'snapshot'}},
+        'release': {'author': 'Rel Ease <release@example.invalid>'},
+        'distribs': {},
+        'packages': {
+            'hello-lib': {
+                'channels': {'weekly': {'git': 'file:///x.git', 'ref': 'main', 'verify': 'none'}}
+            }
+        },
+    }
+    (root / 'build.conf').write_text(yaml.safe_dump(conf))
+    for args in (('init', '-q', '-b', 'main'), ('add', '-A'), ('commit', '-q', '-m', 'p')):
+        git(root, *args)
+    monkeypatch.chdir(root)
+    return root
+
+
+def test_pending_and_release_commands(packaging_repo: Path) -> None:
+    result = invoke('pending', 'build.conf', 'weekly', 'hello-lib')
+    assert result.exit_code == 0, result.output
+    assert (packaging_repo / 'hello-lib-weekly').is_dir()
+    git(packaging_repo, 'add', '-A')
+    git(packaging_repo, 'commit', '-q', '-m', 'pending')
+    result = invoke('release', 'build.conf', '1.2.0')
+    assert result.exit_code == 0, result.output
+    assert not (packaging_repo / 'hello-lib-weekly').exists()
+    changelog = (packaging_repo / 'hello-lib' / 'debian' / 'changelog').read_text()
+    assert changelog.startswith('hello-lib (1.2.0-1) unstable; urgency=medium\n')
+
+
+def test_pending_refusal_is_a_usage_error(packaging_repo: Path) -> None:
+    result = invoke('pending', 'build.conf', 'stable', 'hello-lib')
+    assert result.exit_code == 2
+    assert 'release channel' in result.output
+
+
+def test_unported_commits_exit_1(packaging_repo: Path) -> None:
+    assert invoke('pending', 'build.conf', 'weekly', 'hello-lib').exit_code == 0
+    git(packaging_repo, 'add', '-A')
+    git(packaging_repo, 'commit', '-q', '-m', 'pending')
+    rules = packaging_repo / 'hello-lib' / 'debian' / 'rules'
+    rules.write_text(rules.read_text() + '\n')
+    git(packaging_repo, 'commit', '-qam', 'late fix')
+    result = invoke('release', 'build.conf', '1.2.0')
+    assert result.exit_code == 1
+    assert 'late fix' in result.output
+    assert 'rerun with --ported' in result.output
+    result = invoke('release', 'build.conf', '1.2.0', '--ported')
+    assert result.exit_code == 0, result.output
+
+
+def test_release_outside_a_git_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / 'build.conf').write_text('distribs: {}\npackages: {}\n')
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv('GIT_CEILING_DIRECTORIES', str(tmp_path.parent))
+    result = invoke('release', 'build.conf', '1.2.0')
+    assert result.exit_code == 2
+    assert 'git' in result.output

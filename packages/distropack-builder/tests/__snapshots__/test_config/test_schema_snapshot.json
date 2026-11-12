@@ -346,7 +346,7 @@
             }
           ],
           "default": null,
-          "description": "The author of the changelog entries it writes, ``Name <email>`` (default: from git's\n``user.name`` and ``user.email``).",
+          "description": "The author of the changelog entries it writes, ``Name <email>``; the tool needs it.",
           "title": "Author"
         },
         "distribution": {
