@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from distro_releases import Release, distribution
-from distropack_builder import builders, state
+from distropack_builder import builders, inputs, state
 from distropack_builder.bake import REGISTRY
 from distropack_builder.context import BuildContext
 from distropack_builder.docker import Cancellation, Engine, Mount, run
@@ -171,7 +171,7 @@ def test_binnmu_of_a_stored_source(project: Path, tmp_path: Path) -> None:
         + '\n'
     )
     engine = Engine.connect()
-    image = REGISTRY + builders.builder_image(release('debian', 'trixie'))
+    image = REGISTRY + inputs.builder_image(release('debian', 'trixie'))
     temporary = 'distropack-test/binnmu:deps'
     run(engine, image, ['deps'], mounts=[Mount('/src', src)], as_root=True, commit_to=temporary)
     run(

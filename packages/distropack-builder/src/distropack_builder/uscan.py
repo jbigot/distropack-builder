@@ -120,6 +120,63 @@ def fetch_origs(
     return results
 
 
+SNAPSHOTS = '/snapshots'
+
+
+def snapshot_orig(
+    context: BuildContext,
+    project: Path,
+    packaging: str,
+    tarball: Path,
+    source: str,
+    upstream_version: str,
+    directory: Path,
+) -> OrigFiles:
+    """The orig tarball of a snapshot, named by mk-origtargz in directory from tarball.
+
+    mk-origtargz runs in the packaging directory packaging of project, so that it applies its
+    debian/copyright's Files-Excluded; it copies the tarball when there is nothing to exclude, so
+    that the orig is the same bytes as the snapshot's tarball, which every channel shares. Trust
+    comes from the snapshot's check, not from a sources line: the orig counts as verified. An orig
+    already in directory is reused.
+
+    Raises:
+        ContainerFailed: mk-origtargz failed.
+        DownloadFailed: it wrote no orig.
+    """
+    pattern = f'{source}_{upstream_version}.orig.tar.*'
+    found = [p for p in sorted(directory.glob(pattern)) if not p.name.endswith(_SIGNATURES)]
+    if not found:
+        directory.mkdir(parents=True, exist_ok=True)
+        context.run(
+            context.engine,
+            REGISTRY + tool_image(DEB_TOOLS),
+            (
+                'mk-origtargz',
+                '--package',
+                source,
+                '--version',
+                upstream_version,
+                '--copy',
+                '--directory',
+                DOWNLOADS,
+                f'{SNAPSHOTS}/{tarball.name}',
+            ),
+            mounts=[
+                Mount(PROJECT, project, read_only=True),
+                Mount(DOWNLOADS, directory),
+                Mount(SNAPSHOTS, tarball.parent, read_only=True),
+            ],
+            env={'HOME': '/tmp'},
+            workdir=f'{PROJECT}/{packaging}',
+            cancellation=context.cancellation,
+        )
+        found = [p for p in sorted(directory.glob(pattern)) if not p.name.endswith(_SIGNATURES)]
+        if not found:
+            raise DownloadFailed(str(tarball), f'mk-origtargz wrote no {pattern}')
+    return OrigFiles(tarball, found[0], verified=True)
+
+
 def _transient(error: Exception) -> bool:
     """Whether uscan failed on what a new attempt may not meet: a server error, a timeout."""
     return isinstance(error, ContainerFailed) and bool(_TRANSIENT.search(_reason(error)))

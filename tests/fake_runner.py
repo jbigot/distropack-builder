@@ -6,6 +6,7 @@
 
 import logging
 import re
+import shutil
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -185,14 +186,24 @@ def changelog_version(call: Call) -> tuple[str, str]:
 
 
 def answer_mk_origtargz(call: Call) -> None:
-    """Name the downloaded tarball for another package, as mk-origtargz does: a symlink."""
+    """Name a tarball as mk-origtargz does: a symlink to it, or a copy with --copy.
+
+    The package and version are --package's and --version's, the changelog's without them.
+    """
     args = call.args
     package, version = changelog_version(call)
+    if '--package' in args:
+        package = args[args.index('--package') + 1]
+    if '--version' in args:
+        version = args[args.index('--version') + 1]
     directory = host_path(call, args[args.index('--directory') + 1])
-    upstream = Path(args[-1]).name
     orig = directory / f'{package}_{version}.orig.tar.gz'
-    if not orig.is_symlink():
-        orig.symlink_to(upstream)
+    if orig.is_symlink() or orig.exists():
+        return
+    if '--copy' in args:
+        shutil.copyfile(host_path(call, args[-1]), orig)
+    else:
+        orig.symlink_to(Path(args[-1]).name)
 
 
 def tools_respond(call: Call) -> RunResult | None:

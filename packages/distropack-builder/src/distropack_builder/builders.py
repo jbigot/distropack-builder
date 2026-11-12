@@ -11,7 +11,6 @@ outputs of a family's builds, signed, with its page. run_builds drives a whole r
 import hashlib
 import json
 import logging
-import re
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence, Set
 from configparser import ConfigParser
@@ -30,12 +29,21 @@ from debian.debian_support import Version
 
 from distro_releases import Release
 from distropack_builder import readme, repodata, rpmquery, signing, sources, targets
-from distropack_builder.bake import DEB_TOOLS, PROTOCOL, REGISTRY, tool_image
+from distropack_builder.bake import DEB_TOOLS, REGISTRY, tool_image
 from distropack_builder.config import BuildConfig, Distrib, ExtraRepository, expand
 from distropack_builder.context import BuildContext
 from distropack_builder.docker import ContainerFailed, Mount, RunResult
 from distropack_builder.downloads import DownloadFailed, fetch_all, source_name
 from distropack_builder.graph import closure, dependencies
+from distropack_builder.inputs import (
+    CHANGELOG_LINE,
+    ENTRY_DATE,
+    RELEASE_LINE,
+    Files,
+    builder_image,
+    fetch,
+    source_format,
+)
 from distropack_builder.publication import published
 from distropack_builder.report import Reporter, Unreproducible, build_logger
 from distropack_builder.rpmquery import SpecFailed, SpecInfo
@@ -67,10 +75,6 @@ PACKAGE_FILES = ('.deb', '.rpm', '.dsc')
 DIFFOSCOPE_REPORTS = 3
 
 
-# The files a build needs downloaded: each URL's file, or why it could not be.
-Files = Mapping[str, Path | DownloadFailed]
-
-
 def codename(release: Release) -> str:
     """The codename of a release of the Debian family, which all have one."""
     if release.codename is None:
@@ -83,24 +87,6 @@ def version(release: Release) -> str:
     if release.version is None:
         raise ValueError(f'{release} has no version')
     return release.version
-
-
-def builder_image(dist_release: Release) -> str:
-    """The builder image of a release, relative to REGISTRY, as the bake definition tags it.
-
-    The tag is the release's codename in the Debian family, its version elsewhere.
-    """
-    if targets.is_deb(dist_release.distribution):
-        return f'{dist_release.distribution.id}_builder:{dist_release.codename}-p{PROTOCOL}'
-    return f'{dist_release.distribution.id}_builder:{dist_release.version}-p{PROTOCOL}'
-
-
-def source_format(debian_dir: Path) -> str:
-    """The format of a deb source package, as debian/source/format says, 1.0 without it."""
-    try:
-        return (debian_dir / 'source' / 'format').read_text().strip()
-    except FileNotFoundError:
-        return '1.0'
 
 
 def link_or_copy(source: Path, target: Path) -> None:
@@ -773,15 +759,6 @@ class DebPackageBuilder(PackageBuilder):
             self.arch_all_files = list(stored.arch_all_files)
 
 
-# A spec's Release lines, its %changelog line, and the date of a changelog entry, in the short
-# (`Thu Nov 05 2026`) or the long form (`Thu Nov 05 12:00:00 UTC 2026`).
-_RELEASE = re.compile(r'^(?P<tag>Release\s*:\s*)\S.*?[ \t]*$', re.IGNORECASE | re.MULTILINE)
-_CHANGELOG = re.compile(r'^%changelog[ \t]*\n', re.MULTILINE)
-_ENTRY_DATE = re.compile(
-    r'\*\s+(?P<date>\w{3}\s+\w{3}\s+\d{1,2}(?:\s+\d\d:\d\d:\d\d(?:\s+\S+)?)?\s+\d{4})\s'
-)
-
-
 class RpmPackageBuilder(PackageBuilder):
     """The build of a source rpm, and its binary rpms, with rpmbuild."""
 
@@ -899,13 +876,13 @@ class RpmPackageBuilder(PackageBuilder):
         no date (`%autochangelog`), gets none: nothing in it dates one.
         """
         release = rpm_release(self._info().release, self.rebuild)
-        spec, count = _RELEASE.subn(lambda line: line['tag'] + release, spec)
+        spec, count = RELEASE_LINE.subn(lambda line: line['tag'] + release, spec)
         if count == 0:
             raise ValueError(f'{self._spec.name} has no Release line')
-        changelog = _CHANGELOG.search(spec)
+        changelog = CHANGELOG_LINE.search(spec)
         if changelog is None:
             return spec
-        top = _ENTRY_DATE.match(spec[changelog.end() :].lstrip())
+        top = ENTRY_DATE.match(spec[changelog.end() :].lstrip())
         if top is None:
             return spec
         entry = rpm_changelog_entry(self._info().version, release, self._gpg.uid, top['date'])
@@ -1217,32 +1194,28 @@ def run_builds(
     output_dirs: set[Path] = set()
     root = config.root
     pages = readme.environment(readme.project_dir(root))
+    keep_dir = download_dir or context.workdir
+    to_build = selected if build else {dist_id: set() for dist_id in selected}
+    channel = config.release_channel
+    found = fetch(context, config, channel, to_build, disabled, keep_dir, {})
     for dist_id, distrib in config.distribs.items():
         gpg = signer_for(distrib)
         deb = targets.is_deb(targets.target(dist_id))
         dist_builders: list[PackageBuilder] = []
-        for dist_release in sorted(selected[dist_id] if build else (), key=lambda r: r.uid):
+        for dist_release in sorted(to_build[dist_id], key=lambda r: r.uid):
             if deb:
                 dist_builders += [
                     DebPackageBuilder(context, dist_release, root, gpg, name)
-                    for name in config.packages
+                    for name in config.channel_packages(channel)
                     if dist_release not in disabled[name] and DebPackageBuilder.applies(root, name)
                 ]
                 continue
-            names = [
-                name
-                for name in config.packages
-                if dist_release not in disabled[name] and RpmPackageBuilder.applies(root, name)
-            ]
-            # every spec of the release, read by the release's own rpm, in one container
-            specs = rpmquery.query(
-                context,
-                REGISTRY + builder_image(dist_release),
-                {name: RpmPackageBuilder.spec_file(root, name) for name in names},
-            )
             dist_builders += [
-                RpmPackageBuilder(context, dist_release, root, gpg, name, spec=specs[name])
-                for name in names
+                RpmPackageBuilder(
+                    context, dist_release, root, gpg, name, spec=found.specs[name, dist_release.uid]
+                )
+                for name in config.channel_packages(channel)
+                if dist_release not in disabled[name] and RpmPackageBuilder.applies(root, name)
             ]
 
         repository = distrib.repository
@@ -1268,19 +1241,10 @@ def run_builds(
         repo_builders.append((dist_id, repo_builder, dist_builders))
         builders += dist_builders
 
-    debs = [b for b in builders if isinstance(b, DebPackageBuilder) and b.needs_orig]
-    keep_dir = download_dir or context.workdir
-    origs = fetch_origs(context, root, sorted({b.name for b in debs}), keep_dir / 'origs')
-    for deb_builder in debs:
-        deb_builder.orig = origs[deb_builder.name]
-    downloads = keep_dir / 'downloads'
-    downloads.mkdir(parents=True, exist_ok=True)
-    files = fetch_all(
-        [url for builder in builders for url in builder.sources()],
-        downloads,
-        jobs=context.jobs,
-        cancellation=context.cancellation,
-    )
+    for deb_builder in builders:
+        if isinstance(deb_builder, DebPackageBuilder) and deb_builder.needs_orig:
+            deb_builder.orig = found.origs[deb_builder.name]
+    files = found.files
 
     graph = dependencies(builders)
     reporter.expect(len(builders))

@@ -29,6 +29,7 @@ RELEASE_DATA = REPO_ROOT / 'packages' / 'distro-releases' / 'tests' / 'data'
 MODULES = (
     'distropack_builder.targets',
     'distropack_builder.bake',
+    'distropack_builder.inputs',
     'distropack_builder.builders',
     'distropack_builder.cli',
 )
@@ -136,6 +137,33 @@ def write_git_upstream(source: Path, target: Path, tag: str) -> None:
         git('commit', '-q', '-m', 'upstream')
         git('tag', tag)
         git('clone', '-q', '--bare', str(work), str(target), cwd=Path(scratch))
+
+
+def add_upstream_commit(bare: Path, name: str) -> str:
+    """Commit a file name to the main branch of the bare repository bare; the new commit."""
+    env = {
+        'GIT_AUTHOR_NAME': 'upstream',
+        'GIT_AUTHOR_EMAIL': 'upstream@example.invalid',
+        'GIT_COMMITTER_NAME': 'upstream',
+        'GIT_COMMITTER_EMAIL': 'upstream@example.invalid',
+        'GIT_CONFIG_GLOBAL': '/dev/null',
+        'GIT_CONFIG_NOSYSTEM': '1',
+        'PATH': os.environ['PATH'],
+    }
+    with tempfile.TemporaryDirectory() as scratch:
+        work = Path(scratch) / 'work'
+
+        def git(*args: str, cwd: Path = work) -> str:
+            return subprocess.run(
+                ['git', *args], cwd=cwd, env=env, check=True, capture_output=True, text=True
+            ).stdout.strip()
+
+        git('clone', '-q', str(bare), str(work), cwd=Path(scratch))
+        (work / name).write_text(name)
+        git('add', name)
+        git('commit', '-q', '-m', name)
+        git('push', '-q', 'origin', 'main')
+        return git('rev-parse', 'HEAD')
 
 
 def make_project(

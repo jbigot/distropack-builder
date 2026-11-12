@@ -28,7 +28,7 @@ from rich.console import Console
 from distro_releases import Release, SelectorError, SourceError, UnknownDistribution
 from distropack_builder import bake, config, readme, targets
 from distropack_builder.availability import AvailabilityError, image_available
-from distropack_builder.builders import builder_image, run_builds, write_sources
+from distropack_builder.builders import run_builds, write_sources
 from distropack_builder.config import AVAILABLE, BuildConfig, ConfigError, Distrib
 from distropack_builder.context import BuildContext, Runner
 from distropack_builder.docker import Cancellation, Engine
@@ -36,6 +36,7 @@ from distropack_builder.docker import run as run_container
 from distropack_builder.docker.endpoint import EngineNotFound, RemoteEndpoint
 from distropack_builder.downloads import new_client
 from distropack_builder.github import GithubOutputError, write_outputs
+from distropack_builder.inputs import builder_image
 from distropack_builder.report import Reporter, github_mode
 from distropack_builder.selection import configured_releases, disabled_releases
 from distropack_builder.signing import Signer, SigningKeyError
