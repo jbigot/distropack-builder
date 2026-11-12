@@ -11,6 +11,7 @@ outputs of a family's builds, signed, with its page. run_builds drives a whole r
 import hashlib
 import json
 import logging
+import re
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence, Set
 from configparser import ConfigParser
@@ -41,7 +42,13 @@ from distropack_builder.scheduler import Reused, Succeeded, schedule
 from distropack_builder.signing import Signer
 from distropack_builder.state import RELEASE_CHANNEL, StoredPackage, packaging_key, static_key
 from distropack_builder.uscan import OrigFiles, fetch_origs
-from distropack_builder.versions import binnmu_entry, deb_base_version, deb_version, rpm_release
+from distropack_builder.versions import (
+    binnmu_entry,
+    deb_base_version,
+    deb_version,
+    rpm_changelog_entry,
+    rpm_release,
+)
 
 # The host name of the build containers, the same in every run.
 BUILD_HOSTNAME = 'builder'
@@ -739,6 +746,12 @@ class DebPackageBuilder(PackageBuilder):
             self.arch_all_files = list(stored.arch_all_files)
 
 
+# A spec's main Release line, its %changelog line, and the date of a changelog entry.
+_RELEASE = re.compile(r'^Release\s*:\s*(?P<value>\S.*?)\s*$', re.IGNORECASE | re.MULTILINE)
+_CHANGELOG = re.compile(r'^%changelog[ \t]*\n', re.MULTILINE)
+_ENTRY_DATE = re.compile(r'^\*\s+(?P<date>\w{3}\s+\w{3}\s+\d{1,2}\s+\d{4})\s', re.MULTILINE)
+
+
 class RpmPackageBuilder(PackageBuilder):
     """The build of a source rpm, and its binary rpms, with rpmbuild."""
 
@@ -811,7 +824,8 @@ class RpmPackageBuilder(PackageBuilder):
     def _build(self, wk_dir: Path, outdir: Path, deps: Set[PackageBuilder], files: Files) -> None:
         pkg_dir = wk_dir / 'pkg'
         pkg_dir.mkdir()
-        copy2(self._spec, pkg_dir / self._spec.name)
+        spec = self._spec.read_text()
+        (pkg_dir / self._spec.name).write_text(spec if self.rebuild == 0 else self._rebuilt(spec))
 
         localrepo = wk_dir / 'repo'
         self._local_repository(RpmRepoBuilder, localrepo, deps)
@@ -830,11 +844,45 @@ class RpmPackageBuilder(PackageBuilder):
             outputs='/output',
         )
         rmtree(localrepo)
+        rmtree(pkg_dir)
+        if self.unchanged:  # nothing built: the stored packages stand
+            return
 
         rpms = sorted(file.name for file in outdir.iterdir() if file.suffix == '.rpm')
         if rpms:
             RpmSign(self._context, self.logger).sign(self._gpg, outdir, rpms)
-        rmtree(pkg_dir)
+        self.source_files = [name for name in rpms if name.endswith('.src.rpm')]
+        self.arch_all_files = []
+
+    def _rebuilt(self, spec: str) -> str:
+        """The spec of the rebuild-th rebuild: its Release `.<n>` after, and why, in %changelog.
+
+        The changelog entry is dated as the spec's top one, so that the same inputs give the same
+        packages: rpm takes the build time from that date. A spec without %changelog gets none,
+        nothing in it dating one.
+        """
+        found = _RELEASE.search(spec)
+        if found is None:
+            raise ValueError(f'{self._spec.name} has no Release line')
+        raw = found['value']
+        spec = (
+            spec[: found.start('value')]
+            + rpm_release(raw, self.rebuild)
+            + spec[found.end('value') :]
+        )
+        changelog = _CHANGELOG.search(spec)
+        if changelog is None:
+            return spec
+        top = _ENTRY_DATE.search(spec, changelog.end())
+        if top is None:
+            return spec
+        entry = rpm_changelog_entry(
+            self._info().version,
+            rpm_release(raw.replace('%{?dist}', ''), self.rebuild),
+            self._gpg.uid,
+            top['date'],
+        )
+        return spec[: changelog.end()] + entry + spec[changelog.end() :]
 
 
 @dataclass(frozen=True)

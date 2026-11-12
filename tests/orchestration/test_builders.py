@@ -1572,3 +1572,139 @@ def test_binnmu_check_ignores_the_stored_source(
     )
     assert under.build(frozenset(), {}) is None
     assert len([c for c in runner.calls if c.is_build]) == 2
+
+
+# The build modes of an rpm: hello-app on Fedora 44, as builder() makes it.
+APP_SPEC = FIXTURE_PROJECT / 'hello-app' / 'hello-app.spec'
+APP_RPM_BASE = '1.0-1.fc44'
+
+
+def rpm_build(
+    release_: str = '1.fc44', *, unchanged: bool = False, seen: dict[str, str] | None = None
+) -> Callable[[Call], RunResult | None]:
+    """deps reports INSTALLED (unchanged if asked) and keeps the spec; build writes the rpms."""
+
+    def respond(call: Call) -> RunResult | None:
+        if call.is_deps:
+            buildenv = call.targets['/buildenv'].source
+            (buildenv / 'installed').write_text(INSTALLED)
+            if unchanged:
+                (buildenv / 'unchanged').touch()
+            if seen is not None:
+                (spec,) = call.targets['/src'].source.glob('*.spec')
+                seen['spec'] = spec.read_text()
+        if call.is_build:
+            out = call.targets['/output'].source
+            (out / f'hello-app-1.0-{release_}.src.rpm').write_bytes(b'srpm')
+            (out / f'hello-app-1.0-{release_}.noarch.rpm').write_bytes(b'rpm')
+        return None
+
+    return respond
+
+
+def stored_rpm(tmp_path: Path, spec: Path = APP_SPEC, *, key: str | None = None) -> Any:
+    """hello-app as a committed state of Fedora 44 stores it, read back."""
+    built = tmp_path / 'stored-rpm'
+    built.mkdir()
+    (built / f'hello-app-{APP_RPM_BASE}.src.rpm').write_bytes(b'stored srpm')
+    (built / f'hello-app-{APP_RPM_BASE}.noarch.rpm').write_bytes(b'stored rpm')
+    root = tmp_path / 'state'
+    writer = state.ReleaseStateWriter(root, state.RELEASE_CHANNEL, 'fedora-44')
+    writer.add(
+        'hello-app',
+        static_key=state.static_key(spec, {}, state.RELEASE_CHANNEL) if key is None else key,
+        env_key='stored-environment',
+        base_version=APP_RPM_BASE,
+        rebuild=0,
+        version=APP_RPM_BASE,
+        snapshot_commit=None,
+        packaging_hash='packaging',
+        outdir=built,
+        source_files=[f'hello-app-{APP_RPM_BASE}.src.rpm'],
+        arch_all_files=[],
+    )
+    writer.commit()
+    return state.ReleaseState(root, state.RELEASE_CHANNEL, 'fedora-44').package('hello-app')
+
+
+def rpm_signs(runner: FakeRunner) -> list[Call]:
+    return [c for c in runner.calls if 'rpm_sign:' in c.image]
+
+
+def test_rpm_no_state_builds_as_written(
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date
+) -> None:
+    seen: dict[str, str] = {}
+    runner.respond = rpm_build(seen=seen)
+    under = builder(builders, context, release('fedora', '44', frozen))
+    assert under.build(frozenset(), {}) is None
+    assert seen['spec'] == APP_SPEC.read_text()
+    assert 'DISTROPACK_KNOWN_ENV' not in builder_call(runner).env
+    assert (under.base_version, under.rebuild, under.version) == (APP_RPM_BASE, 0, APP_RPM_BASE)
+    assert under.static_key == state.static_key(APP_SPEC, {}, state.RELEASE_CHANNEL)
+    assert under.packaging_hash == state.packaging_key(APP_SPEC)
+    assert under.source_files == [f'hello-app-{APP_RPM_BASE}.src.rpm']
+    assert under.arch_all_files == []
+    assert len(rpm_signs(runner)) == 1
+
+
+def test_rpm_rebuild_rewrites_release(
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date, tmp_path: Path
+) -> None:
+    seen: dict[str, str] = {}
+    runner.respond = rpm_build('1.fc44.1', seen=seen)
+    under = builder(builders, context, release('fedora', '44', frozen))
+    under.stored = stored_rpm(tmp_path)
+    assert under.build(frozenset(), {}) is None
+    assert builder_call(runner).env['DISTROPACK_KNOWN_ENV'] == 'stored-environment'
+    assert 'Release:        1%{?dist}.1\n' in seen['spec']
+    uid = fixture_signer().uid
+    assert (
+        '%changelog\n'
+        f'* Thu Nov 05 2026 {uid} - 1.0-1.1\n'
+        '- Rebuilt against updated build dependencies\n'
+        '\n'
+        '* Thu Nov 05 2026 distropack test <test@example.invalid> - 1.0-1\n'
+    ) in seen['spec']
+    assert (under.rebuild, under.version) == (1, '1.0-1.fc44.1')
+    assert under.source_files == ['hello-app-1.0-1.fc44.1.src.rpm']
+    assert len(rpm_signs(runner)) == 1  # a full build: signed as any
+
+
+def test_rpm_without_changelog_bumps_release_only(
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date, tmp_path: Path
+) -> None:
+    project = tmp_path / 'project'
+    (project / 'hello-app').mkdir(parents=True)
+    spec = project / 'hello-app' / 'hello-app.spec'
+    spec.write_text(APP_SPEC.read_text().partition('%changelog')[0])
+    seen: dict[str, str] = {}
+    runner.respond = rpm_build('1.fc44.1', seen=seen)
+    info = SpecInfo(frozenset({'hello-lib'}), frozenset({'hello-app'}), (), '1.0', '1.fc44')
+    under = builders.RpmPackageBuilder(
+        context, release('fedora', '44', frozen), project, fixture_signer(), 'hello-app', spec=info
+    )
+    under.stored = stored_rpm(tmp_path, spec)
+    under.build(frozenset(), {})
+    assert seen['spec'] == spec.read_text().replace('1%{?dist}\n', '1%{?dist}.1\n')
+
+
+def test_rpm_changed_spec_refused(
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date, tmp_path: Path
+) -> None:
+    under = builder(builders, context, release('fedora', '44', frozen))
+    under.stored = stored_rpm(tmp_path, key='another spec')
+    with pytest.raises(builders.UnversionedChange, match='bump Release in the spec'):
+        under.build(frozenset(), {})
+    assert runner.calls == []
+
+
+def test_rpm_reused_not_signed(
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date, tmp_path: Path
+) -> None:
+    runner.respond = rpm_build(unchanged=True)
+    under = builder(builders, context, release('fedora', '44', frozen))
+    under.stored = stored_rpm(tmp_path)
+    assert under.build(frozenset(), {}) == Reused()
+    assert rpm_signs(runner) == [] and not [c for c in runner.calls if c.is_build]
+    assert under.outdir == under.stored.directory and under.version == APP_RPM_BASE

@@ -86,3 +86,10 @@ def binnmu_entry(
         '\n'
         f' -- {author}  {date}\n'
     )
+
+
+def rpm_changelog_entry(version: str, release: str, author: str, date: str) -> str:
+    """The %changelog entry of an rpm rebuild, as Fedora's mass rebuilds write theirs."""
+    return (
+        f'* {date} {author} - {version}-{release}\n- Rebuilt against updated build dependencies\n\n'
+    )

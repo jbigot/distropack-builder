@@ -15,6 +15,7 @@ from distropack_builder.versions import (
     deb_base_version,
     deb_version,
     next_rebuild,
+    rpm_changelog_entry,
     rpm_release,
     rpm_version,
 )
@@ -118,3 +119,11 @@ def test_rebuilds_increase(base: str, m: int, n: int) -> None:
 def test_binnmu_entry_names_its_architecture() -> None:
     entry = binnmu_entry('pdi', '1.0-1+b1', 'sid', 'PDI <pdi@example.org>', 'date', 'arm64')
     assert '  * Binary-only non-maintainer upload for arm64; no source changes.\n' in entry
+
+
+def test_rpm_changelog_entry() -> None:
+    assert rpm_changelog_entry('1.0', '1.2', 'PDI <pdi@example.org>', 'Thu Nov 05 2026') == (
+        '* Thu Nov 05 2026 PDI <pdi@example.org> - 1.0-1.2\n'
+        '- Rebuilt against updated build dependencies\n'
+        '\n'
+    )
