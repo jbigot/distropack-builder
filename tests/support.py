@@ -162,7 +162,11 @@ def use_channels(project: Path, release_channel: str = 'stable', snapshot: str =
 
 
 def add_snapshot_package(
-    project: Path, snapshot: str = 'weekly', orig_base: str = 'https://orig.test'
+    project: Path,
+    snapshot: str = 'weekly',
+    orig_base: str = 'https://orig.test',
+    *,
+    autosetup: bool = False,
 ) -> None:
     """hello-snap: hello-app as a quilt source, built in snapshot from hello-lib's upstream main.
 
@@ -187,6 +191,14 @@ def add_snapshot_package(
             '%description', f'Source0: {orig_base}/{SNAP}-%{{version}}.tar.gz\n\n%description', 1
         )
     )
+    if autosetup:  # unpack the snapshot's tarball, as a spec building snapshots does
+        spec.write_text(
+            spec.read_text().replace(
+                '%build',
+                f'%prep\n%autosetup -n {SNAP}-%{{?commit}}%{{!?commit:%{{version}}}}\n\n%build',
+                1,
+            )
+        )
     conf_path = project / 'build.conf'
     conf = yaml.safe_load(conf_path.read_text())
     conf['packages'][SNAP] = {
