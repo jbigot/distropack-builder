@@ -3010,8 +3010,10 @@ def test_check_install_every_release(
     images = sorted(c.image for c in runner.calls)
     assert images == ['debian:trixie-slim', 'fedora:44'], images
     for call in runner.calls:
-        assert call.network == 'distropack-test'
-        assert 'hello-lib' in call.args[-1]
+        # the site on the private network, the distribution's own mirrors on the default one
+        assert call.network is True
+        assert call.args[-1].count('hello-lib')
+    assert all('sudo ' not in call.args[-1] for call in runner.calls)
     assert 'install check passed: Debian GNU/Linux 13 (Trixie), channel stable' in out
 
 

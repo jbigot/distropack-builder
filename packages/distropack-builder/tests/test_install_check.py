@@ -82,3 +82,23 @@ def test_default_packages_are_the_repository_s(tmp_path: Path) -> None:
         'hello-app',
         'hello-app-doc',
     ]
+
+
+def test_prerequisites_run_as_root() -> None:
+    target = Target('dnf', 'hello', 'http://site:8080/el', F44, ('main',), None)
+    script = install_check.script(
+        target, ['hello-app'], 'sudo dnf install -y epel-release\nsudo crb enable'
+    )
+    assert 'sudo' not in script
+    assert 'dnf install -y epel-release\ncrb enable' in script
+
+
+def test_config_manager_installed_first() -> None:
+    """A minimal image lacks dnf's config-manager, which a host has: the check installs it."""
+    target = Target('dnf', 'hello', 'http://site:8080/el', F44, ('main',), None)
+    script = install_check.script(
+        target, ['hello-app'], 'sudo dnf config-manager --set-enabled crb'
+    )
+    assert script.index("dnf install -y 'dnf-command(config-manager)'") < script.index(
+        'dnf config-manager --set-enabled crb'
+    )

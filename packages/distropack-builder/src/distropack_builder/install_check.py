@@ -4,13 +4,15 @@
 
 """The install check: every repository of a site, installed in a clean container of its release.
 
-For each release and channel, the site is served over HTTP by a sidecar on a private network, and
-a container of the distribution's base image (not the builder's) adds the repository as the page
-tells its users, signatures checked, and installs the packages. With a previous URL, it installs
-from the published site first, then switches to the new one and upgrades: no package may be held
-back nor removed. The containers and the network are removed however the check ends.
+For each release and channel, the site is served over HTTP by a sidecar on a private network
+without any route outside, and a container of the distribution's base image (not the builder's),
+on that network and on the default one (for the distribution's own mirrors), adds the repository
+as the page tells its users, signatures checked, and installs the packages. With a previous URL,
+it installs from the published site first, then switches to the new one and upgrades: no package
+may be held back nor removed. The containers and the network are removed however the check ends.
 """
 
+import re
 import shlex
 from collections.abc import Callable, Mapping, Sequence, Set
 from contextlib import AbstractContextManager
@@ -93,7 +95,11 @@ def script(target: Target, packages: Sequence[str], prerequisites: str = '') -> 
     Signatures are always checked; an upgrade that would remove a package, or keep one back, fails.
     """
     names = ' '.join(shlex.quote(p) for p in packages)
-    lines = ['set -e', prerequisites] if prerequisites else ['set -e']
+    # the page's commands, for a user; the container runs them as root, without sudo
+    commands = re.sub(r'^sudo ', '', prerequisites, flags=re.MULTILINE)
+    if 'dnf config-manager' in commands:  # a host has it; a minimal image does not
+        commands = "dnf install -y 'dnf-command(config-manager)'\n" + commands
+    lines = ['set -e', commands] if commands else ['set -e']
     first = target.previous or target.url
     if target.manager == 'apt':
         lines.append('export DEBIAN_FRONTEND=noninteractive')
@@ -250,8 +256,10 @@ def check(
                         as_root=True,
                         check=False,
                         cancellation=context.cancellation,
-                        network=True if checked.previous else net,
-                        networks=[net] if checked.previous else [],
+                        # the distribution's own mirrors, for the dependencies the site does not
+                        # hold, on the default network; the site on the private one
+                        network=True,
+                        networks=[net],
                     )
                 results[(release, item.channel)] = CheckResult(result.status == 0, result.output)
     return results

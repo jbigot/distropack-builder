@@ -85,7 +85,8 @@ distropack-build check-install --site site --previous debian=https://repo.exampl
 
 For every release and channel the site holds, a clean container of the distribution's base image
 (not the builder's) installs from the site, served over HTTP by a sidecar container on a private
-network without any route outside:
+network without any route outside; the installing container also has the default network, for
+the dependencies its distribution's mirrors provide:
 
 - it adds the repository as the page tells its users, with its keyring: apt without
   `trusted=yes`, dnf and zypper with `gpgcheck=1` and `repo_gpgcheck=1`, so that a signature that
@@ -93,8 +94,7 @@ network without any route outside:
   channel's (deb), or its own repository (rpm);
 - it installs `build.conf`'s `check_install` packages, by default every binary package of the
   release and channel;
-- with `--previous DIST=URL`, it first installs from that published URL (the container then has
-  the network), then switches to the site and upgrades: `apt-get --no-remove dist-upgrade`, `dnf
+- with `--previous DIST=URL`, it first installs from that published URL, then switches to the site and upgrades: `apt-get --no-remove dist-upgrade`, `dnf
   upgrade` without `--allowerasing`, `zypper update`, and fails when a package would be removed
   or is left behind.
 
