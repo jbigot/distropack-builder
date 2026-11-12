@@ -2967,3 +2967,13 @@ def test_site_extra_outside_refused(
     )
     assert status == 2
     assert 'inside the site' in out
+
+
+def test_every_distribution_published_after_the_guard(
+    run_main: Callable[..., int], tmp_path: Path
+) -> None:
+    """The guard of one distribution's repository leaves the next ones their releases."""
+    assert run_main(FakeRunner(environment()), BOTH, ['hello-lib']) == 0
+    repositories = tmp_path / 'project' / 'repositories'
+    assert (repositories / 'debian' / 'dists' / 'trixie' / 'Release').is_file()
+    assert (repositories / 'fedora' / '44' / 'repodata' / 'repomd.xml').is_file()

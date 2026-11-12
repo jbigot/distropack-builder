@@ -1521,9 +1521,9 @@ def run_builds(
             continue
         written = out / repository.path
         # the releases kept from the last publication are deployed with it: guarded too
-        releases = {o.release for o in outputs} | kept
+        guarded = {o.release for o in outputs} | kept
         try:
-            refused = _guard(config, dist_id, group, written, url, releases)
+            refused = _guard(config, dist_id, group, written, url, guarded)
         except Exception as error:  # noqa: BLE001 -- versions that cannot be compared are refused
             refused = [f'the versions published at {url} cannot be read: {error}']
         reporter.version_compared(str(written), url)
