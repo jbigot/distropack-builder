@@ -26,7 +26,7 @@ import typer
 from rich.console import Console
 
 from distro_releases import Release, SelectorError, SourceError, UnknownDistribution
-from distropack_builder import bake, config, readme, registry, snapshots, targets
+from distropack_builder import bake, config, readme, registry, site, snapshots, targets
 from distropack_builder import release as release_tool
 from distropack_builder.availability import AvailabilityError, image_available
 from distropack_builder.builders import run_builds, write_sources
@@ -630,6 +630,124 @@ def make_app(
             _fail(
                 1, ValueError('nothing to compare: no release has a state, or no repository a URL')
             )
+
+    @app.command('site')
+    def site_command(
+        output: Annotated[
+            Path,
+            typer.Option(
+                '--output', metavar='DIR', file_okay=False, help='Where to write the site.'
+            ),
+        ],
+        state_dir: Annotated[
+            Path,
+            typer.Option(
+                '--state-dir', metavar='DIR', file_okay=False, help='The states to publish.'
+            ),
+        ],
+        build_conf: BuildConf = Path('build.conf'),
+        distributions: Patterns = None,
+        extra: Annotated[
+            list[str] | None,
+            typer.Option(
+                '--extra',
+                metavar='PATH=DIR',
+                help='Copy the tree DIR as is to PATH in the site; repeat it.',
+                show_default=False,
+            ),
+        ] = None,
+        max_size: Annotated[
+            str | None,
+            typer.Option(
+                '--max-size',
+                metavar='SIZE',
+                help='Fail when the site is larger: <n>, <n>K, <n>M or <n>G, powers of 1024.',
+            ),
+        ] = None,
+        no_version_guard: Annotated[
+            bool,
+            typer.Option(
+                '--no-version-guard',
+                help="Publish without comparing the versions with those the repositories' URLs"
+                ' publish.',
+            ),
+        ] = False,
+        passphrase_file: Annotated[
+            Path | None,
+            typer.Option(
+                '--passphrase-file',
+                metavar='FILE',
+                exists=True,
+                dir_okay=False,
+                help='The file holding the passphrase of the signing key (default:'
+                f' ${PASSPHRASE_ENV}).',
+            ),
+        ] = None,
+        docker_host: Annotated[
+            str | None,
+            typer.Option(
+                '--docker-host',
+                metavar='URL',
+                envvar='DISTROPACK_DOCKER_HOST',
+                help='The endpoint of the container engine.',
+            ),
+        ] = None,
+    ) -> None:
+        """Assembles the site: every channel's repositories from the states, and extra trees.
+
+        It writes the site's index page (the project's README.tpl/index.html.j2, else the
+        default), a listing into every directory without an index.html, and fails above
+        --max-size, saying what weighs.
+        """
+        extras: dict[str, Path] = {}
+        for value in extra or []:
+            path, separator, directory = value.partition('=')
+            if not separator or not path or not Path(directory).is_dir():
+                _fail(2, ValueError(f'--extra {value}: expected PATH=DIR, DIR a directory'))
+            extras[path] = Path(directory)
+        try:
+            limit = None if max_size is None else site.parse_size(max_size)
+            site.check_extra_paths(output, extras)
+        except ValueError as error:
+            _fail(2, error)
+        with _errors():
+            loaded = config.load(build_conf)
+            project = readme.project_dir(loaded.root)
+            readme.environment(project).get_template('index.html.j2')
+        output.mkdir(parents=True, exist_ok=True)
+        failed, _ = build(
+            build_conf,
+            distributions or [],
+            (os.cpu_count() or 1) + 1,
+            False,
+            read_passphrase(passphrase_file, os.environ),
+            docker_host,
+            None,
+            False,
+            state_dir,
+            True,
+            False,
+            None,
+            None,
+            not no_version_guard,
+            output.resolve(),
+        )
+        if failed:
+            raise typer.Exit(1)
+        site.copy_extras(output, extras)
+        site.write_index(output, project, site.index_of(loaded, output))
+        site.write_listings(output)
+        size = site.tree_size(output)
+        if limit is not None and size > limit:
+            typer.echo(
+                f'{PROG}: error: the site, {site.human(size)}, is above the limit,'
+                f' {site.human(limit)}:',
+                err=True,
+            )
+            for path, weight in site.size_report(output):
+                typer.echo(f'  {site.human(weight):>12}  {path}', err=True)
+            raise typer.Exit(1)
+        typer.echo(f'{output}: {site.human(size)}')
 
     @app.command('fetch')
     def fetch_command(

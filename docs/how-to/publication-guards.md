@@ -53,3 +53,25 @@ with a state, or no repository with a URL). `--url DIST=URL` compares a distribu
 with another URL than its repository's, such as a repository being replaced; a `DIST` that is
 not a distribution of `build.conf` is an error. It needs the signing
 key, as a publication does.
+
+## Assemble the site
+
+```sh
+distropack-build site --output site --state-dir states --max-size 900M \
+    --extra pdi-main.debian=frozen/pdi-main.debian
+```
+
+publishes every channel's repositories from the states under `site/`, at their `repository.path`
+or channel `path`, the version guard included, then:
+
+- copies each `--extra PATH=DIR` tree as is to `PATH` (a directory inside the site);
+- writes the site's index page, linking every repository: the project's
+  `README.tpl/index.html.j2` when there is one, which may extend the default as
+  `distropack/index.html.j2` and override its blocks `title`, `intro` and `repositories`;
+- writes a listing (directories first, sizes, UTC dates, relative links) into every directory
+  without an `index.html`, so that the whole tree can be browsed;
+- measures the tree, hard links once: above `--max-size` (`<n>`, `<n>K`, `<n>M`, `<n>G`, powers of
+  1024, as `du -h` counts), it exits 1, listing the size of every top-level and second-level
+  directory. GitHub Pages serves at most 1 GB.
+
+It needs the signing key, as any publication.

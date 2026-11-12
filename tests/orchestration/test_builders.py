@@ -2868,3 +2868,102 @@ def test_publish_into_output_root(
     assert not (project / 'repositories').exists()
     assert (output / 'repositories' / 'fedora' / '44' / 'repodata' / 'repomd.xml').is_file()
     assert (output / 'repositories' / 'debian' / 'dists' / 'trixie' / 'Release').is_file()
+
+
+# The site (Phase 14, Part B).
+def make_site(cli: ModuleType, *args: str) -> tuple[int, str]:
+    app = cli.make_app(runner=FakeRunner(environment()), connect=lambda host: cast(Any, None))
+    result = CliRunner().invoke(
+        app,
+        ['site', *args, 'build.conf'],
+        env={'DISTROPACK_GPG_PASSPHRASE': FIXTURE_PASSPHRASE},
+        catch_exceptions=False,
+    )
+    return result.exit_code, result.stdout + result.stderr
+
+
+def built_states(run_main: Callable[..., int], tmp_path: Path, **kwargs: Any) -> str:
+    states = str(tmp_path / 'states')
+    assert (
+        run_main(
+            FakeRunner(environment()),
+            BOTH,
+            ['hello-lib'],
+            '--state-dir',
+            states,
+            '--no-publish',
+            **kwargs,
+        )
+        == 0
+    )
+    return states
+
+
+def test_site_assembles_every_repository(
+    run_main: Callable[..., int], cli: ModuleType, tmp_path: Path
+) -> None:
+    states = built_states(run_main, tmp_path)
+    legacy = tmp_path / 'legacy'
+    (legacy / 'dists').mkdir(parents=True)
+    (legacy / 'dists' / 'Release').write_text('frozen\n')
+    output = tmp_path / 'site'
+    status, out = make_site(
+        cli, '--output', str(output), '--state-dir', states, '--extra', f'pdi-main.debian={legacy}'
+    )
+    assert status == 0, out
+    assert (output / 'repositories' / 'debian' / 'dists' / 'trixie' / 'Release').is_file()
+    assert (output / 'repositories' / 'fedora' / '44' / 'repodata' / 'repomd.xml').is_file()
+    assert (output / 'pdi-main.debian' / 'dists' / 'Release').read_text() == 'frozen\n'
+    index = (output / 'index.html').read_text()
+    assert 'href="repositories/debian/"' in index and 'href="repositories/fedora/"' in index
+    assert (output / 'repositories' / 'fedora' / '44' / 'index.html').is_file()  # a listing
+    assert not (tmp_path / 'project' / 'repositories').exists()
+
+
+def test_site_size_limit(run_main: Callable[..., int], cli: ModuleType, tmp_path: Path) -> None:
+    states = built_states(run_main, tmp_path)
+    status, out = make_site(
+        cli, '--output', str(tmp_path / 'site'), '--state-dir', states, '--max-size', '1K'
+    )
+    assert status == 1
+    assert 'repositories/fedora' in out and 'above the limit' in out
+
+
+def test_site_guard_failure_leaves_no_repository(
+    run_main: Callable[..., int],
+    cli: ModuleType,
+    recorded_http: respx.MockRouter,
+    tmp_path: Path,
+) -> None:
+    states = built_states(run_main, tmp_path)
+    fresh(tmp_path)
+    run_main(
+        FakeRunner(environment()),
+        BOTH,
+        ['hello-lib'],
+        '--no-publish',
+        prepare=published_at(PUBLISHED),
+    )
+    serve_published(recorded_http, '2.0', '1.fc44', 'b' * 64)
+    output = tmp_path / 'site'
+    status, out = make_site(cli, '--output', str(output), '--state-dir', states)
+    assert status == 1
+    assert 'is already published' in out
+    assert not (output / 'repositories' / 'fedora').exists()
+
+
+def test_site_extra_outside_refused(
+    run_main: Callable[..., int], cli: ModuleType, tmp_path: Path
+) -> None:
+    states = built_states(run_main, tmp_path)
+    status, out = make_site(
+        cli,
+        '--output',
+        str(tmp_path / 'site'),
+        '--state-dir',
+        states,
+        '--extra',
+        f'../x={tmp_path}',
+    )
+    assert status == 2
+    assert 'inside the site' in out

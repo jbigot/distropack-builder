@@ -1,0 +1,25 @@
+{#-
+SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+
+SPDX-License-Identifier: MIT
+-#}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{{ site.title }}{% endblock %}</title>
+</head>
+<body>
+{% block intro %}<h1>{{ site.title }}</h1>
+<p>The package repositories of {{ site.title }}: follow the link of your distribution for how to
+install from it.</p>{% endblock %}
+{% block repositories -%}
+<ul>
+{%- for repository in site.repositories %}
+<li><a href="{{ repository.path }}/">{{ repository.label }}</a></li>
+{%- endfor %}
+</ul>
+{%- endblock %}
+</body>
+</html>

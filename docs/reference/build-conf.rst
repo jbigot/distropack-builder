@@ -53,6 +53,12 @@ template can extend the default one and replace some of its blocks, ``title``, `
 A template that does not compile, or that names a variable ``page`` does not have, stops the run
 before any build.
 
+``distropack-build site`` writes the site's own index page from ``README.tpl/index.html.j2`` when
+the project has one, the default otherwise; it may extend ``distropack/index.html.j2`` and override
+its blocks ``title``, ``intro`` and ``repositories``. Its one variable, ``site``, holds the
+``title`` (the project directory's name) and the ``repositories``, each with its ``label`` and its
+``path`` in the site.
+
 Settings
 --------
 

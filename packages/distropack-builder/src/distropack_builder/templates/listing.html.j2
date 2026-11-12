@@ -1,0 +1,30 @@
+{#-
+SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+
+SPDX-License-Identifier: MIT
+-#}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ listing.path }}</title>
+<style>
+body { font-family: sans-serif; margin: 2em; }
+table { border-collapse: collapse; }
+td { padding: 0.1em 1em 0.1em 0; }
+td.size { text-align: right; }
+</style>
+</head>
+<body>
+<h1>{{ listing.path }}</h1>
+<table>
+{%- if listing.parent %}
+<tr><td><a href="../">../</a></td><td></td><td></td></tr>
+{%- endif %}
+{%- for entry in listing.entries %}
+<tr><td><a href="{{ entry.href }}">{{ entry.href }}</a></td><td class="size">{{ entry.size }}</td><td>{{ entry.date }}</td></tr>
+{%- endfor %}
+</table>
+</body>
+</html>
