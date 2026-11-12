@@ -77,5 +77,5 @@ explicit_package_bases = true  # tests/conftest.py and tests/workspace/conftest.
 # filetype and createrepo_c ship neither types nor a py.typed marker, and typeshed has no stubs
 # for them.
 [[tool.mypy.overrides]]
-module = ["createrepo_c", "filetype"]
+module = ["createrepo_c", "filetype", "oras.*"]
 ignore_missing_imports = true
