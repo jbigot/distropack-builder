@@ -100,6 +100,10 @@ class Page:
     """Its releases, sorted by name."""
     package_manager: Literal['apt', 'dnf', 'zypper'] = 'apt'
     """What installs from it on its hosts."""
+    component: str = 'main'
+    """The deb component of its release channel."""
+    components: tuple[str, ...] = ()
+    """The deb components of its snapshot channels, each a sources file of its own."""
 
     @classmethod
     def of(
@@ -110,11 +114,14 @@ class Page:
         description: str,
         releases: Iterable[Release],
         extras: Sequence[tuple[ExtraRepository, str]] = (),
+        component: str = 'main',
+        components: Sequence[str] = (),
     ) -> 'Page':
         """The page of a repository of family at url, for its releases, of one distribution.
 
         extras are the repositories of other packages its builds use, with their keys'
-        fingerprints, which each release's instructions add first.
+        fingerprints, which each release's instructions add first. A deb repository's release
+        channel is its component, each of its snapshot channels one of components.
         """
         url = url.rstrip('/')
         listed = sorted(releases, key=str)
@@ -138,6 +145,8 @@ class Page:
             key_url,
             tuple(rows),
             _MANAGERS[targets.family(distribution)],
+            component,
+            tuple(components),
         )
 
 

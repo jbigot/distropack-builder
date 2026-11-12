@@ -30,7 +30,7 @@ from debian.debian_support import Version
 from distro_releases import Release
 from distropack_builder import readme, repodata, rpmquery, signing, sources, targets
 from distropack_builder.bake import DEB_TOOLS, REGISTRY, tool_image
-from distropack_builder.config import BuildConfig, Distrib, ExtraRepository, expand
+from distropack_builder.config import BuildConfig, Distrib, ExtraRepository, Repository, expand
 from distropack_builder.context import BuildContext
 from distropack_builder.docker import ContainerFailed, Mount, RunResult
 from distropack_builder.downloads import DownloadFailed, fetch_all, source_name
@@ -995,6 +995,8 @@ class Output:
     """The release they are built for."""
     directory: Path
     """The directory holding them: a build's output, or a package of a release's state."""
+    component: str = 'main'
+    """The deb component they are published in: their channel's."""
 
 
 class DebRepoBuilder:
@@ -1012,8 +1014,13 @@ class DebRepoBuilder:
         extras: Sequence[tuple[ExtraRepository, str]] = (),
         logger: logging.Logger | None = None,
         sign: bool = True,
+        components: Sequence[str] = ('main',),
     ) -> None:
-        """The repository in output_dir; with a url, its keyring and its page from pages."""
+        """The repository in output_dir; with a url, its keyring and its page from pages.
+
+        Every release is published with every one of components, the release channel's first,
+        an empty one where no output is in it.
+        """
         self._context = context
         self._output_dir = output_dir
         self._gpg = gpg
@@ -1022,6 +1029,7 @@ class DebRepoBuilder:
         self._extras = extras
         self._aptly = Aptly(context, logger)
         self._sign = sign
+        self._components = tuple(components)
 
     def has_repository(self, dist_release: Release) -> bool:
         """Whether the output directory has a repository of dist_release already."""
@@ -1057,9 +1065,7 @@ class DebRepoBuilder:
             for dist_release in sorted({o.release for o in built}, key=str):
                 try:
                     self._publish(
-                        aptly,
-                        dist_release,
-                        [o.directory for o in built if o.release == dist_release],
+                        aptly, dist_release, [o for o in built if o.release == dist_release]
                     )
                     published.append(dist_release)
                 except Exception as error:
@@ -1070,17 +1076,41 @@ class DebRepoBuilder:
             keyring = self._output_dir / f'{public.name}-archive-keyring.gpg'
             keyring.write_bytes(self._gpg.public_key(armored=False))
             listed = set(published) | {r for r in kept | failures.keys() if self.has_repository(r)}
-            _write_page(self._output_dir, self._pages, 'deb', public, listed, self._extras)
+            _write_page(
+                self._output_dir,
+                self._pages,
+                'deb',
+                public,
+                listed,
+                self._extras,
+                self._components[0],
+                self._components[1:],
+            )
         return failures
 
     def _publish(
-        self, aptly: Callable[..., None], dist_release: Release, directories: list[Path]
+        self, aptly: Callable[..., None], dist_release: Release, outputs: list[Output]
     ) -> None:
-        """Publish dist_release, with the packages of directories, under its codename and suite."""
-        aptly('repo', 'create', dist_release.uid)
-        for directory in directories:
-            aptly('repo', 'add', dist_release.uid, '/data', data=directory)
-        publish_repo = ['publish', 'repo', '-force-overwrite', '-skip-signing']
+        """Publish dist_release, with the packages of outputs, under its codename and suite.
+
+        Each component is an aptly repository of its own, `<release uid>.<component>`.
+        """
+        components = list(self._components)
+        components += sorted({o.component for o in outputs} - set(components))
+        repos = [f'{dist_release.uid}.{component}' for component in components]
+        for repo in repos:
+            aptly('repo', 'create', repo)
+        for output in outputs:
+            repo = f'{dist_release.uid}.{output.component}'
+            aptly('repo', 'add', repo, '/data', data=output.directory)
+        directories = [o.directory for o in outputs]
+        publish_repo = [
+            'publish',
+            'repo',
+            '-force-overwrite',
+            '-skip-signing',
+            '-component=' + ','.join(components),
+        ]
         if self._public is not None:
             publish_repo += [
                 '-label=' + self._public.description,
@@ -1098,7 +1128,7 @@ class DebRepoBuilder:
                     *publish_repo,
                     *names,
                     '-distribution=' + distribution,
-                    dist_release.uid,
+                    *repos,
                     'filesystem:default:',
                 )
                 if self._sign:
@@ -1224,10 +1254,21 @@ def _write_page(
     public: Public,
     listed: Set[Release],
     extras: Sequence[tuple[ExtraRepository, str]] = (),
+    component: str = 'main',
+    components: Sequence[str] = (),
 ) -> None:
     """Write index.html, the page of the releases listed, if there are templates."""
     if pages is not None:
-        page = readme.Page.of(family, public.url, public.name, public.description, listed, extras)
+        page = readme.Page.of(
+            family,
+            public.url,
+            public.name,
+            public.description,
+            listed,
+            extras,
+            component,
+            components,
+        )
         (output_dir / 'index.html').write_text(readme.render(pages, page))
 
 
@@ -1271,8 +1312,7 @@ def run_builds(
     """
     states = state_dir if state_dir is not None else context.workdir / 'state'
     builders: list[PackageBuilder] = []
-    repo_builders: list[tuple[str, DebRepoBuilder | RpmRepoBuilder, list[PackageBuilder]]] = []
-    output_dirs: set[Path] = set()
+    gpgs: dict[str, Signer] = {}
     root = config.root
     pages = readme.environment(readme.project_dir(root))
     keep_dir = download_dir or context.workdir
@@ -1360,27 +1400,11 @@ def run_builds(
                     builder.fallback = fallback_dirs
             dist_builders += release_builders
 
-        repository = distrib.repository
-        output_dirs.add(root / repository.path)
-        repo_family = DebRepoBuilder if deb else RpmRepoBuilder
-        repo_builder = repo_family(
-            context,
-            root / repository.path,
-            gpg,
-            repository.url,
-            repository.name,
-            repository.description,
-            pages,
-            [
-                (extra, signing.fingerprint((root / extra.key).read_bytes()))
-                for extra in distrib.extra_repositories
-            ],
-        )
+        gpgs[dist_id] = gpg
         for builder in dist_builders:
             builder.extras = extras
             stored = ReleaseState(states, channel, builder.dist_release.uid)
             builder.stored = stored.package(builder.name)
-        repo_builders.append((dist_id, repo_builder, dist_builders))
         builders += dist_builders
 
     for deb_builder in builders:
@@ -1413,12 +1437,26 @@ def run_builds(
     if not publish:
         return failed
 
-    # with states that last, the repositories are theirs alone, written again
+    # with states that last, the repositories are theirs alone, written again, every channel's
     from_states = state_dir is not None
+    channels = [config.release_channel, *config.snapshot_channels()] if from_states else [channel]
+    # a deb repository holds every channel, a component each; an rpm channel is a repository
+    groups: list[tuple[str, list[str], Repository]] = []
+    for dist_id, distrib in config.distribs.items():
+        if targets.is_deb(targets.target(dist_id)):
+            groups.append((dist_id, channels, distrib.repository))
+            continue
+        groups += [
+            (dist_id, [published], config.channel_repository(dist_id, published))
+            for published in channels
+            if published == config.release_channel or config.channel_packages(published)
+        ]
     if from_states:
-        for output_dir in output_dirs:
-            rmtree(output_dir, ignore_errors=True)
-    for dist_id, repo_builder, dist_builders in repo_builders:
+        for _, _, repository in groups:
+            rmtree(root / repository.path, ignore_errors=True)
+    for dist_id, group, repository in groups:
+        deb = targets.is_deb(targets.target(dist_id))
+        dist_builders = [b for b in builders if b.dist_release.distribution.id == dist_id]
         if from_states:
             to_publish = (all_releases or selected)[dist_id]
             kept: set[Release] = set()
@@ -1426,13 +1464,38 @@ def run_builds(
             to_publish = {b.dist_release for b in dist_builders} & releases
             kept = {b.dist_release for b in dist_builders} - releases
             kept |= {r for r in unbuilt if r.distribution.id == dist_id}
-        outputs: list[Output] = []
-        for release in sorted(to_publish, key=str):
-            stored = ReleaseState(states, config.release_channel, release.uid)
-            if not stored.exists():
-                reporter.no_state(release)
-                continue
-            outputs += [Output(release, p.directory) for _, p in sorted(stored.packages().items())]
+        outputs = _outputs(config, states, reporter, dist_id, group, to_publish)
+        distrib = config.distribs[dist_id]
+        if dist_id not in gpgs:
+            gpgs[dist_id] = signer_for(distrib)
+        fingerprints = [
+            (extra, signing.fingerprint((root / extra.key).read_bytes()))
+            for extra in distrib.extra_repositories
+        ]
+        repo_builder: DebRepoBuilder | RpmRepoBuilder
+        if deb:
+            repo_builder = DebRepoBuilder(
+                context,
+                root / repository.path,
+                gpgs[dist_id],
+                repository.url,
+                repository.name,
+                repository.description,
+                pages,
+                fingerprints,
+                components=[config.component(dist_id, c) for c in group],
+            )
+        else:
+            repo_builder = RpmRepoBuilder(
+                context,
+                root / repository.path,
+                gpgs[dist_id],
+                repository.url,
+                repository.name,
+                repository.description,
+                pages,
+                fingerprints,
+            )
         try:
             failures = {
                 str(release): error for release, error in repo_builder.build(outputs, kept).items()
@@ -1443,6 +1506,44 @@ def run_builds(
             reporter.publication_failed(what, failure)
             failed = True
     return failed
+
+
+def _outputs(
+    config: BuildConfig,
+    states: Path,
+    reporter: Reporter,
+    dist_id: str,
+    channels: Sequence[str],
+    releases: Set[Release],
+) -> list[Output]:
+    """What a repository publishes of the states of releases, in channels, the first one's needed.
+
+    A release without a state of the first channel is not published, and said so; without a state
+    of another (a deb component), that one is published empty. An rpm snapshot channel's repository
+    holds its fallback's packages that do not build in it too.
+    """
+    outputs: list[Output] = []
+    first = channels[0]
+    for release in sorted(releases, key=str):
+        if not ReleaseState(states, first, release.uid).exists():
+            reporter.no_state(release, None if first == config.release_channel else first)
+            continue
+        for channel in channels:
+            stored = ReleaseState(states, channel, release.uid)
+            component = config.component(dist_id, channel)
+            outputs += [
+                Output(release, package.directory, component)
+                for _, package in sorted(stored.packages().items())
+            ]
+        if first != config.release_channel and not targets.is_deb(targets.target(dist_id)):
+            declared = set(config.channel_packages(first))
+            fallback = ReleaseState(states, config.fallback(first), release.uid)
+            outputs += [
+                Output(release, package.directory)
+                for name, package in sorted(fallback.packages().items())
+                if name not in declared
+            ]
+    return outputs
 
 
 def _commit_states(states: Path, channel: str, builders: Sequence[PackageBuilder]) -> None:

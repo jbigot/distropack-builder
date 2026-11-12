@@ -4,6 +4,7 @@
 
 """The repository pages, rendered from the default template or a project's."""
 
+import dataclasses
 from datetime import date
 from pathlib import Path
 
@@ -234,3 +235,19 @@ def test_extra_key_saved_under_its_url_name() -> None:
     html = readme.render(readme.environment(None), page)
     assert '-o /usr/share/keyrings/pdidev-archive-keyring.gpg https://repo.pdi.dev/' in html
     assert 'Signed-By: /usr/share/keyrings/pdidev-archive-keyring.gpg' in html
+
+
+def test_page_lists_components() -> None:
+    page = dataclasses.replace(DEB, components=('weekly',))
+    html = readme.render(readme.environment(None), page)
+    assert '/etc/apt/sources.list.d/hello.sources' in html
+    assert '/etc/apt/sources.list.d/hello-weekly.sources' in html
+    assert 'Components: weekly' in html
+    assert 'Components: main' in html
+
+
+def test_page_release_component() -> None:
+    page = dataclasses.replace(DEB, component='stable')
+    html = readme.render(readme.environment(None), page)
+    assert 'Components: stable' in html and 'Components: main' not in html
+    assert 'sources.list.d/hello-' not in html

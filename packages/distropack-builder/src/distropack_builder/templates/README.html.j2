@@ -57,10 +57,22 @@ sudo tee /etc/apt/sources.list.d/{{ page.repository_name }}.sources &lt;&lt;'EOF
 Types: deb
 URIs: {{ release.url }}
 Suites: {{ release.codename }}
-Components: main
+Components: {{ page.component }}
 Signed-By: /usr/share/keyrings/{{ page.repository_name }}-archive-keyring.gpg
 EOF
 sudo apt update</code></pre>
+{%- for component in page.components %}
+<p>The packages of the {{ component }} channel, snapshots of their upstream development, take
+precedence over those above once added:</p>
+<pre><code>sudo tee /etc/apt/sources.list.d/{{ page.repository_name }}-{{ component }}.sources &lt;&lt;'EOF'
+Types: deb
+URIs: {{ release.url }}
+Suites: {{ release.codename }}
+Components: {{ component }}
+Signed-By: /usr/share/keyrings/{{ page.repository_name }}-archive-keyring.gpg
+EOF
+sudo apt update</code></pre>
+{%- endfor %}
 {%- else -%}
 {% for host, commands in release.prerequisites -%}
 <p>On {{ host }}, first:</p>

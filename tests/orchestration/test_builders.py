@@ -2181,6 +2181,9 @@ def add_snapshot_package(project: Path, snapshot: str = 'weekly') -> None:
     changelog.write_text(changelog.read_text().replace(f'{SNAP} (1.0)', f'{SNAP} (1.0-1)', 1))
     (target / 'debian' / 'source' / 'format').write_text('3.0 (quilt)\n')
     (target / 'debian' / 'watch').write_text((project / 'hello-lib/debian/watch').read_text())
+    # its release-channel builds download hello-lib's tarball under its own name
+    lib_line = (project / 'hello-lib' / 'sources').read_text()
+    (target / 'sources').write_text(lib_line.replace('hello-lib-1.0', f'{SNAP}-1.0'))
     spec = target / f'{SNAP}.spec'
     spec.write_text(
         spec.read_text().replace(
@@ -2342,7 +2345,8 @@ def test_dependencies_from_fallback_state(run_main: Callable[..., int], tmp_path
     local = [
         c.targets['/data'].source
         for c in runner.calls
-        if c.args[2:4] == ('repo', 'add') and '/localrepo' not in c.targets
+        if c.args[2:4] == ('repo', 'add')
+        and not c.targets['/aptlyout'].source.is_relative_to(tmp_path / 'project')
     ]
     assert lib.directory in local
 
@@ -2444,3 +2448,112 @@ def test_channels_named_freely(run_main: Callable[..., int], tmp_path: Path) -> 
     assert stable_then(run_main, tmp_path, runner, prepare=snapshot, stable_prepare=rel) == 0
     assert built_packages(runner) == {(SNAP, 'debian'), (SNAP, 'fedora')}
     assert sorted(p.name for p in (tmp_path / 'states').iterdir()) == ['rel', 'weekly']
+
+
+# Publishing every channel (Phase 13).
+def repo_adds(runner: FakeRunner, repo: str, project: Path) -> list[Path]:
+    """The directories added to repo of the project's repositories, not a local one."""
+    return [
+        c.targets['/data'].source
+        for c in runner.calls
+        if c.args[2:5] == ('repo', 'add', repo)
+        and c.targets['/aptlyout'].source.is_relative_to(project / 'repositories')
+    ]
+
+
+def published_by_project(runner: FakeRunner, project: Path) -> list[tuple[str, ...]]:
+    return [
+        c.args
+        for c in aptly_publishes_calls(runner)
+        if c.targets['/aptlyout'].source.is_relative_to(project / 'repositories')
+    ]
+
+
+def aptly_publishes_calls(runner: FakeRunner) -> list[Call]:
+    return [c for c in runner.calls if 'publish' in c.args and 'repo' in c.args]
+
+
+def test_deb_release_publishes_every_component(
+    run_main: Callable[..., int], tmp_path: Path
+) -> None:
+    runner = FakeRunner(environment())
+    assert stable_then(run_main, tmp_path, runner) == 0
+    published = published_by_project(runner, tmp_path / 'project')
+    assert published
+    for args in published:
+        assert '-component=main,weekly' in args
+        assert args[-3:-1] == ('debian-13-trixie.main', 'debian-13-trixie.weekly')
+    weekly_state = state.ReleaseState(tmp_path / 'states', 'weekly', 'debian-13-trixie')
+    snap = weekly_state.package(SNAP)
+    assert snap is not None
+    assert repo_adds(runner, 'debian-13-trixie.weekly', tmp_path / 'project') == [snap.directory]
+    lib = state.ReleaseState(tmp_path / 'states', STABLE, 'debian-13-trixie').package('hello-lib')
+    assert lib is not None
+    assert repo_adds(runner, 'debian-13-trixie.main', tmp_path / 'project') == [lib.directory]
+
+
+def test_component_override(run_main: Callable[..., int], tmp_path: Path) -> None:
+    def prepare(project: Path) -> None:
+        weekly(project)
+        conf_path = project / 'build.conf'
+        conf = yaml.safe_load(conf_path.read_text())
+        conf['distribs']['debian']['repository']['channels'] = {'weekly': {'component': 'nightly'}}
+        conf_path.write_text(yaml.safe_dump(conf))
+
+    runner = FakeRunner(environment())
+    assert stable_then(run_main, tmp_path, runner, prepare=prepare) == 0
+    published = published_by_project(runner, tmp_path / 'project')
+    assert published
+    for args in published:
+        assert '-component=main,nightly' in args
+
+
+def test_rpm_channel_repository(run_main: Callable[..., int], tmp_path: Path) -> None:
+    runner = FakeRunner(environment())
+    assert stable_then(run_main, tmp_path, runner) == 0
+    channel = tmp_path / 'project' / 'repositories' / 'weekly.fedora' / '44'
+    rpms = sorted(p.name for p in (channel / 'noarch').iterdir())
+    assert rpms == ['hello-lib-1.0-1.fc44.noarch.rpm', 'hello-snap-1.0-1.fc44.noarch.rpm']
+    repo = (channel / 'weekly.fedora.repo').read_text()
+    assert 'baseurl=http://repo.example.invalid/weekly.fedora/44' in repo
+    stable = tmp_path / 'project' / 'repositories' / 'fedora' / '44' / 'noarch'
+    assert sorted(p.name for p in stable.iterdir()) == ['hello-lib-1.0-1.fc44.noarch.rpm']
+
+
+def test_missing_snapshot_state(
+    run_main: Callable[..., int], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Before any snapshot build: an empty deb component, no rpm channel repository."""
+    states = str(tmp_path / 'states')
+    assert run_main(FakeRunner(environment()), BOTH, ['hello-lib'], '--state-dir', states) == 0
+    fresh(tmp_path)
+    capsys.readouterr()
+    runner = FakeRunner(environment())
+    status = run_main(
+        runner, BOTH, ['hello-lib'], '--state-dir', states, '--publish-only', prepare=weekly
+    )
+    out = capsys.readouterr().out
+    assert status == 0, out
+    for args in published_by_project(runner, tmp_path / 'project'):
+        assert '-component=main,weekly' in args
+    assert repo_adds(runner, 'debian-13-trixie.weekly', tmp_path / 'project') == []
+    assert 'no weekly state for Fedora 44' in out
+    assert not (tmp_path / 'project' / 'repositories' / 'weekly.fedora' / '44').exists()
+
+
+def test_run_of_one_channel_republishes_all(
+    run_main: Callable[..., int], tmp_path: Path, recorded_http: respx.MockRouter
+) -> None:
+    recorded_http.get(f'{ORIG_BASE}/{SNAP}-1.0.tar.gz').respond(200, content=tarball())
+    assert stable_then(run_main, tmp_path, FakeRunner(environment())) == 0
+    fresh(tmp_path)
+    runner = FakeRunner(environment())
+    states = str(tmp_path / 'states')
+    assert run_main(runner, BOTH, ['hello-lib'], '--state-dir', states, prepare=same_commit) == 0
+    for args in published_by_project(runner, tmp_path / 'project'):
+        assert '-component=main,weekly' in args
+    snap = state.ReleaseState(tmp_path / 'states', 'weekly', 'debian-13-trixie').package(SNAP)
+    assert snap is not None
+    assert repo_adds(runner, 'debian-13-trixie.weekly', tmp_path / 'project') == [snap.directory]
+    channel = tmp_path / 'project' / 'repositories' / 'weekly.fedora' / '44' / 'noarch'
+    assert 'hello-snap-1.0-1.fc44.noarch.rpm' in [p.name for p in channel.iterdir()]

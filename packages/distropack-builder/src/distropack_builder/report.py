@@ -223,9 +223,9 @@ class Reporter:
         """Not all builds of release succeeded: it keeps its previous state, if it had one."""
         self._warn(f'kept the previous state of {release}')
 
-    def no_state(self, release: Release) -> None:
-        """The release has no state yet: nothing of it is published."""
-        self._warn(f'no state for {release}')
+    def no_state(self, release: Release, channel: str | None = None) -> None:
+        """The release has no state yet (of a snapshot channel): nothing of it is published."""
+        self._warn(f'no {channel} state for {release}' if channel else f'no state for {release}')
 
     def _warn(self, message: str) -> None:
         """Tell message, a warning, and list it in the summary."""

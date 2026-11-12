@@ -253,10 +253,14 @@ def make_app(
         )
         readme.check(readme.project_dir(loaded.root))
         # the repositories are removed before they are written again: never what a run keeps
+        repositories = [
+            loaded.root / loaded.channel_repository(dist_id, name).path
+            for dist_id in loaded.distribs
+            for name in loaded.channels
+        ]
         for kept in (state_dir, download_dir):
             if kept is not None and any(
-                kept.resolve().is_relative_to((loaded.root / d.repository.path).resolve())
-                for d in loaded.distribs.values()
+                kept.resolve().is_relative_to(repository.resolve()) for repository in repositories
             ):
                 _fail(2, ValueError(f'{kept} must not be inside a repository directory'))
         # The repositories this run publishes, for the step running it under GitHub Actions.
