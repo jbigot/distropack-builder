@@ -137,3 +137,35 @@ def test_static_key(tmp_path: Path) -> None:
     assert added != changed_source
     (pack / 'debian' / 'control').write_text('Source: pdi\nSection: libs\n')
     assert state.static_key(pack, {'pdi-1.0.tar.gz': source}, 'release') != added
+
+
+def test_static_key_of_a_directory_unchanged(tmp_path: Path) -> None:
+    """The keys Phase 11 stored for a packaging directory stay valid."""
+    source = tmp_path / 'pdi-1.0.tar.gz'
+    source.write_bytes(b'upstream')
+    assert state.static_key(packaging(tmp_path), {'pdi-1.0.tar.gz': source}, 'release') == (
+        '996e003a1faa1ac7e055708ecfca109dc2235489cffee0d97ff58a8f3e68e15e'
+    )
+
+
+def test_static_key_of_a_spec_file(tmp_path: Path) -> None:
+    directory = tmp_path / 'hello'
+    directory.mkdir()
+    spec = directory / 'hello.spec'
+    spec.write_text('Name: hello\n')
+    (directory / 'notes.txt').write_text('not packaging\n')
+    key = state.static_key(spec, {}, 'stable')
+    os.utime(spec, (0, 0))
+    assert state.static_key(spec, {}, 'stable') == key  # not mtimes
+    assert state.static_key(directory, {}, 'stable') != key
+    spec.write_text('Name: hello\nRelease: 2\n')
+    assert state.static_key(spec, {}, 'stable') != key
+
+
+def test_packaging_key_ignores_sources_and_channel(tmp_path: Path) -> None:
+    pack = packaging(tmp_path)
+    source = tmp_path / 'pdi-1.0.tar.gz'
+    source.write_bytes(b'upstream')
+    assert state.packaging_key(pack) == state.static_key(pack, {}, '')
+    assert state.packaging_key(pack) != state.static_key(pack, {'pdi-1.0.tar.gz': source}, '')
+    assert state.RELEASE_CHANNEL == 'stable'

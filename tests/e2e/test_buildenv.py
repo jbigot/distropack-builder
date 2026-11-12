@@ -121,7 +121,7 @@ def test_deb_environment_reported_and_known(project: Path, tmp_path: Path) -> No
 
 def test_rpm_environment_reported(project: Path, tmp_path: Path) -> None:
     ctx = context(tmp_path)
-    spec = SpecInfo(frozenset({'make'}), frozenset({'tiny'}), ())
+    spec = SpecInfo(frozenset({'make'}), frozenset({'tiny'}), (), '1.0', '1.fc44')
     rpm = builders.RpmPackageBuilder(
         ctx, release('fedora', '44'), project, signer(), 'tiny', spec=spec
     )
@@ -148,6 +148,7 @@ def test_binnmu_of_a_stored_source(project: Path, tmp_path: Path) -> None:
             'trixie',
             'test <test@example.invalid>',
             'Thu, 05 Nov 2026 12:00:00 +0000',
+            builders.ARCHITECTURE,
         )
         + '\n'
     )

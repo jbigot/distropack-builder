@@ -23,6 +23,8 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 # Bumped when what static_key hashes changes, so that every stored key stops matching.
 KEY_VERSION = 1
 SCHEMA = 1
+# The channel of the releases until there are others (Phase 13): the state's first path component.
+RELEASE_CHANNEL = 'stable'
 MANIFEST = 'manifest.json'
 
 
@@ -31,16 +33,26 @@ def static_key(packaging: Path, sources: Mapping[str, Path], channel: str) -> st
 
     A sha256 over KEY_VERSION, the channel, every file under packaging (its relative path and
     bytes, sorted by path) and the sha256 of each source file with its name; not the times.
+    A packaging that is a file (an rpm spec) counts as the one file named after itself.
     """
     digest = hashlib.sha256(f'distropack-state {KEY_VERSION}\0{channel}\0'.encode())
-    for path in sorted(p for p in packaging.rglob('*') if p.is_file()):
-        relative = path.relative_to(packaging).as_posix().encode()
+    if packaging.is_file():
+        files, top = [packaging], packaging.parent
+    else:
+        files, top = sorted(p for p in packaging.rglob('*') if p.is_file()), packaging
+    for path in files:
+        relative = path.relative_to(top).as_posix().encode()
         content = path.read_bytes()
         digest.update(b'file\0' + relative + b'\0' + str(len(content)).encode() + b'\0' + content)
     for name in sorted(sources):
         source = hashlib.sha256(sources[name].read_bytes()).hexdigest()
         digest.update(b'source\0' + name.encode() + b'\0' + source.encode() + b'\0')
     return digest.hexdigest()
+
+
+def packaging_key(packaging: Path) -> str:
+    """The key of packaging alone, a directory or a spec file: no sources, no channel."""
+    return static_key(packaging, {}, '')
 
 
 class _Entry(BaseModel):

@@ -129,11 +129,14 @@ class Container:
         )
 
 
+# The one architecture packages are built and published for: binNMU entries and aptly name it.
+ARCHITECTURE = 'amd64'
+
 # The configuration of aptly: its database in /aptlyroot, what it publishes in /aptlyout. It reads
 # the clear-signed .dsc with its own OpenPGP code: gpg needs a home to write to, which the user a
 # tool container runs as under rootful Docker does not have in the image.
 APTLY_CONFIG = {
-    'architectures': ['amd64', 'source'],
+    'architectures': [ARCHITECTURE, 'source'],
     'gpgProvider': 'internal',
     'rootDir': '/aptlyroot',
     'FileSystemPublishEndpoints': {

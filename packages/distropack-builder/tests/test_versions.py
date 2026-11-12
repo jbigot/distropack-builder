@@ -89,6 +89,7 @@ def test_binnmu_entry() -> None:
         'trixie',
         'PDI <pdi@example.org>',
         'Wed, 04 Nov 2026 10:00:00 +0000',
+        'amd64',
     )
     assert entry == (
         'pdi (1.12.0-1~bpo13+b2) trixie; urgency=medium, binary-only=yes\n'
@@ -112,3 +113,8 @@ def test_binnmu_entry() -> None:
 def test_rebuilds_increase(base: str, m: int, n: int) -> None:
     if m < n:
         assert Version(deb_version(base, m)) < Version(deb_version(base, n))
+
+
+def test_binnmu_entry_names_its_architecture() -> None:
+    entry = binnmu_entry('pdi', '1.0-1+b1', 'sid', 'PDI <pdi@example.org>', 'date', 'arm64')
+    assert '  * Binary-only non-maintainer upload for arm64; no source changes.\n' in entry

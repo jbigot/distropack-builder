@@ -30,11 +30,15 @@ class SpecInfo:
         buildrequires: the names of its build dependencies, without their versions.
         provides: the names of what its packages provide, without their versions.
         sources: the URLs of its `Source` lines, in order.
+        version: its `Version`, expanded.
+        release: its `Release`, expanded (`1.fc44` for `1%{?dist}`).
     """
 
     buildrequires: frozenset[str]
     provides: frozenset[str]
     sources: tuple[str, ...]
+    version: str
+    release: str
 
 
 @dataclass(frozen=True)
@@ -45,6 +49,12 @@ class SpecFailed:
 
 
 _SOURCE = re.compile(r'^\s*source[0-9]*\s*:\s*', re.IGNORECASE)
+
+
+def _tag(parsed: str, tag: str) -> str | None:
+    """The value of the first line of parsed setting tag, the main package's."""
+    found = re.search(rf'^\s*{tag}\s*:\s*(\S.*?)\s*$', parsed, re.IGNORECASE | re.MULTILINE)
+    return None if found is None else found[1]
 
 
 def _names(text: str) -> frozenset[str]:
@@ -60,6 +70,9 @@ def parse(package: str, answers: Path) -> SpecInfo | SpecFailed:
         if status != '0':
             return SpecFailed(f'rpmspec cannot read {package}.spec (status {status}): {errors}')
         parsed = (answers / 'parsed').read_text()
+        version, release = _tag(parsed, 'version'), _tag(parsed, 'release')
+        if version is None or release is None:
+            return SpecFailed(f'{package}: no Version or Release')
         return SpecInfo(
             _names((answers / 'buildrequires').read_text()),
             _names((answers / 'provides').read_text()),
@@ -68,6 +81,8 @@ def parse(package: str, answers: Path) -> SpecInfo | SpecFailed:
                 for line in parsed.splitlines()
                 if _SOURCE.match(line)
             ),
+            version,
+            release,
         )
     except OSError as error:
         return SpecFailed(f'no answer for {package}.spec: {error}')

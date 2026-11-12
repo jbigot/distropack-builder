@@ -25,12 +25,14 @@ def test_parse(tmp_path: Path) -> None:
         buildrequires='make\ncmake >= 3.10\npkgconfig(zlib)\n\n',
         provides='p = 1.0-1.fc44\np-devel(x86-64) = 1.0-1.fc44\n',
         parsed='Name: p\nSource0: https://x/p-1.0.tar.gz\nsource1 :  https://x/a.patch\n'
-        'Sourcery: no\nURL: https://x\n',
+        'Sourcery: no\nURL: https://x\nVersion: 1.0\nRelease: 1.fc44\n',
     )
     assert parse('p', out) == SpecInfo(
         buildrequires=frozenset({'make', 'cmake', 'pkgconfig'}),
         provides=frozenset({'p', 'p-devel'}),
         sources=('https://x/p-1.0.tar.gz', 'https://x/a.patch'),
+        version='1.0',
+        release='1.fc44',
     )
 
 
@@ -49,3 +51,18 @@ def test_parse_missing_answers(tmp_path: Path) -> None:
 @pytest.mark.parametrize('status', ['', 'x\n'])
 def test_parse_bad_status(tmp_path: Path, status: str) -> None:
     assert isinstance(parse('p', answers(tmp_path, status=status)), SpecFailed)
+
+
+def test_spec_version_and_release_expanded(tmp_path: Path) -> None:
+    out = answers(
+        tmp_path,
+        parsed='Name: p\nVersion:  1.0\nRelease:\t1.fc44\n%package devel\nVersion: 9\nRelease: 9\n',
+    )
+    info = parse('p', out)
+    assert isinstance(info, SpecInfo)
+    assert (info.version, info.release) == ('1.0', '1.fc44')
+
+
+@pytest.mark.parametrize('parsed', ['Name: p\nVersion: 1.0\n', 'Name: p\nRelease: 1\n'])
+def test_spec_without_release_fails(tmp_path: Path, parsed: str) -> None:
+    assert parse('p', answers(tmp_path, parsed=parsed)) == SpecFailed('p: no Version or Release')

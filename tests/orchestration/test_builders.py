@@ -84,7 +84,7 @@ def builder(builders: ModuleType, context: BuildContext, rel: Release) -> Any:
     signer = Signer.load(FIXTURE_PROJECT / 'key.gpg', FIXTURE_PASSPHRASE)
     if builders.targets.is_deb(rel.distribution):
         return builders.DebPackageBuilder(context, rel, FIXTURE_PROJECT, signer, 'hello-app')
-    spec = SpecInfo(frozenset({'hello-lib'}), frozenset({'hello-app'}), ())
+    spec = SpecInfo(frozenset({'hello-lib'}), frozenset({'hello-app'}), (), '1.0', '1.fc44')
     return builders.RpmPackageBuilder(context, rel, FIXTURE_PROJECT, signer, 'hello-app', spec=spec)
 
 

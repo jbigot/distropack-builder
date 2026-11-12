@@ -74,12 +74,14 @@ def next_rebuild(base: str, stored_base: str | None, stored_rebuild: int | None)
     return stored_rebuild + 1
 
 
-def binnmu_entry(source: str, version: str, distribution: str, author: str, date: str) -> str:
+def binnmu_entry(
+    source: str, version: str, distribution: str, author: str, date: str, architecture: str
+) -> str:
     """The debian/changelog stanza of a binNMU, to prepend to the stored source's changelog."""
     return (
         f'{source} ({version}) {distribution}; urgency=medium, binary-only=yes\n'
         '\n'
-        '  * Binary-only non-maintainer upload for amd64; no source changes.\n'
+        f'  * Binary-only non-maintainer upload for {architecture}; no source changes.\n'
         '  * Rebuild against updated build dependencies.\n'
         '\n'
         f' -- {author}  {date}\n'
