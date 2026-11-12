@@ -15,6 +15,7 @@ never a crash, never a reuse.
 import hashlib
 import json
 import shutil
+import tarfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from os import link
@@ -227,13 +228,69 @@ class ReleaseStateWriter:
         """Write the manifest, then make the new state the release's, replacing the old one."""
         manifest = _Manifest(schema_=SCHEMA, packages=self._entries)
         (self._new / MANIFEST).write_text(manifest.dump() + '\n')
-        old = self._directory.with_name(self._directory.name + '.old')
-        shutil.rmtree(old, ignore_errors=True)
-        if self._directory.exists():
-            self._directory.rename(old)
-        self._new.rename(self._directory)
-        shutil.rmtree(old, ignore_errors=True)
+        _replace(self._directory, self._new)
 
     def abort(self) -> None:
         """Drop the new state: the release keeps its previous one."""
         shutil.rmtree(self._new, ignore_errors=True)
+
+
+def _replace(directory: Path, new: Path) -> None:
+    """Make new the state at directory, the old one set aside as `.old` meanwhile."""
+    old = directory.with_name(directory.name + '.old')
+    shutil.rmtree(old, ignore_errors=True)
+    if directory.exists():
+        directory.rename(old)
+    new.rename(directory)
+    shutil.rmtree(old, ignore_errors=True)
+
+
+class StateArchiveError(Exception):
+    """An archive that is not a whole state: the release keeps its previous one."""
+
+
+def _reset(info: tarfile.TarInfo) -> tarfile.TarInfo:
+    info.uid = info.gid = 0
+    info.uname = info.gname = ''
+    return info
+
+
+def pack(states: Path, channel: str, uid: str, dst: Path) -> None:
+    """The state of uid on channel as one tar at dst: sorted, owned by 0, the files' times kept.
+
+    The same state gives the same bytes; the times are kept, as the state reuses files by content.
+    """
+    directory = states / channel / uid
+    with tarfile.open(dst, 'w', format=tarfile.PAX_FORMAT) as tar:
+        for path in sorted(directory.rglob('*')):
+            tar.add(path, path.relative_to(directory).as_posix(), recursive=False, filter=_reset)
+
+
+def unpack(src: Path, states: Path, channel: str, uid: str) -> None:
+    """Make the tar at src the state of uid on channel, whole, or leave the previous one.
+
+    Raises:
+        StateArchiveError: src is not a tar, has a member outside the state, or does not hold
+            a whole state (a manifest whose every file is there).
+    """
+    directory = states / channel / uid
+    new = directory.with_name(uid + '.new')
+    shutil.rmtree(new, ignore_errors=True)
+    new.mkdir(parents=True)
+    try:
+        try:
+            with tarfile.open(src) as tar:
+                tar.extractall(new, filter='data')
+        except (tarfile.TarError, OSError, EOFError) as error:
+            raise StateArchiveError(f'{src} is not a state archive: {error}') from error
+        manifest = _Manifest.read(new / MANIFEST)
+        if manifest is None:
+            raise StateArchiveError(f'{src} holds no state manifest')
+        for name, entry in manifest.packages.items():
+            missing = [file for file in entry.files if not (new / name / file).is_file()]
+            if missing:
+                raise StateArchiveError(f'{src} lacks {name}/{missing[0]} of its manifest')
+    except BaseException:
+        shutil.rmtree(new, ignore_errors=True)
+        raise
+    _replace(directory, new)

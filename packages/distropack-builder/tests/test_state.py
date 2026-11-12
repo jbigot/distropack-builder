@@ -4,7 +4,9 @@
 
 """The state directory: what each release keeps of its last builds."""
 
+import io
 import os
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -181,3 +183,93 @@ def test_commit_interrupted_between_renames_keeps_the_previous_state(
     directory.rename(directory.with_name(directory.name + '.old'))
     stored = state.ReleaseState(root, 'release', 'debian-13-trixie').package('pdi')
     assert stored is not None and stored.rebuild == 1
+
+
+# The state as one archive (Phase 14).
+UID = 'debian-13-trixie'
+
+
+def committed(root: Path, tmp_path: Path, *names: str, rebuild: int = 0) -> None:
+    writer = state.ReleaseStateWriter(root, 'stable', UID)
+    for name in names:
+        add(writer, tmp_path / f'{name}{rebuild}', name, rebuild)
+    writer.commit()
+
+
+def stored_files(root: Path) -> dict[str, bytes]:
+    directory = root / 'stable' / UID
+    return {
+        str(p.relative_to(directory)): p.read_bytes() for p in directory.rglob('*') if p.is_file()
+    }
+
+
+@pytest.fixture
+def scratch(tmp_path: Path) -> Path:
+    for sub in ('pdi0', 'pdi1', 'plugin0', 'pdi0/0', 'pdi1/1', 'plugin0/0'):
+        (tmp_path / sub).mkdir(parents=True, exist_ok=True)
+    return tmp_path
+
+
+def test_pack_is_deterministic(scratch: Path) -> None:
+    root = scratch / 'state'
+    committed(root, scratch, 'pdi', 'plugin')
+    one, two = scratch / 'one.tar', scratch / 'two.tar'
+    state.pack(root, 'stable', UID, one)
+    state.pack(root, 'stable', UID, two)
+    assert one.read_bytes() == two.read_bytes()
+    with tarfile.open(one) as tar:
+        members = tar.getmembers()
+    names = [m.name for m in members]
+    assert names == sorted(names)
+    assert {(m.uid, m.gid, m.uname, m.gname) for m in members} == {(0, 0, '', '')}
+
+
+def test_pack_unpack_round_trip(scratch: Path) -> None:
+    root = scratch / 'state'
+    committed(root, scratch, 'pdi', 'plugin')
+    layer = scratch / 'layer.tar'
+    state.pack(root, 'stable', UID, layer)
+    other = scratch / 'other'
+    state.unpack(layer, other, 'stable', UID)
+    assert stored_files(other) == stored_files(root)
+    assert sorted(state.ReleaseState(other, 'stable', UID).packages()) == ['pdi', 'plugin']
+
+
+def test_unpack_replaces_the_previous_state(scratch: Path) -> None:
+    root = scratch / 'state'
+    committed(root, scratch, 'pdi', 'plugin')
+    layer = scratch / 'layer.tar'
+    state.pack(root, 'stable', UID, layer)
+    other = scratch / 'other'
+    committed(other, scratch, 'pdi', rebuild=1)
+    state.unpack(layer, other, 'stable', UID)
+    assert stored_files(other) == stored_files(root)
+    assert not (other / 'stable' / f'{UID}.new').exists()
+    assert not (other / 'stable' / f'{UID}.old').exists()
+
+
+def bad_layer(path: Path, kind: str, good: Path) -> None:
+    if kind == 'truncated':
+        path.write_bytes(good.read_bytes()[: len(good.read_bytes()) // 2])
+        return
+    with tarfile.open(path, 'w') as tar:
+        info = tarfile.TarInfo('../escaped' if kind == 'escape' else 'manifest.json')
+        data = b'x'
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+
+
+@pytest.mark.parametrize('kind', ['truncated', 'escape', 'no-manifest'])
+def test_corrupt_layer_keeps_the_previous_state(scratch: Path, kind: str) -> None:
+    root = scratch / 'state'
+    committed(root, scratch, 'pdi')
+    good = scratch / 'good.tar'
+    state.pack(root, 'stable', UID, good)
+    before = stored_files(root)
+    layer = scratch / 'bad.tar'
+    bad_layer(layer, kind, good)
+    with pytest.raises(state.StateArchiveError):
+        state.unpack(layer, root, 'stable', UID)
+    assert stored_files(root) == before
+    assert not (scratch / 'escaped').exists()
+    assert not (root / 'stable' / f'{UID}.new').exists()
