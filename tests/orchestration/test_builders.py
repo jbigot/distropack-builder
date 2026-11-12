@@ -2824,3 +2824,47 @@ def test_guard_error_of_any_kind_removes_the_repository(
     )
     assert status == 1
     assert not (tmp_path / 'project' / 'repositories' / 'fedora').exists()
+
+
+# Publishing under another root (Phase 14, Part B).
+def test_publish_into_output_root(
+    run_main: Callable[..., int], cli: ModuleType, tmp_path: Path
+) -> None:
+    states = str(tmp_path / 'states')
+    assert (
+        run_main(
+            FakeRunner(environment()), BOTH, ['hello-lib'], '--state-dir', states, '--no-publish'
+        )
+        == 0
+    )
+    project = tmp_path / 'project'
+    output = tmp_path / 'site'
+    builders = importlib.import_module('distropack_builder.builders')
+    config_module = importlib.import_module('distropack_builder.config')
+    loaded = config_module.load(project / 'build.conf')
+    context = BuildContext(
+        cast(Any, None), FakeRunner(environment()), Cancellation(), tmp_path / 'w', 1
+    )
+    (tmp_path / 'w').mkdir()
+    reporter = cast(Any, type('R', (), {'__getattr__': lambda self, name: lambda *a, **k: None})())
+    signer = Signer.load(project / 'key.gpg', FIXTURE_PASSPHRASE)
+    releases = {
+        'debian': {release('debian', 'trixie', date(2026, 11, 5))},
+        'fedora': {release('fedora', '44', date(2026, 11, 5))},
+    }
+    failed = builders.run_builds(
+        context,
+        reporter,
+        loaded,
+        releases,
+        {'hello-lib': set()},
+        lambda distrib: signer,
+        state_dir=Path(states),
+        build=False,
+        channel='stable',
+        output_root=output,
+    )
+    assert not failed
+    assert not (project / 'repositories').exists()
+    assert (output / 'repositories' / 'fedora' / '44' / 'repodata' / 'repomd.xml').is_file()
+    assert (output / 'repositories' / 'debian' / 'dists' / 'trixie' / 'Release').is_file()
