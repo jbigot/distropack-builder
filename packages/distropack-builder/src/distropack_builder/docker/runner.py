@@ -13,6 +13,7 @@ registry a short name means.
 import logging
 import subprocess
 import threading
+import uuid
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
@@ -165,11 +166,12 @@ def run(
     check: bool = True,
     cancellation: Cancellation | None = None,
     logger: logging.Logger | None = None,
-    network: bool = True,
+    network: bool | str = True,
     commit_to: str | None = None,
     remove_image: bool = False,
     commit_unless: Path | None = None,
     hostname: str | None = None,
+    networks: Sequence[str] = (),
 ) -> RunResult:
     """Run image with args in a new container, and remove it.
 
@@ -187,7 +189,9 @@ def run(
         cancellation: what cancels this run, among others.
         logger: where the container's output goes, line by line, at the debug level; the
             module's LOGGER by default.
-        network: whether the container has the engine's default network; none otherwise.
+        network: whether the container has the engine's default network, none otherwise; or the
+            name of the one network it joins.
+        networks: the further networks it joins, beside network's.
         commit_to: the reference of an image to commit the container to, once it exited 0.
         commit_unless: a host path whose existence, once the container exited, cancels that
             commit (a container saying there is nothing more to do with it).
@@ -217,6 +221,7 @@ def run(
             commit_to=commit_to,
             commit_unless=commit_unless,
             hostname=hostname,
+            networks=networks,
         )
     finally:
         if remove_image:
@@ -237,10 +242,11 @@ def _run(
     check: bool,
     cancellation: Cancellation,
     logger: logging.Logger | None,
-    network: bool,
+    network: bool | str,
     commit_to: str | None,
     commit_unless: Path | None,
     hostname: str | None,
+    networks: Sequence[str] = (),
 ) -> RunResult:
     """run, but for the removal of its image."""
     if cancellation.cancelled:
@@ -260,11 +266,13 @@ def _run(
         user=engine.user(as_root),
         security_opt=['label=disable'],
         pids_limit=-1,
-        network_mode=None if network else 'none',
         hostname=hostname,
         labels={LABEL.split('=')[0]: LABEL.split('=')[1]},
+        **_network_options(network),
     )
     try:
+        for name in networks:
+            engine.client.networks.get(name).connect(container)
         with cancellation.tracking(container):
             container.start()
             if cancellation.cancelled:  # cancel came between tracking and start
@@ -283,3 +291,59 @@ def _run(
     if check and status != 0:
         raise ContainerFailed(status, [image, *args], output=output, stderr=None)
     return RunResult(status, output, stdout)
+
+
+def _network_options(network: bool | str) -> dict[str, Any]:
+    """The options creating a container on network: the default one, none, or a named one."""
+    if isinstance(network, str):
+        return {'network': network}
+    return {'network_mode': None if network else 'none'}
+
+
+@contextmanager
+def private_network(engine: Engine) -> Iterator[str]:
+    """A network of its own, without any route outside, removed once left; its name."""
+    name = f'distropack-{uuid.uuid4().hex[:12]}'
+    created = engine.client.networks.create(
+        name, internal=True, labels={LABEL.split('=')[0]: LABEL.split('=')[1]}
+    )
+    try:
+        yield name
+    finally:
+        created.remove()
+
+
+@contextmanager
+def serve(
+    engine: Engine,
+    image: str,
+    args: Sequence[str],
+    *,
+    mounts: Sequence[Mount],
+    network: str,
+    alias: str,
+) -> Iterator[None]:
+    """A container running image with args on network, reachable as alias, while in the block.
+
+    It is removed when the block ends, however it ends.
+    """
+    container = _create(
+        engine,
+        qualified(image),
+        Cancellation(),
+        command=list(args),
+        mounts=[
+            docker.types.Mount(m.target, str(m.source), type='bind', read_only=m.read_only)
+            for m in mounts
+        ],
+        user=engine.user(False),
+        security_opt=['label=disable'],
+        labels={LABEL.split('=')[0]: LABEL.split('=')[1]},
+        network=network,
+        networking_config={network: engine.client.api.create_endpoint_config(aliases=[alias])},
+    )
+    try:
+        container.start()
+        yield
+    finally:
+        container.remove(force=True)

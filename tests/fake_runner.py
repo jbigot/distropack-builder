@@ -33,7 +33,7 @@ class Call:
     env: Mapping[str, str]
     as_root: bool
     workdir: str | None = None
-    network: bool = True
+    network: bool | str = True
     commit_to: str | None = None
     remove_image: bool = False
     commit_unless: Path | None = None
@@ -97,11 +97,12 @@ class FakeRunner:
         check: bool = True,
         cancellation: Cancellation | None = None,
         logger: logging.Logger | None = None,
-        network: bool = True,
+        network: bool | str = True,
         commit_to: str | None = None,
         remove_image: bool = False,
         commit_unless: Path | None = None,
         hostname: str | None = None,
+        networks: Sequence[str] = (),
     ) -> RunResult:
         call = Call(
             image,

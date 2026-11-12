@@ -17,7 +17,7 @@ import pytest
 
 from distropack_builder.docker import Cancellation, Cancelled, ContainerFailed, Mount, run
 from distropack_builder.docker.engine import Engine
-from distropack_builder.docker.runner import LABEL
+from distropack_builder.docker.runner import LABEL, private_network, serve
 
 pytestmark = [pytest.mark.docker, pytest.mark.enable_socket]
 
@@ -185,3 +185,58 @@ def test_image_removed_after_a_failure(engine: Engine) -> None:
     with pytest.raises(ContainerFailed):
         run(engine, temporary, ['false'], network=False, remove_image=True)
     assert not engine.has_image(temporary)
+
+
+# Sidecars on a private network (Phase 14).
+BUSYBOX = 'docker.io/library/busybox:stable'
+
+
+def our_networks(engine: Engine) -> list[str]:
+    return [str(n.name) for n in engine.client.networks.list(filters={'label': LABEL})]
+
+
+def test_sidecar_reachable_by_alias(engine: Engine, tmp_path: Path) -> None:
+    (tmp_path / 'hello.txt').write_text('served\n')
+    fetch = 'for i in 1 2 3 4 5; do wget -qO- http://site:8080/hello.txt && exit; sleep 1; done'
+    with (
+        private_network(engine) as network,
+        serve(
+            engine,
+            BUSYBOX,
+            ['httpd', '-f', '-p', '8080', '-h', '/site'],
+            mounts=[Mount('/site', tmp_path, read_only=True)],
+            network=network,
+            alias='site',
+        ),
+    ):
+        result = run(engine, ALPINE, ['sh', '-c', f'{fetch}; exit 1'], network=network)
+    assert result.stdout == 'served\n'
+    assert our_networks(engine) == []
+
+
+def test_private_network_has_no_outside(engine: Engine) -> None:
+    with private_network(engine) as network:
+        result = run(
+            engine,
+            ALPINE,
+            ['wget', '-q', '-T', '3', '-O-', 'http://example.org/'],
+            network=network,
+            check=False,
+        )
+    assert result.status != 0
+
+
+def test_also_on_the_default_network(engine: Engine, tmp_path: Path) -> None:
+    with private_network(engine) as network:
+        result = run(engine, ALPINE, ['ip', 'route'], network=True, networks=[network])
+    assert result.stdout.count('dev eth') >= 2  # two interfaces, the default and the private one
+
+
+def test_serve_removes_its_container_on_an_exception(engine: Engine, tmp_path: Path) -> None:
+    with (
+        pytest.raises(RuntimeError),
+        private_network(engine) as network,
+        serve(engine, BUSYBOX, ['sleep', '60'], mounts=[], network=network, alias='site'),
+    ):
+        raise RuntimeError('the check failed')
+    assert our_networks(engine) == []
