@@ -181,3 +181,15 @@ def rpm_compare(a: str, b: str) -> int:
     version_a, _, release_a = a.rpartition('-')
     version_b, _, release_b = b.rpartition('-')
     return rpmvercmp(version_a, version_b) or rpmvercmp(release_a, release_b)
+
+
+def rpm_evr_compare(a: str, b: str) -> int:
+    """-1, 0 or 1 as `[epoch:]version-release` a sorts before, as or after b, as rpm sorts them.
+
+    The epoch, 0 when absent, decides first.
+    """
+    epoch_a, _, rest_a = a.rpartition(':') if ':' in a else ('0', '', a)
+    epoch_b, _, rest_b = b.rpartition(':') if ':' in b else ('0', '', b)
+    if int(epoch_a or 0) != int(epoch_b or 0):
+        return 1 if int(epoch_a or 0) > int(epoch_b or 0) else -1
+    return rpm_compare(rest_a, rest_b)

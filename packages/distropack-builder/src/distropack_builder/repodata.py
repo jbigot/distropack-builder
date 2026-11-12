@@ -52,3 +52,19 @@ def write(directory: Path) -> None:
             previous.rename(repodata)
         raise
     shutil.rmtree(previous, ignore_errors=True)
+
+
+def read_primary(path: Path) -> list[tuple[str, str, str, str]]:
+    """The packages of a primary metadata file, compressed or not: (name, arch, evr, sha256).
+
+    evr is `[epoch:]version-release`, the epoch written only when not 0; sha256 the package's
+    checksum, its `pkgId`.
+    """
+    found: list[tuple[str, str, str, str]] = []
+
+    def package(pkg: createrepo_c.Package) -> None:
+        epoch = f'{pkg.epoch}:' if pkg.epoch not in (None, '', '0') else ''
+        found.append((pkg.name, pkg.arch, f'{epoch}{pkg.version}-{pkg.release}', pkg.pkgId))
+
+    createrepo_c.xml_parse_primary(str(path), pkgcb=package, do_files=0)
+    return found
