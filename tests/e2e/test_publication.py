@@ -36,10 +36,12 @@ class Published:
 
 @pytest.fixture
 def published(fixture_build: Path) -> Iterator[Published]:
-    """The fixture's site, served by a busybox httpd container on the default bridge.
+    """The fixture's site, served by a busybox httpd container, its port published on every
+    interface of the host.
 
-    The host reaches it through its port published on 127.0.0.1, a container through its address
-    on the bridge (with a rootless engine, the host's own addresses are not the containers').
+    The host reaches it on 127.0.0.1; a container, on any network of the engine, through the
+    host's own address, as it reaches any published site (with a rootless engine, the host's
+    loopback is not the containers').
     """
     name = f'distropack-test-published-{time.monotonic_ns()}'
     subprocess.run(
@@ -50,7 +52,7 @@ def published(fixture_build: Path) -> Iterator[Published]:
             '--name',
             name,
             '-p',
-            '127.0.0.1::8080',
+            '0.0.0.0::8080',
             '--mount',
             f'type=bind,source={fixture_build},target=/site,readonly',
             'docker.io/library/busybox:stable',
@@ -69,16 +71,14 @@ def published(fixture_build: Path) -> Iterator[Published]:
             subprocess.run(
                 ['docker', 'port', name, '8080'], check=True, capture_output=True, text=True
             )
-            .stdout.split(':')[-1]
+            .stdout.splitlines()[0]
+            .rsplit(':', 1)[-1]
             .strip()
         )
         address = subprocess.run(
-            ['docker', 'inspect', '-f', '{{.NetworkSettings.Networks.bridge.IPAddress}}', name],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        yield Published(f'http://127.0.0.1:{port}', f'http://{address}:8080')
+            ['hostname', '-I'], check=True, capture_output=True, text=True
+        ).stdout.split()[0]
+        yield Published(f'http://127.0.0.1:{port}', f'http://{address}:{port}')
     finally:
         subprocess.run(['docker', 'rm', '-f', name], capture_output=True)
 
