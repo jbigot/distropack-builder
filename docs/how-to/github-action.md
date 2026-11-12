@@ -99,3 +99,46 @@ jobs:
 
 Each job then publishes a repository holding its release alone: the action does not merge the
 repositories of several jobs.
+
+## Build a snapshot channel when upstream moved
+
+A scheduled workflow builds a snapshot channel only when something changed: `mode: fetch`
+resolves the channel's refs, downloads every source into `download-dir`, and sets `changed`
+against the states; the build steps then run from what it fetched, all on the same commits. The
+states and downloads last from run to run in `actions/cache`:
+
+```yaml
+name: Nightly
+on:
+  schedule: [{ cron: '17 2 * * *' }]
+permissions:
+  contents: read
+jobs:
+  nightly:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@<commit hash> # v7.0.1
+      with: { persist-credentials: false }
+    - uses: actions/cache@<commit hash> # v5.0.1
+      with:
+        path: |
+          states
+          downloads
+        key: nightly-${{ github.run_id }}
+        restore-keys: nightly-
+    - id: fetch
+      uses: jbigot/distropack-builder@<commit hash> # v1.0.0
+      with: { mode: fetch, channel: nightly, state-dir: states, download-dir: downloads }
+    - if: steps.fetch.outputs.changed == 'true'
+      uses: jbigot/distropack-builder@<commit hash> # v1.0.0
+      with:
+        channel: nightly
+        state-dir: states
+        download-dir: downloads
+        passphrase: ${{ secrets.PACKAGES_PASSPHRASE }}
+```
+
+A run triggered by an upstream push builds the pushed commit rather than the branch's head, which
+may have moved since: pass it as `snapshots: <package>=<commit>`. Several jobs can share one fetch:
+build with `mode: no-publish` per distribution, each restoring the same download directory, then
+publish once with `mode: publish-only`.

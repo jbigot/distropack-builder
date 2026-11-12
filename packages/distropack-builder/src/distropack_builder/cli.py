@@ -154,6 +154,21 @@ def _why_unpublished(release: Release, on: date) -> str:
     return f'end of life since {release.eol_date}'
 
 
+def _given(loaded: BuildConfig, channel: str, values: list[str]) -> dict[str, str]:
+    """The commits --snapshot gives, by package, checked against channel; exits 2 on an error."""
+    given: dict[str, str] = {}
+    for value in values:
+        package, separator, commit = value.partition('=')
+        if not separator or not package or not commit:
+            _fail(2, ValueError(f'--snapshot {value}: expected PACKAGE=COMMIT'))
+        given[package] = commit
+    try:
+        snapshots.check_given(loaded, channel, given)
+    except ValueError as error:
+        _fail(2, error)
+    return given
+
+
 def _interrupt(signum: int, frame: FrameType | None) -> None:
     """Handle SIGTERM as Ctrl-C."""
     raise KeyboardInterrupt()
@@ -235,6 +250,7 @@ def make_app(
         publish: bool = True,
         build_packages: bool = True,
         channel: str | None = None,
+        snapshot: list[str] | None = None,
     ) -> tuple[bool, dict[str, str]]:
         """Build and publish; whether anything failed, and the repositories by distribution id."""
         if not build_packages and not publish:
@@ -248,6 +264,7 @@ def make_app(
         loaded, selected = _selection(build_conf, patterns, on)
         if channel is not None and channel not in loaded.channels:
             _fail(2, ValueError(f'unknown channel {channel}'))
+        given = _given(loaded, channel or loaded.release_channel, snapshot or [])
         # publishing from lasting states publishes every configured release, whatever -D selects
         all_releases = (
             _selection(build_conf, [], on)[1] if patterns and publish and state_dir else None
@@ -333,6 +350,7 @@ def make_app(
                 build=build_packages,
                 all_releases=all_releases,
                 channel=channel or loaded.release_channel,
+                snapshots=given,
             )
         return failed or bool(unpublished), output_dirs
 
@@ -428,6 +446,16 @@ def make_app(
                 help="The channel to build (default: build.conf's release channel).",
             ),
         ] = None,
+        snapshot: Annotated[
+            list[str] | None,
+            typer.Option(
+                '--snapshot',
+                metavar='PACKAGE=COMMIT',
+                help="Build this commit of the package, on its channel's ref, instead of the one"
+                ' snapshots.json records or the head; repeat it for several.',
+                show_default=False,
+            ),
+        ] = None,
     ) -> None:
         """Builds the packages of build.conf, and publishes their signed repositories."""
         # SIGTERM (kill, timeout, a CI job cancelled) takes the path of Ctrl-C: the builds are
@@ -450,6 +478,7 @@ def make_app(
                     not no_publish,
                     not publish_only,
                     channel,
+                    snapshot,
                 )
         except typer.Exit:
             _write_outputs_once_stopped(stopped)
@@ -529,16 +558,7 @@ def make_app(
         name = channel or loaded.release_channel
         if name not in loaded.channels:
             _fail(2, ValueError(f'unknown channel {name}'))
-        given: dict[str, str] = {}
-        for value in snapshot or []:
-            package, separator, commit = value.partition('=')
-            if not separator or not package or not commit:
-                _fail(2, ValueError(f'--snapshot {value}: expected PACKAGE=COMMIT'))
-            given[package] = commit
-        try:
-            snapshots.check_given(loaded, name, given)
-        except ValueError as error:
-            _fail(2, error)
+        given = _given(loaded, name, snapshot or [])
         try:
             engine = connect(docker_host)
         except (EngineNotFound, docker.errors.DockerException) as error:

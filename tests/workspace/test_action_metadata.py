@@ -125,6 +125,10 @@ def run_step_arguments(tmp_path: Path, env: dict[str, str]) -> list[str]:
         'VERBOSE': 'false',
         'DOWNLOAD_DIR': '',
         'CHECK_REPRODUCIBLE': 'false',
+        'CHANNEL': '',
+        'STATE_DIR': '',
+        'SNAPSHOTS': '',
+        'MODE': 'run',
     }
     out = subprocess.run(
         ['bash', '-euc', run['run']],
@@ -152,3 +156,106 @@ def test_download_dir_input_reaches_the_cli(tmp_path: Path) -> None:
 def test_check_reproducible_input_reaches_the_cli(tmp_path: Path) -> None:
     args = run_step_arguments(tmp_path, {'CHECK_REPRODUCIBLE': 'true'})
     assert args == ['run', '--check-reproducible', 'build.conf']
+
+
+def test_channel_inputs_and_changed_output() -> None:
+    action = load(ACTIONS[0])
+    inputs = action['inputs']
+    for name, default in (('channel', ''), ('state-dir', ''), ('snapshots', ''), ('mode', 'run')):
+        assert inputs[name]['default'] == default, name
+        assert inputs[name]['description'].strip(), name
+    assert action['outputs']['changed']['value'] == '${{ steps.run.outputs.changed }}'
+    assert action['outputs']['changed']['description'].strip()
+
+
+def shell(function: str, *args: str) -> subprocess.CompletedProcess[str]:
+    """action/patterns.sh's function with args; the array it sets, NUL-separated, on stdout."""
+    script = f'. action/patterns.sh; {function} "$@"; printf "%s\\0" "${{command[@]}}"'
+    return subprocess.run(
+        ['bash', '-euc', script, 'bash', *args], cwd=REPO_ROOT, capture_output=True, text=True
+    )
+
+
+@pytest.mark.parametrize(
+    ('mode', 'command'),
+    [
+        ('run', ['run']),
+        ('no-publish', ['run', '--no-publish']),
+        ('publish-only', ['run', '--publish-only']),
+        ('fetch', ['fetch']),
+    ],
+)
+def test_mode_command(mode: str, command: list[str]) -> None:
+    result = shell('mode_command', mode)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split('\0')[:-1] == command
+
+
+def test_unknown_mode_fails_naming_the_input() -> None:
+    result = shell('mode_command', 'build')
+    assert result.returncode != 0
+    assert 'mode' in result.stdout + result.stderr
+    assert 'build' in result.stdout + result.stderr
+
+
+def snapshot_options(snapshots: str) -> list[str]:
+    script = '. action/patterns.sh; snapshot_options "$1"; printf "%s\\0" "${options[@]}"'
+    out = subprocess.run(
+        ['bash', '-euc', script, 'bash', snapshots],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    return out.split('\0')[:-1] if out != '\0' else []
+
+
+def test_snapshot_options() -> None:
+    assert snapshot_options('pdi=abc\n  plugin=def \n') == [
+        '--snapshot',
+        'pdi=abc',
+        '--snapshot',
+        'plugin=def',
+    ]
+    assert snapshot_options('') == []
+
+
+def test_fetch_mode_reaches_the_cli(tmp_path: Path) -> None:
+    env = {
+        'MODE': 'fetch',
+        'CHANNEL': 'nightly',
+        'STATE_DIR': 'states',
+        'DOWNLOAD_DIR': 'downloads',
+        'SNAPSHOTS': 'pdi=abc',
+        'JOBS': '4',
+        'VERBOSE': 'true',
+    }
+    assert run_step_arguments(tmp_path, env) == [
+        'fetch',
+        '--snapshot',
+        'pdi=abc',
+        '--channel',
+        'nightly',
+        '--state-dir',
+        'states',
+        '--download-dir',
+        'downloads',
+        'build.conf',
+    ]
+
+
+def test_publish_only_mode_reaches_the_cli(tmp_path: Path) -> None:
+    env = {'MODE': 'publish-only', 'STATE_DIR': 'states'}
+    assert run_step_arguments(tmp_path, env) == [
+        'run',
+        '--publish-only',
+        '--state-dir',
+        'states',
+        'build.conf',
+    ]
+
+
+def test_fetch_needs_a_download_dir(tmp_path: Path) -> None:
+    with pytest.raises(subprocess.CalledProcessError) as caught:
+        run_step_arguments(tmp_path, {'MODE': 'fetch'})
+    assert 'download-dir' in caught.value.stdout

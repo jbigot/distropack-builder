@@ -698,3 +698,22 @@ def test_output_dirs_list_channel_repositories(
         'fedora': str(project.resolve() / 'repositories/fedora'),
         'fedora.weekly': str(project.resolve() / 'repositories/weekly.fedora'),
     }
+
+
+def test_run_snapshot_option(snapshot_project: Path, tmp_path: Path) -> None:
+    first = add_upstream_commit(upstream(snapshot_project), 'one')
+    add_upstream_commit(upstream(snapshot_project), 'two')
+    states = str(tmp_path / 'states')
+    assert run_channel('--state-dir', states).exit_code == 0
+    result = run_channel(
+        '--channel', 'weekly', '--state-dir', states, '--snapshot', f'{SNAP}={first}'
+    )
+    assert result.exit_code == 0, result.output
+    stored = json.loads((tmp_path / 'states/weekly/debian-13-trixie/manifest.json').read_text())
+    assert stored['packages'][SNAP]['snapshot_commit'] == first
+
+
+def test_run_snapshot_refused(snapshot_project: Path) -> None:
+    result = run_channel('--channel', 'weekly', '--snapshot', 'hello-lib=abc')
+    assert result.exit_code == 2
+    assert 'hello-lib: ' in result.output

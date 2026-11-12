@@ -41,6 +41,26 @@ inputs:
     description: >-
       `true` to print every build's output in its log group, not only the failed builds'.
     default: 'false'
+  channel:
+    description: The channel to build, or fetch for; the release channel of `config` when empty.
+    default: ''
+  state-dir:
+    description: >-
+      Where each release keeps the packages of its last complete build, relative to
+      `working-directory` (with `actions/cache`, say); a temporary directory when empty.
+    default: ''
+  snapshots:
+    description: >-
+      The commits to build instead of the heads of their channel's refs, `<package>=<commit>`
+      separated by spaces or line breaks; what a push event names.
+    default: ''
+  mode:
+    description: >-
+      `run` to build and publish; `no-publish` to build and keep the states only;
+      `publish-only` to publish the states of `state-dir` and build nothing; `fetch` to resolve the
+      channel's snapshots and download its sources into `download-dir`, for later steps, and,
+      with `state-dir`, set `changed`.
+    default: run
 outputs:
   failed:
     description: >-
@@ -52,6 +72,12 @@ outputs:
       The JSON object of the repositories published, their absolute path by distribution id, for
       the distributions with a release selected: read it with `fromJSON`.
     value: ${{ steps.run.outputs.output-dirs }}
+  changed:
+    description: >-
+      With `mode: fetch` and `state-dir`, `true` when a build would make anything the states do
+      not hold (a release without a state, a new commit, a packaging change), `false` otherwise;
+      empty in the other modes.
+    value: ${{ steps.run.outputs.changed }}
 runs:
   using: composite
   steps:
@@ -74,12 +100,27 @@ runs:
       VERBOSE: ${{ inputs.verbose }}
       DOWNLOAD_DIR: ${{ inputs.download-dir }}
       CHECK_REPRODUCIBLE: ${{ inputs.check-reproducible }}
+      CHANNEL: ${{ inputs.channel }}
+      STATE_DIR: ${{ inputs.state-dir }}
+      SNAPSHOTS: ${{ inputs.snapshots }}
+      MODE: ${{ inputs.mode }}
       DISTROPACK_GPG_PASSPHRASE: ${{ inputs.passphrase }}
     run: |
       . "$GITHUB_ACTION_PATH/action/patterns.sh"
+      mode_command "$MODE"
       distribution_options "$DISTRIBUTIONS"
-      if [ -n "$JOBS" ]; then options+=(-j "$JOBS"); fi
-      if [ "$VERBOSE" = true ]; then options+=(--verbose); fi
-      if [ -n "$DOWNLOAD_DIR" ]; then options+=(--download-dir "$DOWNLOAD_DIR"); fi
-      if [ "$CHECK_REPRODUCIBLE" = true ]; then options+=(--check-reproducible); fi
-      "$GITHUB_ACTION_PATH/action/run-cli" run "${options[@]}" "$CONFIG"
+      snapshot_options "$SNAPSHOTS"
+      if [ -n "$CHANNEL" ]; then options+=(--channel "$CHANNEL"); fi
+      if [ -n "$STATE_DIR" ]; then options+=(--state-dir "$STATE_DIR"); fi
+      if [ -n "$DOWNLOAD_DIR" ]; then
+        options+=(--download-dir "$DOWNLOAD_DIR")
+      elif [ "$MODE" = fetch ]; then
+        echo "::error::mode: fetch needs the input download-dir, for the later steps to use"
+        exit 1
+      fi
+      if [ "$MODE" != fetch ]; then
+        if [ -n "$JOBS" ]; then options+=(-j "$JOBS"); fi
+        if [ "$VERBOSE" = true ]; then options+=(--verbose); fi
+        if [ "$CHECK_REPRODUCIBLE" = true ]; then options+=(--check-reproducible); fi
+      fi
+      "$GITHUB_ACTION_PATH/action/run-cli" "${command[@]}" "${options[@]}" "$CONFIG"

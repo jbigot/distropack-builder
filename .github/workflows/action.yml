@@ -79,6 +79,55 @@ jobs:
         dir=$(jq -r --arg d "$DISTRIB" '.[$d]' <<< "$OUTPUT_DIRS")
         [ "$dir" = "$RUNNER_TEMP/work/project/repositories/$DISTRIB" ]
         test -f "$dir/$INDEX"
+  states:
+    # fetch tells what changed against the states, no-publish builds, publish-only publishes
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with: { persist-credentials: false }
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with: { version-file: .tool-versions }
+    - run: uv run python tests/bake_fixture_images.py
+    - run: |
+        uv run python tests/fixture_project.py "$RUNNER_TEMP/work" "$BASE_URL" \
+          --releases debian:trixie --packages hello-lib hello-app
+        python3 -m http.server 8765 -d "$RUNNER_TEMP/work/served" > /dev/null 2>&1 &
+    - run: uv run distropack-build sources "$RUNNER_TEMP/work/project/build.conf" hello-lib
+    - id: first
+      uses: ./
+      with: &fetch
+        working-directory: ${{ runner.temp }}/work
+        config: project/build.conf
+        mode: fetch
+        state-dir: states
+        download-dir: downloads
+    - uses: ./
+      with:
+        working-directory: ${{ runner.temp }}/work
+        config: project/build.conf
+        mode: no-publish
+        state-dir: states
+        download-dir: downloads
+        passphrase: test-passphrase
+    - id: second
+      uses: ./
+      with: *fetch
+    - uses: ./
+      with:
+        working-directory: ${{ runner.temp }}/work
+        config: project/build.conf
+        mode: publish-only
+        state-dir: states
+        passphrase: test-passphrase
+    - name: changed before the build, not after; publish-only published the states
+      env:
+        FIRST: ${{ steps.first.outputs.changed }}
+        SECOND: ${{ steps.second.outputs.changed }}
+      run: |
+        [ "$FIRST" = true ]
+        [ "$SECOND" = false ]
+        test -f "$RUNNER_TEMP/work/project/repositories/debian/dists/trixie/InRelease"
   failing:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
