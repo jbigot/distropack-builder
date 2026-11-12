@@ -1,5 +1,58 @@
 {
   "$defs": {
+    "Channel": {
+      "additionalProperties": false,
+      "description": "A channel: the release one, built from the packaging, or a snapshot of upstream branches.",
+      "properties": {
+        "epoch_bump": {
+          "default": 0,
+          "description": "Snapshot only: what is added to the changelog's epoch in its deb versions, so that they\nsupersede packages installed from elsewhere.",
+          "minimum": 0,
+          "title": "Epoch Bump",
+          "type": "integer"
+        },
+        "fallback": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Snapshot only: the channel whose state provides the dependencies this channel does not\nbuild (default: the release channel).",
+          "title": "Fallback"
+        },
+        "kind": {
+          "description": "``release`` for the one channel built from each package's own packaging, ``snapshot`` for\none built from upstream git commits.",
+          "enum": [
+            "release",
+            "snapshot"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "version_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Snapshot only: the label of its upstream versions, ``<tag>+<label>.<n>.g<sha>`` (default:\nthe ref's name, every character outside ``[A-Za-z0-9]`` turned into ``.``; the channel's name\nfor a package pinned by ``commit``).",
+          "title": "Version Label"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "Channel",
+      "type": "object"
+    },
     "Distrib": {
       "additionalProperties": false,
       "description": "A distribution to build for, keyed by its id (``debian``, ``fedora``).",
@@ -25,6 +78,7 @@
         "repository": {
           "$ref": "#/$defs/Repository",
           "default": {
+            "channels": {},
             "description": null,
             "name": null,
             "path": "repositories",
@@ -176,6 +230,16 @@
       "additionalProperties": false,
       "description": "A package to build, keyed by the name of its directory.\n\nThe directory holds ``debian/`` for the Debian family, ``<name>.spec`` for the Fedora family,\nor both. A 3.0 (quilt) deb source downloads its upstream tarball as ``debian/watch`` says; an\nrpm, as its spec's ``Source:`` lines say.",
       "properties": {
+        "channels": {
+          "description": "The snapshot channels that build this package, and its upstream source in each.",
+          "patternProperties": {
+            "^[a-z0-9][a-z0-9.-]*$": {
+              "$ref": "#/$defs/PackageChannel"
+            }
+          },
+          "title": "Channels",
+          "type": "object"
+        },
         "disable": {
           "additionalProperties": {
             "anyOf": [
@@ -208,10 +272,123 @@
       "title": "Package",
       "type": "object"
     },
+    "PackageChannel": {
+      "additionalProperties": false,
+      "description": "Where a snapshot channel takes a package's upstream source from.",
+      "properties": {
+        "commit": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{40}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The full hash of the commit to build, pinned by the packaging (trusted as it is).",
+          "title": "Commit"
+        },
+        "git": {
+          "description": "The URL of the upstream git repository, used as written.",
+          "title": "Git",
+          "type": "string"
+        },
+        "ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The branch whose head to build, or whose commit given to ``fetch --snapshot``.",
+          "title": "Ref"
+        },
+        "verify": {
+          "anyOf": [
+            {
+              "const": "none",
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/VerifyKeys"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "With ``ref``: ``none``, or ``{keys: <file>}`` for a commit signed by one of its keys.",
+          "title": "Verify"
+        }
+      },
+      "required": [
+        "git"
+      ],
+      "title": "PackageChannel",
+      "type": "object"
+    },
+    "ReleaseTool": {
+      "additionalProperties": false,
+      "description": "The settings of the release tool (``distropack-build pending`` and ``release``).",
+      "properties": {
+        "author": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The author of the changelog entries it writes, ``Name <email>`` (default: from git's\n``user.name`` and ``user.email``).",
+          "title": "Author"
+        },
+        "distribution": {
+          "default": "unstable",
+          "description": "The distribution of the deb changelog entries it writes.",
+          "title": "Distribution",
+          "type": "string"
+        },
+        "packages": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Globs of the packages a release updates (default: every package with a snapshot\nchannel).",
+          "title": "Packages"
+        }
+      },
+      "title": "ReleaseTool",
+      "type": "object"
+    },
     "Repository": {
       "additionalProperties": false,
       "description": "The repository the packages of a distribution are published in.",
       "properties": {
+        "channels": {
+          "description": "Where each channel is published, when not as the defaults say.",
+          "patternProperties": {
+            "^[a-z0-9][a-z0-9.-]*$": {
+              "$ref": "#/$defs/RepositoryChannel"
+            }
+          },
+          "title": "Channels",
+          "type": "object"
+        },
         "description": {
           "anyOf": [
             {
@@ -261,11 +438,112 @@
       },
       "title": "Repository",
       "type": "object"
+    },
+    "RepositoryChannel": {
+      "additionalProperties": false,
+      "description": "Where a channel is published, for one distribution.",
+      "properties": {
+        "component": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Debian family: the component holding the channel (default: ``main`` for the release\nchannel, the channel's name for a snapshot one).",
+          "title": "Component"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Fedora family: the repository's label, as the distribution's ``description``.",
+          "title": "Description"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Fedora family: the repository's short name, as the distribution's ``name``.",
+          "title": "Name"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Fedora family, snapshot channels: the directory of the channel's own repository, relative\nto build.conf's directory (required).",
+          "title": "Path"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Fedora family, snapshot channels: the URL that repository is served from (required when\nthe distribution's repository has one).",
+          "title": "Url"
+        }
+      },
+      "title": "RepositoryChannel",
+      "type": "object"
+    },
+    "VerifyKeys": {
+      "additionalProperties": false,
+      "description": "Check that the commit built is signed by one of the keys of a file.",
+      "properties": {
+        "keys": {
+          "description": "The file of the OpenPGP public keys allowed to sign it, relative to build.conf's\ndirectory.",
+          "format": "path",
+          "title": "Keys",
+          "type": "string"
+        }
+      },
+      "required": [
+        "keys"
+      ],
+      "title": "VerifyKeys",
+      "type": "object"
     }
   },
   "additionalProperties": false,
   "description": "build.conf.",
   "properties": {
+    "channels": {
+      "description": "The channels, keyed by name: exactly one ``kind: release``, any number of ``kind:\nsnapshot`` (default: one release channel, ``stable``).",
+      "patternProperties": {
+        "^[a-z0-9][a-z0-9.-]*$": {
+          "$ref": "#/$defs/Channel"
+        }
+      },
+      "title": "Channels",
+      "type": "object"
+    },
     "distribs": {
       "additionalProperties": {
         "$ref": "#/$defs/Distrib"
@@ -281,6 +559,15 @@
       "description": "The packages to build, keyed by the name of their directory, beside build.conf.",
       "title": "Packages",
       "type": "object"
+    },
+    "release": {
+      "$ref": "#/$defs/ReleaseTool",
+      "default": {
+        "author": null,
+        "distribution": "unstable",
+        "packages": null
+      },
+      "description": "The settings of the release tool."
     }
   },
   "required": [

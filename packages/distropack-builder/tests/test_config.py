@@ -327,3 +327,284 @@ def test_repository_path_inside_project_accepted(tmp_path: Path) -> None:
         'distribs: {debian: {repository: {path: "out/../repos/debian"}}}\npackages: {}\n'
     )
     assert config.load(conf).distribs['debian'].repository.path == Path('out/../repos/debian')
+
+
+SHA = 'a' * 40
+
+
+def channel_project(
+    tmp_path: Path, text: str, *, native: tuple[str, ...] = (), key: bool = False
+) -> Path:
+    """A build.conf of text beside packages pdi and pdiplugin-x (quilt, watched, with a spec).
+
+    The packages named in native are 3.0 (native) instead; key writes a public key to key.asc.
+    """
+    for name in ('pdi', 'pdiplugin-x'):
+        package_dir(tmp_path, name)
+        (tmp_path / name / 'debian' / 'source').mkdir()
+        fmt = '3.0 (native)' if name in native else '3.0 (quilt)'
+        (tmp_path / name / 'debian' / 'source' / 'format').write_text(f'{fmt}\n')
+        (tmp_path / name / 'debian' / 'watch').write_text('version=4\n')
+    if key:
+        (tmp_path / 'key.asc').write_bytes(public_key())
+    conf = tmp_path / 'build.conf'
+    conf.write_text(text)
+    return conf
+
+
+CHANNELS_EXAMPLE = """\
+channels:
+    stable: { kind: release }
+    weekly:
+        kind: snapshot
+        epoch_bump: 1
+release:
+    author: "Julien Bigot <julien.bigot@cea.fr>"
+    packages: [ "pdi", "pdiplugin-*" ]
+distribs:
+    debian:
+        repository:
+            path: "debian"
+            url: "https://repo.pdi.dev/debian/"
+            channels: { weekly: { component: "weekly" } }
+    fedora:
+        repository:
+            path: "fedora"
+            url: "https://repo.pdi.dev/fedora/"
+            channels:
+                weekly: { path: "weekly.fedora", url: "https://repo.pdi.dev/weekly.fedora/" }
+packages:
+    pdi:
+        channels:
+            weekly:
+                git: "https://github.com/pdidev/pdi.git"
+                ref: "main"
+                verify: { keys: key.asc }
+    pdiplugin-x: {}
+"""
+
+
+def test_channels_example_loads(tmp_path: Path) -> None:
+    loaded = config.load(channel_project(tmp_path, CHANNELS_EXAMPLE, key=True))
+    assert loaded.release_channel == 'stable'
+    assert loaded.snapshot_channels() == ['weekly']
+    assert loaded.channels['weekly'].epoch_bump == 1
+    assert loaded.fallback('weekly') == 'stable'
+    assert loaded.channel_packages('stable') == ['pdi', 'pdiplugin-x']
+    assert loaded.channel_packages('weekly') == ['pdi']
+    entry = loaded.packages['pdi'].channels['weekly']
+    assert entry.verify == config.VerifyKeys(keys=Path('key.asc'))
+    assert loaded.release.packages == ('pdi', 'pdiplugin-*')
+    weekly = loaded.channel_repository('fedora', 'weekly')
+    assert (weekly.path, weekly.url) == (
+        Path('weekly.fedora'),
+        'https://repo.pdi.dev/weekly.fedora/',
+    )
+    assert loaded.channel_repository('fedora', 'stable') == loaded.distribs['fedora'].repository
+
+
+def test_no_channels_is_one_stable(tmp_path: Path) -> None:
+    loaded = config.load(channel_project(tmp_path, 'distribs: {}\npackages: {pdi: {}}\n'))
+    assert loaded.release_channel == 'stable'
+    assert loaded.snapshot_channels() == []
+    assert loaded.packaging_dir('pdi', 'stable') == tmp_path / 'pdi'
+    assert loaded.channel_packages('stable') == ['pdi']
+
+
+def channel_error(tmp_path: Path, text: str, **kwargs: Any) -> str:
+    with pytest.raises(ConfigError) as caught:
+        config.load(channel_project(tmp_path, text, **kwargs))
+    message = str(caught.value)
+    assert '\n' not in message
+    return message
+
+
+def test_two_release_channels_refused(tmp_path: Path) -> None:
+    text = 'channels: {a: {kind: release}, b: {kind: release}}\ndistribs: {}\npackages: {}\n'
+    assert 'channels: exactly one channel has kind: release' in channel_error(tmp_path, text)
+
+
+def test_no_release_channel_refused(tmp_path: Path) -> None:
+    text = 'channels: {b: {kind: snapshot}}\ndistribs: {}\npackages: {}\n'
+    assert 'channels: exactly one channel has kind: release' in channel_error(tmp_path, text)
+
+
+def test_release_channel_takes_no_snapshot_setting(tmp_path: Path) -> None:
+    text = 'channels: {a: {kind: release, epoch_bump: 1}}\ndistribs: {}\npackages: {}\n'
+    assert 'channels.a' in channel_error(tmp_path, text)
+
+
+@pytest.mark.parametrize(
+    ('text', 'where'),
+    [
+        pytest.param(
+            'channels: {s: {kind: release}}\ndistribs: {}\n'
+            f'packages: {{pdi: {{channels: {{w: {{git: x, commit: "{SHA}"}}}}}}}}\n',
+            'packages.pdi.channels.w: unknown channel w',
+            id='package',
+        ),
+        pytest.param(
+            'channels: {s: {kind: release}}\n'
+            'distribs: {debian: {repository: {channels: {w: {component: w}}}}}\npackages: {}\n',
+            'distribs.debian.repository.channels.w: unknown channel w',
+            id='repository',
+        ),
+        pytest.param(
+            'channels: {s: {kind: release}, w: {kind: snapshot, fallback: x}}\n'
+            'distribs: {}\npackages: {}\n',
+            'channels.w.fallback: unknown channel x',
+            id='fallback',
+        ),
+    ],
+)
+def test_undeclared_channel_refused(tmp_path: Path, text: str, where: str) -> None:
+    assert where in channel_error(tmp_path, text)
+
+
+def test_release_channel_entry_refused(tmp_path: Path) -> None:
+    text = (
+        'distribs: {}\n'
+        f'packages: {{pdi: {{channels: {{stable: {{git: x, commit: "{SHA}"}}}}}}}}\n'
+    )
+    assert (
+        'packages.pdi.channels.stable: the release channel builds every package from its own'
+        ' packaging' in channel_error(tmp_path, text)
+    )
+
+
+@pytest.mark.parametrize(
+    'entry',
+    [
+        pytest.param(f'{{commit: "{SHA}"}}', id='no-git'),
+        pytest.param(f'{{git: x, commit: "{SHA}", ref: main}}', id='commit-and-ref'),
+        pytest.param('{git: x}', id='neither'),
+        pytest.param('{git: x, ref: main}', id='ref-without-verify'),
+        pytest.param(f'{{git: x, commit: "{SHA}", verify: none}}', id='commit-with-verify'),
+        pytest.param('{git: x, commit: "abc"}', id='short-commit'),
+    ],
+)
+def test_snapshot_entry_needs_git_and_commit_or_ref(tmp_path: Path, entry: str) -> None:
+    text = (
+        'channels: {s: {kind: release}, w: {kind: snapshot}}\ndistribs: {}\n'
+        f'packages: {{pdi: {{channels: {{w: {entry}}}}}}}\n'
+    )
+    assert 'packages.pdi.channels.w' in channel_error(tmp_path, text)
+
+
+@pytest.mark.parametrize('name', ['Weekly', '-x', 'a_b'])
+def test_invalid_channel_name_refused(tmp_path: Path, name: str) -> None:
+    text = (
+        f'channels: {{s: {{kind: release}}, "{name}": {{kind: snapshot}}}}\n'
+        'distribs: {}\npackages: {}\n'
+    )
+    assert 'channels' in channel_error(tmp_path, text)
+
+
+SNAPSHOT_PDI = (
+    'channels: {s: {kind: release}, w: {kind: snapshot}}\n'
+    '{distribs}'
+    f'packages: {{pdi: {{channels: {{w: {{git: x, commit: "{SHA}"}}}}}}}}\n'
+)
+
+
+def test_native_deb_snapshot_refused(tmp_path: Path) -> None:
+    text = SNAPSHOT_PDI.replace('{distribs}', 'distribs: {}\n')
+    message = channel_error(tmp_path, text, native=('pdi',))
+    assert 'packages.pdi.channels.w: ' in message
+    assert 'native' in message
+
+
+def test_rpm_channel_needs_path(tmp_path: Path) -> None:
+    text = SNAPSHOT_PDI.replace('{distribs}', 'distribs: {fedora: {}}\n')
+    assert 'distribs.fedora.repository.channels.w.path' in channel_error(tmp_path, text)
+
+
+def test_rpm_channel_needs_url_when_published(tmp_path: Path) -> None:
+    text = SNAPSHOT_PDI.replace(
+        '{distribs}',
+        'distribs: {fedora: {repository: {url: "https://r/f/", channels: {w: {path: wf}}}}}\n',
+    )
+    assert 'distribs.fedora.repository.channels.w.url' in channel_error(tmp_path, text)
+
+
+def test_rpm_channel_path_inside_project(tmp_path: Path) -> None:
+    text = SNAPSHOT_PDI.replace(
+        '{distribs}', 'distribs: {fedora: {repository: {channels: {w: {path: ".."}}}}}\n'
+    )
+    assert 'distribs.fedora.repository.channels.w.path' in channel_error(tmp_path, text)
+
+
+def test_component_on_rpm_refused(tmp_path: Path) -> None:
+    text = SNAPSHOT_PDI.replace(
+        '{distribs}',
+        'distribs: {fedora: {repository: {channels: {w: {path: wf, component: w}}}}}\n',
+    )
+    assert 'distribs.fedora.repository.channels.w' in channel_error(tmp_path, text)
+
+
+def test_path_on_deb_refused(tmp_path: Path) -> None:
+    text = SNAPSHOT_PDI.replace(
+        '{distribs}', 'distribs: {debian: {repository: {channels: {w: {path: wd}}}}}\n'
+    )
+    assert 'distribs.debian.repository.channels.w' in channel_error(tmp_path, text)
+
+
+def test_verify_keys_checked(tmp_path: Path) -> None:
+    text = (
+        'channels: {s: {kind: release}, w: {kind: snapshot}}\ndistribs: {}\n'
+        'packages: {pdi: {channels: {w: {git: x, ref: main, verify: {keys: missing.asc}}}}}\n'
+    )
+    assert 'packages.pdi.channels.w.verify.keys' in channel_error(tmp_path, text)
+
+
+def test_channel_directory_checked(tmp_path: Path) -> None:
+    text = SNAPSHOT_PDI.replace('{distribs}', 'distribs: {}\n')
+    conf = channel_project(tmp_path, text)
+    (tmp_path / 'pdi-w').mkdir()
+    with pytest.raises(ConfigError, match='packages.pdi-w|pdi-w'):
+        config.load(conf)
+
+
+def test_packaging_dir_prefers_channel_directory(tmp_path: Path) -> None:
+    text = SNAPSHOT_PDI.replace('{distribs}', 'distribs: {}\n')
+    conf = channel_project(tmp_path, text)
+    package_dir(tmp_path, 'pdi-w')
+    loaded = config.load(conf)
+    assert loaded.packaging_dir('pdi', 'w') == tmp_path / 'pdi-w'
+    assert loaded.packaging_dir('pdi', 's') == tmp_path / 'pdi'
+    assert loaded.packaging_dir('pdiplugin-x', 'w') == tmp_path / 'pdiplugin-x'
+
+
+def test_component_defaults(tmp_path: Path) -> None:
+    text = (
+        'channels: {s: {kind: release}, w: {kind: snapshot}, n: {kind: snapshot}}\n'
+        'distribs: {debian: {repository: {channels: {n: {component: nightly}}}}}\n'
+        'packages: {}\n'
+    )
+    loaded = config.load(channel_project(tmp_path, text))
+    assert loaded.component('debian', 's') == 'main'
+    assert loaded.component('debian', 'w') == 'w'
+    assert loaded.component('debian', 'n') == 'nightly'
+
+
+def test_label_defaults(tmp_path: Path) -> None:
+    text = (
+        'channels: {s: {kind: release}, w: {kind: snapshot},'
+        ' n: {kind: snapshot, version_label: nl}}\n'
+        'distribs: {}\n'
+        'packages:\n'
+        '  pdi: {channels: {w: {git: x, ref: release/1.x, verify: none},'
+        f' n: {{git: x, commit: "{SHA}"}}}}}}\n'
+        f'  pdiplugin-x: {{channels: {{w: {{git: x, commit: "{SHA}"}}}}}}\n'
+    )
+    loaded = config.load(channel_project(tmp_path, text))
+    assert loaded.label('w', 'pdi') == 'release.1.x'
+    assert loaded.label('n', 'pdi') == 'nl'
+    assert loaded.label('w', 'pdiplugin-x') == 'w'
+
+
+def test_release_settings_default(tmp_path: Path) -> None:
+    loaded = config.load(channel_project(tmp_path, 'distribs: {}\npackages: {}\n'))
+    assert loaded.release.distribution == 'unstable'
+    assert loaded.release.author is None
+    assert loaded.release.packages is None
