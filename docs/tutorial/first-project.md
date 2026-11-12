@@ -153,6 +153,17 @@ publishes `repositories/debian` and `repositories/fedora`, signed, each with its
 page and its public key: `hello-archive-keyring.gpg` for Debian, `hello.key` for Fedora. In CI,
 set `DISTROPACK_GPG_PASSPHRASE` from a secret instead of using a file.
 
+Each run builds everything again. To keep what a run built, and build again only what changed, give
+it a directory to keep it in:
+
+```sh
+distropack-build run --passphrase-file ~/.hello-passphrase --state-dir ~/.hello-state
+```
+
+A second run then says `reused` for each package; [What a release keeps between
+runs](../explanation/state.md) tells when a package is rebuilt, and why a changed package needs a
+new version.
+
 ## Install
 
 The repositories are plain directories: serve them at their `url` with any web server. To try

@@ -204,13 +204,18 @@ def pkgbuild_env() -> dict[str, str]:
 @pytest.fixture
 def run_pkgbuild(
     pkgbuild_env: dict[str, str], docker_engine: None
-) -> Callable[[Path], subprocess.CompletedProcess[str]]:
-    """Run the builder in a project directory, as pdidev/pkgs runs pkgbuild, output merged."""
+) -> Callable[..., subprocess.CompletedProcess[str]]:
+    """Run the builder in a project directory, as pdidev/pkgs runs pkgbuild, output merged.
+
+    Arguments after the project directory are options of `run`.
+    """
     return partial(pkgbuild_run, pkgbuild_env)
 
 
-def pkgbuild_run(env: dict[str, str], project_dir: Path) -> subprocess.CompletedProcess[str]:
-    """Run the builder in project_dir, on whatever engine answers it."""
+def pkgbuild_run(
+    env: dict[str, str], project_dir: Path, *args: str
+) -> subprocess.CompletedProcess[str]:
+    """Run the builder in project_dir, with the options args, on whatever engine answers it."""
     return subprocess.run(
         [
             sys.executable,
@@ -219,6 +224,7 @@ def pkgbuild_run(env: dict[str, str], project_dir: Path) -> subprocess.Completed
             'run',
             '-j',
             '3',
+            *args,
             'build.conf',
         ],
         cwd=project_dir,

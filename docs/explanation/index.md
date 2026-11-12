@@ -15,6 +15,7 @@ data are fetched.
 - [Containers and engines](containers.md)
 - [How packages and repositories are signed](signing.md)
 - [Reproducible builds](reproducibility.md)
+- [What a release keeps between runs](state.md)
 
 ```{toctree}
 :hidden:
@@ -24,4 +25,5 @@ architecture
 containers
 signing
 reproducibility
+state
 ```

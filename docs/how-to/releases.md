@@ -73,6 +73,8 @@ left out by `available` say, says so and does nothing.
 
 ## Drop a release
 
-Remove its token, or let `supported` drop it at its end of life. Its repository is left as it was:
-the next run neither rebuilds it nor lists it on the repository's page, but its files stay where
-they were published until you remove them.
+Remove its token, or let `supported` drop it at its end of life. With `--state-dir`, the next run
+writes the repositories from the states of the releases `build.conf` still selects: the dropped
+release's repository is gone. Without it, the repository is left as it was: the next run neither
+rebuilds it nor lists it on the repository's page, but its files stay where they were published
+until you remove them.

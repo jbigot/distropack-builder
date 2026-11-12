@@ -55,9 +55,14 @@ upstream version gets its own name for it from `mk-origtargz`, run in its direct
 The builds run in dependency order, `-j` of them at once. When one fails, every build that depends
 on it, directly or not, is skipped without running; the builds independent of it go on.
 
-Each build adds an entry to its package's changelog, for deb, whose version sorts the build where
-it belongs, and whose date is that of the packaging's own top entry, never the clock's: the same
-inputs give the same version and the same `SOURCE_DATE_EPOCH`.
+Each build starts from what its release's state (`--state-dir`) keeps of its package: it is reused
+when nothing changed, rebuilt binary-only when only its build dependencies did, refused when its
+sources changed without a new version ([What a release keeps between runs](state.md)).
+
+A deb build from source adds an entry to its package's changelog, whose version sorts the build
+where it belongs, and whose date is that of the packaging's own top entry, never the clock's: the
+same inputs give the same version and the same `SOURCE_DATE_EPOCH`. On a release without a version
+(Debian's sid), the changelog's own version is the build's, and no entry is added.
 
 ```text
 <version>~bpo<release version>[+b<rebuild>]
@@ -67,10 +72,10 @@ The `~bpo<release version>` part, absent for a release without a version (Debian
 build before `<version>` itself, and the build for a release before the build for a later one:
 upgrading a system to the next release upgrades the package too, as the official backports do. A
 rebuild of the same version, its build dependencies having changed, adds a binNMU's `+b<n>`, and
-an rpm's release gains `.<n>`; the number comes from what a release keeps of its last build
-(Phase 12's state), 0 until then. A snapshot of an upstream branch takes its upstream version from
-the commit, `<last tag>+main.<commits since>.g<hash>`, with the epoch raised above the
-changelog's ({source}`versions.py <packages/distropack-builder/src/distropack_builder/versions.py>`).
+an rpm's release gains `.<n>`; the number comes from what a release keeps of its last build. A
+snapshot of an upstream branch takes its upstream version from the commit, `<last
+tag>+main.<commits since>.g<hash>`, with the epoch raised above the changelog's
+({source}`versions.py <packages/distropack-builder/src/distropack_builder/versions.py>`).
 
 Ctrl-C and SIGTERM (`kill`, `timeout`, a cancelled CI job) take the same path: no build or download
 starts any more, the containers of the builds running are killed, nothing is published, the run's
@@ -79,21 +84,26 @@ on the network ends at its 30-second timeout, without a retry.
 
 ## Publication
 
-A release is published only when every one of its builds succeeded; the other releases of the
-distribution publish regardless. A release that is not published keeps the repository of its last
-publication, so that its users never see a partial set of packages.
+Once every build is settled, a release all of whose builds were built or reused makes them its
+state; the other releases keep theirs, so that their users never see a partial set of packages.
+The repositories are written from the states, each release on its own: when the publication of one
+fails, the others still publish.
 
-Each release is published on its own: when the publication of one fails, the others still publish.
-The README of a distribution lists the releases this run published, and those it did not publish
-whose previous repository is still in the output directory. A distribution of which no release is
-published is left untouched, its README and exported key included.
+With `--state-dir`, every repository is removed and written again from the states of all the
+releases `build.conf` selects, `-D` or not; its page lists those that have a state, and a release
+without one is reported (`no state for <release>`) and left out. `--no-publish` stops after the
+states, `--publish-only` builds nothing. Without `--state-dir`, only the releases of this run are
+written: the page lists them, and those it did not publish whose previous repository is still in
+the output directory; a distribution of which no release is published is left untouched, its
+README and exported key included.
 
 The run exits with status 1 when a build failed or was skipped, or when a publication failed.
 
 ## The report
 
-The run prints one line per build when it ends: `built`, `failed`, `skipped` (with the failed build
-it waited for) or `interrupted`, then the package and the release. The output of the build's
+The run prints one line per build when it ends: `built`, `reused` (its stored package stands),
+`failed`, `skipped` (with the failed build it waited for) or `interrupted`, then the package and
+the release. The output of the build's
 containers is kept per build, and printed under the line of a build that failed, so that the output
 of parallel builds never interleaves. With `-v`, it is printed as it comes instead, each line
 prefixed with its build. On a terminal, a progress bar counts the builds done.
@@ -102,4 +112,5 @@ When `GITHUB_ACTIONS` is `true`, each build is printed as one collapsed group of
 output included, and a table of every build's outcome is appended to the job's summary
 (`GITHUB_STEP_SUMMARY`).
 
-Unless interrupted, the run ends with the list of the builds that did not succeed.
+Unless interrupted, the run ends with the list of the builds that were neither built nor reused, and
+a line per release that keeps its previous state.
