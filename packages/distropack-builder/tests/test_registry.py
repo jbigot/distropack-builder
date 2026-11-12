@@ -268,3 +268,68 @@ def test_prune_api_failure(respx_mock: respx.MockRouter) -> None:
     respx_mock.get(url__startswith=f'{API}/orgs/').respond(500)
     with httpx.Client() as client, pytest.raises(registry.RegistryError):
         registry.prune('ghcr.io/pdidev/state', 'tok', 50, client)
+
+
+# The review's fixes.
+def test_push_of_no_state_refused(tmp_path: Path, no_retry_wait: None) -> None:
+    """A state that is not there, or not whole, never replaces the tag's."""
+    reg = registry.Registry('127.0.0.1:1/state', insecure=True)
+    with pytest.raises(registry.RegistryError, match=f'no state for stable.{UID}'):
+        reg.push('stable', UID, tmp_path / 'states', {})
+    states = tmp_path / 'partial'
+    write_state(states, '1.0')
+    (states / 'stable' / UID / 'pdi' / 'pdi_1.0.deb').unlink()
+    with pytest.raises(registry.RegistryError, match=f'no state for stable.{UID}'):
+        reg.push('stable', UID, states, {})
+
+
+def test_pack_reads_a_state_set_aside(tmp_path: Path) -> None:
+    """A commit interrupted between its renames leaves the state as `<uid>.old`: packed from it."""
+    states = tmp_path / 'states'
+    write_state(states, '1.0')
+    (states / 'stable' / UID).rename(states / 'stable' / f'{UID}.old')
+    layer = tmp_path / 'layer.tar'
+    state.pack(states, 'stable', UID, layer)
+    other = tmp_path / 'other'
+    state.unpack(layer, other, 'stable', UID)
+    assert state.ReleaseState(other, 'stable', UID).package('pdi') is not None
+
+
+def test_tag_asks_a_new_token_for_the_push(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A registry scoping its tokens per action answers the PUT only with a push token."""
+    reg = registry.Registry('127.0.0.1:1/state', insecure=True)
+    monkeypatch.setattr(reg, '_manifest', lambda ref: {'schemaVersion': 2})
+    reg.client.auth.token = 'pull-only'
+    seen: list[object] = []
+
+    class Answer:
+        status_code = 201
+
+    def upload(manifest: object, container: object) -> Answer:
+        seen.append(reg.client.auth.token)
+        return Answer()
+
+    monkeypatch.setattr(reg.client, 'upload_manifest', upload)
+    reg.tag('sha256:' + 'a' * 64, f'stable.{UID}')
+    assert seen == [None]
+
+
+def test_prune_counts_a_repeated_page_once(respx_mock: respx.MockRouter) -> None:
+    base = f'{API}/orgs/pdidev/packages/container/state/versions'
+    respx_mock.get(base).respond(
+        200,
+        json=versions_page(range(10), set()),
+        headers={'Link': f'<{base}?per_page=100&page=2>; rel="next"'},
+    )
+    respx_mock.delete(url__startswith=base).respond(204)
+    with httpx.Client() as client:
+        assert registry.prune('ghcr.io/pdidev/state', 'tok', 12, client) == []
+
+
+def test_prune_refuses_a_version_without_its_tags(respx_mock: respx.MockRouter) -> None:
+    base = f'{API}/orgs/pdidev/packages/container/state/versions'
+    respx_mock.get(base).respond(200, json=[{'id': 1, 'created_at': '2026-11-01T00:00:00Z'}])
+    deleted = respx_mock.delete(url__startswith=base).respond(204)
+    with httpx.Client() as client, pytest.raises(registry.RegistryError):
+        registry.prune('ghcr.io/pdidev/state', 'tok', 0, client)
+    assert not deleted.called

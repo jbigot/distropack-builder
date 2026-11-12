@@ -110,7 +110,8 @@ class Registry:
                     self.client.download_blob(container, digest, str(layer))
                 except Exception as error:
                     raise RegistryError(f'{self.reference}:{tag}: {_reason(error)}') from error
-                found = 'sha256:' + hashlib.sha256(layer.read_bytes()).hexdigest()
+                with layer.open('rb') as data:
+                    found = 'sha256:' + hashlib.file_digest(data, 'sha256').hexdigest()
                 if found != digest:
                     raise RegistryError(f'{self.reference}:{tag}: the layer is not {digest}')
                 try:
@@ -128,7 +129,10 @@ class Registry:
         tag = tag_of(channel, uid)
         with tempfile.TemporaryDirectory(prefix='distropack-state.') as scratch:
             layer = Path(scratch) / f'{tag}.tar'
-            state.pack(states, channel, uid, layer)
+            try:
+                state.pack(states, channel, uid, layer)
+            except state.StateArchiveError as error:
+                raise RegistryError(f'no state for {tag}: {error}') from error
             config = Path(scratch) / 'config.json'
             config.write_text('{}')
             try:
@@ -157,6 +161,8 @@ class Registry:
         if manifest is None:
             raise RegistryError(f'{self.reference}@{digest}: no such artifact')
         container = self.client.get_container(f'{self.reference}:{tag}')
+        # the token of the read may be scoped to pulling: the push asks its own
+        self.client.auth.token = None
         try:
             response = self.client.upload_manifest(manifest, container)
         except Exception as error:
@@ -228,15 +234,22 @@ def prune(reference: str, token: str, keep_untagged: int, client: httpx.Client) 
         seen: set[str] = set()
         while True:
             response.raise_for_status()
-            versions += response.json()
+            page = response.json()
+            if not isinstance(page, list):
+                raise RegistryError(f'{reference}: the API listed no versions')
+            versions += page
             following = response.links.get('next', {}).get('url')
             if not following or following in seen:  # a server repeating a page ends the listing
                 break
             seen.add(following)
             response = client.get(following, headers=headers)
-        untagged = [
-            v for v in versions if not v.get('metadata', {}).get('container', {}).get('tags')
-        ]
+        listed: dict[int, dict[str, Any]] = {}
+        for version in versions:
+            tags = version.get('metadata', {}).get('container', {}).get('tags')
+            if not isinstance(tags, list):
+                raise RegistryError(f'{reference}: version {version.get("id")} lists no tags')
+            listed[int(version['id'])] = version
+        untagged = [v for v in listed.values() if not v['metadata']['container']['tags']]
         untagged.sort(key=lambda v: str(v['created_at']), reverse=True)
         removed = []
         for version in untagged[keep_untagged:]:

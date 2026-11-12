@@ -20,10 +20,13 @@ distropack-build state push --registry ghcr.io/example/pkgs/state --channel stab
 ```
 
 - `pull` prints `no state for <tag>` for a tag the registry does not have, and the release starts
-  from no state. Any other failure, an unreachable registry or a refused token, exits 1 without
-  writing anything: a job must never build from an empty state it took for an absent one, which
-  would restart the rebuild numbers.
-- `push` uploads the layer, then moves the tag: an interrupted push leaves the previous state under
+  from no state. Any other failure, an unreachable registry or a refused token, exits 1, and the
+  release being pulled keeps its local state (the releases pulled before it have the registry's):
+  a job must never build from an empty state it took for an absent one, which would restart the
+  rebuild numbers. A layer is checked against its digest before it replaces a state.
+- `push` refuses a state that is not there, or not whole (`no state for <tag>`, exit 1), so that a
+  failed or mistyped job never replaces a tag's state with an empty one. It uploads the layer,
+  then moves the tag: an interrupted push leaves the previous state under
   the tag. Under GitHub Actions it annotates the artifact with the repository
   (`org.opencontainers.image.source`, which links the package to it and grants the workflow's token
   access), the commit and the run id; `--annotation KEY=VALUE` adds others.

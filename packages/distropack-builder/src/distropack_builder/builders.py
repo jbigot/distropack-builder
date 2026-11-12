@@ -1292,6 +1292,7 @@ def run_builds(
     version_guard: bool = True,
     output_root: Path | None = None,
     urls: Mapping[str, str] | None = None,
+    compared: list[str] | None = None,
 ) -> bool:
     """Download, build and publish; whether any build or publication did not succeed.
 
@@ -1513,16 +1514,21 @@ def run_builds(
         url = repository.url
         if repository is config.distribs[dist_id].repository and urls and dist_id in urls:
             url = urls[dist_id]
-        if url is None or failures:
+        if url is None or failures or not (outputs or kept):
             continue
         if not version_guard:
             reporter.version_guard_off(str(out / repository.path))
             continue
         written = out / repository.path
+        # the releases kept from the last publication are deployed with it: guarded too
+        releases = {o.release for o in outputs} | kept
         try:
-            refused = _guard(config, dist_id, group, written, url, {o.release for o in outputs})
-        except indexes.PublishedError as error:
+            refused = _guard(config, dist_id, group, written, url, releases)
+        except Exception as error:  # noqa: BLE001 -- versions that cannot be compared are refused
             refused = [f'the versions published at {url} cannot be read: {error}']
+        reporter.version_compared(str(written), url)
+        if compared is not None:
+            compared.append(str(written))
         if refused:
             rmtree(written, ignore_errors=True)
             reporter.publication_failed(str(written), VersionRefused(refused))

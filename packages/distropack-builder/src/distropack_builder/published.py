@@ -10,11 +10,13 @@ published, or be that version with the same bytes (a package reused as it was): 
 who have it would never get the new bytes, or would be offered a lower version.
 """
 
+import functools
 import gzip
+import hashlib
 import lzma
 import tempfile
 import xml.etree.ElementTree as ET
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -56,7 +58,7 @@ class Offence:
         return f'{self.name} {self.version}: {self.published} is already published'
 
 
-Versions = dict[tuple[str, str], Version]
+Versions = dict[tuple[str, str], tuple[Version, ...]]
 
 
 def _read(source: str | Path, relative: str, client: httpx.Client) -> bytes | None:
@@ -105,18 +107,42 @@ def versions(
     Raises:
         PublishedError: an index could not be fetched (but for a 404) or read.
     """
-    found: Versions = {}
+    try:
+        listed = _versions(source, family, release, component, client)
+    except PublishedError:
+        raise
+    except Exception as error:  # noqa: BLE001 -- a malformed index, however it breaks the parser
+        raise PublishedError(f'{source}: an index of {release} cannot be read: {error}') from error
+    found: dict[tuple[str, str], list[Version]] = {}
+    for key, version in listed:
+        found.setdefault(key, []).append(version)
+    return {key: tuple(versions) for key, versions in found.items()}
+
+
+def _versions(
+    source: str | Path,
+    family: Literal['deb', 'rpm'],
+    release: Release,
+    component: str,
+    client: httpx.Client,
+) -> list[tuple[tuple[str, str], Version]]:
+    """The packages source publishes, a (key, version) pair each, in the order of its indexes."""
+    found: list[tuple[tuple[str, str], Version]] = []
     if family == 'deb':
         base = f'dists/{release.codename}/{component}'
         packages = _index(source, f'{base}/binary-amd64/Packages', client)
         for paragraph in Packages.iter_paragraphs(packages or '', use_apt_pkg=False):
             key = (paragraph['Package'], paragraph['Architecture'])
-            found[key] = Version(paragraph['Version'], paragraph['SHA256'])
+            DebVersion(paragraph['Version'])  # raises on what is no version
+            found.append((key, Version(paragraph['Version'], paragraph['SHA256'])))
         sources = _index(source, f'{base}/source/Sources', client)
         for stanza in Sources.iter_paragraphs(sources or '', use_apt_pkg=False):
             dsc = [f for f in stanza.get('Checksums-Sha256', []) if f['name'].endswith('.dsc')]
             if dsc:
-                found[(stanza['Package'], 'source')] = Version(stanza['Version'], dsc[0]['sha256'])
+                DebVersion(stanza['Version'])
+                found.append(
+                    ((stanza['Package'], 'source'), Version(stanza['Version'], dsc[0]['sha256']))
+                )
         return found
     directory = f'{release.version}/repodata'
     repomd = _read(source, f'{directory}/repomd.xml', client)
@@ -126,18 +152,24 @@ def versions(
         root = ET.fromstring(repomd)
     except ET.ParseError as error:
         raise PublishedError(f'{source}/{directory}/repomd.xml: {error}') from error
-    location = root.find(f"{_REPO}data[@type='primary']/{_REPO}location")
-    if location is None:
+    entry = root.find(f"{_REPO}data[@type='primary']")
+    location = None if entry is None else entry.find(f'{_REPO}location')
+    checksum = None if entry is None else entry.find(f'{_REPO}checksum')
+    if entry is None or location is None:
         raise PublishedError(f'{source}/{directory}/repomd.xml lists no primary metadata')
     href = location.get('href', '')
     data = _read(source, f'{release.version}/{href}', client)
     if data is None:
         raise PublishedError(f'{source}/{release.version}/{href}: missing')
+    if checksum is not None and checksum.text:
+        digest = hashlib.new(checksum.get('type', 'sha256'), data).hexdigest()
+        if digest != checksum.text.strip():
+            raise PublishedError(f'{source}/{release.version}/{href}: not what repomd.xml lists')
     with tempfile.TemporaryDirectory(prefix='distropack-primary.') as scratch:
         primary = Path(scratch) / Path(href).name
         primary.write_bytes(data)
         for name, arch, evr, sha256 in repodata.read_primary(primary):
-            found[(name, arch)] = Version(evr, sha256)
+            found.append(((name, arch), Version(evr, sha256)))
     return found
 
 
@@ -148,17 +180,28 @@ def _compare(family: str, a: str, b: str) -> int:
     return (first > second) - (first < second)
 
 
-def offences(new: Mapping[tuple[str, str], Version], old: Versions, family: str) -> list[Offence]:
-    """The packages of new that old publishes at a higher version, or the same with other bytes.
+def offences(
+    new: Mapping[tuple[str, str], Sequence[Version]],
+    old: Mapping[tuple[str, str], Sequence[Version]],
+    family: str,
+) -> list[Offence]:
+    """The packages of new below the highest version old publishes, or equal to one but its bytes.
 
     A package old does not publish passes; one old publishes and new no longer has is no offence.
     """
     found = []
-    for key, candidate in sorted(new.items()):
-        current = old.get(key)
-        if current is None:
+    for key, candidates in sorted(new.items()):
+        published = old.get(key, ())
+        if not published:
             continue
-        order = _compare(family, candidate.version, current.version)
-        if order < 0 or (order == 0 and candidate.sha256 != current.sha256):
-            found.append(Offence(key[0], key[1], candidate.version, current.version))
+        highest = functools.reduce(
+            lambda a, b: a if _compare(family, a.version, b.version) >= 0 else b, published
+        )
+        for candidate in candidates:
+            if _compare(family, candidate.version, highest.version) < 0:
+                found.append(Offence(key[0], key[1], candidate.version, highest.version))
+                continue
+            same = [p for p in published if _compare(family, candidate.version, p.version) == 0]
+            if any(p.sha256 != candidate.sha256 for p in same):
+                found.append(Offence(key[0], key[1], candidate.version, same[0].version))
     return found

@@ -281,6 +281,7 @@ def make_app(
         version_guard: bool = True,
         output_root: Path | None = None,
         urls: Mapping[str, str] | None = None,
+        compared: list[str] | None = None,
     ) -> tuple[bool, dict[str, str]]:
         """Build and publish; whether anything failed, and the repositories by distribution id."""
         if not build_packages and not publish:
@@ -384,6 +385,7 @@ def make_app(
                 version_guard=version_guard,
                 output_root=output_root,
                 urls=urls,
+                compared=compared,
             )
         return failed or bool(unpublished), output_dirs
 
@@ -591,6 +593,17 @@ def make_app(
             if not separator or not dist_id or not target:
                 _fail(2, ValueError(f'--url {value}: expected DIST=URL'))
             urls[dist_id] = target
+        with _errors():
+            known = config.load(build_conf).distribs
+        unknown = sorted(set(urls) - set(known))
+        if unknown:
+            _fail(
+                2,
+                ValueError(
+                    f'--url {unknown[0]}=…: {unknown[0]} is not a distribution of {build_conf}'
+                ),
+            )
+        compared: list[str] = []
         with TemporaryDirectory(prefix='distropack-check.') as output, _errors():
             failed, _ = build(
                 build_conf,
@@ -609,9 +622,14 @@ def make_app(
                 True,
                 Path(output),
                 urls,
+                compared,
             )
         if failed:
             raise typer.Exit(1)
+        if not compared:
+            _fail(
+                1, ValueError('nothing to compare: no release has a state, or no repository a URL')
+            )
 
     @app.command('fetch')
     def fetch_command(

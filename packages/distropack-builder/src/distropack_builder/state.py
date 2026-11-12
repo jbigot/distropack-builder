@@ -255,12 +255,32 @@ def _reset(info: tarfile.TarInfo) -> tarfile.TarInfo:
     return info
 
 
+def _whole(directory: Path) -> bool:
+    """Whether directory holds a state's manifest and every file it names."""
+    manifest = _Manifest.read(directory / MANIFEST)
+    if manifest is None:
+        return False
+    return all(
+        (directory / name / file).is_file()
+        for name, entry in manifest.packages.items()
+        for file in entry.files
+    )
+
+
 def pack(states: Path, channel: str, uid: str, dst: Path) -> None:
     """The state of uid on channel as one tar at dst: sorted, owned by 0, the files' times kept.
 
     The same state gives the same bytes; the times are kept, as the state reuses files by content.
+    The state is read where `ReleaseState` reads it (set aside as `.old` by an interrupted commit).
+
+    Raises:
+        StateArchiveError: there is no whole state of uid on channel: nothing is written.
     """
     directory = states / channel / uid
+    if not directory.exists():
+        directory = directory.with_name(uid + '.old')
+    if not _whole(directory):
+        raise StateArchiveError(f'no whole state of {uid} on {channel} under {states}')
     with tarfile.open(dst, 'w', format=tarfile.PAX_FORMAT) as tar:
         for path in sorted(directory.rglob('*')):
             tar.add(path, path.relative_to(directory).as_posix(), recursive=False, filter=_reset)
@@ -283,13 +303,10 @@ def unpack(src: Path, states: Path, channel: str, uid: str) -> None:
                 tar.extractall(new, filter='data')
         except (tarfile.TarError, OSError, EOFError) as error:
             raise StateArchiveError(f'{src} is not a state archive: {error}') from error
-        manifest = _Manifest.read(new / MANIFEST)
-        if manifest is None:
+        if _Manifest.read(new / MANIFEST) is None:
             raise StateArchiveError(f'{src} holds no state manifest')
-        for name, entry in manifest.packages.items():
-            missing = [file for file in entry.files if not (new / name / file).is_file()]
-            if missing:
-                raise StateArchiveError(f'{src} lacks {name}/{missing[0]} of its manifest')
+        if not _whole(new):
+            raise StateArchiveError(f'{src} lacks a file its manifest names')
     except BaseException:
         shutil.rmtree(new, ignore_errors=True)
         raise

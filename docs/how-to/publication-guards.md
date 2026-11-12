@@ -25,8 +25,11 @@ repository's `url` (the deb `Packages` and `Sources` of each release and compone
   hello-lib 1.0-1.fc44 on Fedora 44/stable: 1.0-1.fc44 is already published
   ```
 
-Every offender is listed; the repository just written is removed, so that nothing deployable is
-left, and the run exits 1. A repository or a release the URL does not have yet publishes nothing,
+Every offender is listed; the repository just written is removed, every release and component
+of it, so that nothing deployable is left, and the run exits 1. A release kept from the last
+publication (without `--state-dir`, one whose build failed) is compared too, since it is deployed
+with the others. Each repository compared says so (`<directory>: compared with <url>`). When an
+index lists several versions of a package, the new one must be above the highest. A repository or a release the URL does not have yet publishes nothing,
 and passes; an index that cannot be read (a server error, no network) fails the publication, since
 its versions are unknown. Versions are compared as apt and dnf compare them: epochs first,
 `~` before anything.
@@ -45,6 +48,8 @@ distropack-build check-versions --state-dir states --url debian=https://old.exam
 ```
 
 writes every channel's repositories from the states into a temporary directory, compares them as
-a publication does, and exits 1 listing the offenders. `--url DIST=URL` compares a distribution
-with another URL than its repository's, such as a repository being replaced. It needs the signing
+a publication does, and exits 1 listing the offenders, or when it compared nothing (no release
+with a state, or no repository with a URL). `--url DIST=URL` compares a distribution
+with another URL than its repository's, such as a repository being replaced; a `DIST` that is
+not a distribution of `build.conf` is an error. It needs the signing
 key, as a publication does.

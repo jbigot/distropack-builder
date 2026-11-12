@@ -46,9 +46,9 @@ Checksums-Sha256:
  4444444444444444444444444444444444444444444444444444444444444444 5678 pdi_1.12.0.orig.tar.gz
 """
 EXPECTED_DEB = {
-    ('pdi', 'amd64'): Version('1:1.12.0+main.37.gabcdef0-1~bpo13', '1' * 64),
-    ('pdi-doc', 'all'): Version('1.12.0-1~bpo13+b1', '2' * 64),
-    ('pdi', 'source'): Version('1:1.12.0+main.37.gabcdef0-1~bpo13', '3' * 64),
+    ('pdi', 'amd64'): (Version('1:1.12.0+main.37.gabcdef0-1~bpo13', '1' * 64),),
+    ('pdi-doc', 'all'): (Version('1.12.0-1~bpo13+b1', '2' * 64),),
+    ('pdi', 'source'): (Version('1:1.12.0+main.37.gabcdef0-1~bpo13', '3' * 64),),
 }
 
 
@@ -102,8 +102,9 @@ def test_rpm_indexes_read(respx_mock: respx.MockRouter, tmp_path: Path) -> None:
     with httpx.Client() as client:
         found = published.versions(RPM_URL, 'rpm', F44, 'main', client)
     assert set(found) == {('hello-app', 'noarch'), ('hello-lib', 'noarch')}
-    assert found[('hello-lib', 'noarch')].version == '1.0-1.fc44'
-    assert len(found[('hello-lib', 'noarch')].sha256) == 64
+    (lib,) = found[('hello-lib', 'noarch')]
+    assert lib.version == '1.0-1.fc44'
+    assert len(lib.sha256) == 64
 
 
 def test_missing_suite_is_empty(respx_mock: respx.MockRouter) -> None:
@@ -147,22 +148,22 @@ OTHER = 'b' * 64
 )
 def test_offences(family: str, new: str, old: str, offends: bool) -> None:
     key = ('pdi', 'amd64')
-    found = published.offences({key: Version(new, SHA)}, {key: Version(old, SHA)}, family)
+    found = published.offences({key: (Version(new, SHA),)}, {key: (Version(old, SHA),)}, family)
     assert bool(found) == offends
 
 
 def test_equal_version_other_bytes_offends() -> None:
     key = ('pdi', 'amd64')
     (offence,) = published.offences(
-        {key: Version('1.0-1', SHA)}, {key: Version('1.0-1', OTHER)}, 'deb'
+        {key: (Version('1.0-1', SHA),)}, {key: (Version('1.0-1', OTHER),)}, 'deb'
     )
     assert offence == Offence('pdi', 'amd64', '1.0-1', '1.0-1')
     assert str(offence) == 'pdi 1.0-1: 1.0-1 is already published'
 
 
 def test_new_and_dropped_packages_do_not_offend() -> None:
-    new = {('pdi', 'amd64'): Version('1.0-1', SHA)}
-    old = {('gone', 'amd64'): Version('9.0-1', SHA)}
+    new = {('pdi', 'amd64'): (Version('1.0-1', SHA),)}
+    old = {('gone', 'amd64'): (Version('9.0-1', SHA),)}
     assert published.offences(new, old, 'deb') == []
 
 
@@ -182,7 +183,7 @@ def test_guard_never_accepts_a_lower_version(new: str, old: str) -> None:
         ('deb', DebVersion(new) < DebVersion(old)),
         ('rpm', rpm_evr_compare(new, old) < 0),
     ):
-        found = published.offences({key: Version(new, SHA)}, {key: Version(old, SHA)}, family)
+        found = published.offences({key: (Version(new, SHA),)}, {key: (Version(old, SHA),)}, family)
         if lower:
             assert found
 
@@ -193,3 +194,55 @@ def test_rpm_evr_compare() -> None:
     assert rpm_evr_compare('1:1.0-1', '2.0-1') == 1
     assert rpm_evr_compare('1.0-1', '0:1.0-1') == 0
     assert rpm_evr_compare('1.0-1.fc44', '1.0-1.fc44.1') == -1
+
+
+# The review's fixes.
+def test_highest_published_version_counts(tmp_path: Path) -> None:
+    """An index listing several versions of a package: the new one must be above them all."""
+    key = ('a', 'amd64')
+    old = {key: (Version('2.0-1', SHA), Version('1.0-1', SHA))}
+    assert published.offences({key: (Version('1.5-1', SHA),)}, old, 'deb')
+    assert published.offences({key: (Version('1.0-1', OTHER),)}, old, 'deb')
+    assert not published.offences({key: (Version('2.1-1', SHA),)}, old, 'deb')
+
+
+def test_index_listing_several_versions_read(tmp_path: Path) -> None:
+    dist = tmp_path / 'dists' / 'trixie' / 'main' / 'binary-amd64'
+    dist.mkdir(parents=True)
+    (dist / 'Packages').write_text(
+        f'Package: a\nArchitecture: amd64\nVersion: 2.0-1\nSHA256: {SHA}\n\n'
+        f'Package: a\nArchitecture: amd64\nVersion: 1.0-1\nSHA256: {OTHER}\n'
+    )
+    with httpx.Client() as client:
+        found = published.versions(tmp_path, 'deb', TRIXIE, 'main', client)
+    assert sorted(v.version for v in found[('a', 'amd64')]) == ['1.0-1', '2.0-1']
+
+
+@pytest.mark.parametrize(
+    ('path', 'content'),
+    [
+        ('dists/trixie/main/binary-amd64/Packages.xz', b'<html>not found</html>'),
+        ('dists/trixie/main/binary-amd64/Packages.gz', b'\x1f\x8b\x08truncated'),
+        ('dists/trixie/main/binary-amd64/Packages', b'Package: a\nArchitecture: amd64\n'),
+        (
+            'dists/trixie/main/binary-amd64/Packages',
+            b'Package: a\nArchitecture: amd64\nVersion: !!\nSHA256: x\n',
+        ),
+    ],
+)
+def test_malformed_deb_index_fails(tmp_path: Path, path: str, content: bytes) -> None:
+    target = tmp_path / path
+    target.parent.mkdir(parents=True)
+    target.write_bytes(content)
+    with httpx.Client() as client, pytest.raises(published.PublishedError):
+        published.versions(tmp_path, 'deb', TRIXIE, 'main', client)
+
+
+@pytest.mark.parametrize('primary', [b'<html><body>error</body></html>', b'garbage'])
+def test_malformed_primary_fails(tmp_path: Path, primary: bytes) -> None:
+    root = rpm_tree(tmp_path)
+    repodata_dir = root / '44' / 'repodata'
+    (target,) = repodata_dir.glob('*primary.xml*')
+    target.write_bytes(primary)
+    with httpx.Client() as client, pytest.raises(published.PublishedError):
+        published.versions(root, 'rpm', F44, 'main', client)

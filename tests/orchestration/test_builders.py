@@ -2716,3 +2716,111 @@ def test_check_versions_passes(
     )
     assert status == 0, out
     assert not (tmp_path / 'project' / 'repositories').exists()
+
+
+# The review's fixes (Phase 14, Part A).
+def test_kept_release_guarded_and_not_removed(
+    run_main: Callable[..., int],
+    recorded_http: respx.MockRouter,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Without states, a release kept from the last publication is guarded too."""
+    two = {'fedora': ['43', '44']}
+    recorded_http.get(url__startswith=f'{PUBLISHED}/43/').respond(404)
+    assert (
+        run_main(
+            FakeRunner(environment()),
+            two,
+            ['hello-lib'],
+            '--no-version-guard',
+            prepare=published_at(PUBLISHED),
+        )
+        == 0
+    )
+    keep = tmp_path / 'kept'
+    shutil.copytree(tmp_path / 'project' / 'repositories', keep)
+    fresh(tmp_path)
+    serve_published(recorded_http, '2.0', '1.fc44', 'b' * 64)
+
+    def prepare(project: Path) -> None:
+        published_at(PUBLISHED)(project)
+        shutil.copytree(keep, project / 'repositories')
+
+    capsys.readouterr()
+    built = environment()
+
+    def failing_44(call: Call) -> RunResult | None:
+        tag = call.image.rpartition(':')[2]
+        if call.is_build and tag.startswith('44'):
+            raise ContainerFailed(1, 'build failed')
+        return built(call)
+
+    runner = FakeRunner(failing_44)
+    assert run_main(runner, two, ['hello-lib'], prepare=prepare) == 1
+    assert sorted(c.image.rpartition(':')[2][:2] for c in runner.calls if c.is_build) == [
+        '43',
+        '44',
+    ]
+    assert 'on Fedora 44/stable: 2.0-1.fc44 is already published' in capsys.readouterr().out
+
+
+def test_check_versions_unknown_url_key(
+    run_main: Callable[..., int], cli: ModuleType, tmp_path: Path
+) -> None:
+    states = str(tmp_path / 'states')
+    assert (
+        run_main(
+            FakeRunner(environment()), FEDORA, ['hello-lib'], '--state-dir', states, '--no-publish'
+        )
+        == 0
+    )
+    status, out = check_versions(
+        cli, tmp_path / 'project', '--state-dir', states, '--url', 'fedroa=https://x/'
+    )
+    assert status == 2
+    assert 'fedroa' in out
+
+
+def test_check_versions_says_what_it_compared(
+    run_main: Callable[..., int], cli: ModuleType, recorded_http: respx.MockRouter, tmp_path: Path
+) -> None:
+    states = str(tmp_path / 'states')
+    assert (
+        run_main(
+            FakeRunner(environment()), FEDORA, ['hello-lib'], '--state-dir', states, '--no-publish'
+        )
+        == 0
+    )
+    recorded_http.get(url__startswith=PUBLISHED).respond(404)
+    status, out = check_versions(
+        cli, tmp_path / 'project', '--state-dir', states, '--url', f'fedora={PUBLISHED}'
+    )
+    assert status == 0, out
+    assert f'compared with {PUBLISHED}' in out
+
+
+def test_check_versions_with_nothing_to_compare_fails(
+    run_main: Callable[..., int], cli: ModuleType, tmp_path: Path
+) -> None:
+    run_main(FakeRunner(environment()), FEDORA, ['hello-lib'], '--no-publish')
+    status, out = check_versions(cli, tmp_path / 'project', '--state-dir', str(tmp_path / 'none'))
+    assert status == 1
+    assert 'nothing to compare' in out
+
+
+def test_guard_error_of_any_kind_removes_the_repository(
+    run_main: Callable[..., int],
+    recorded_http: respx.MockRouter,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken(*args: object, **kwargs: object) -> object:
+        raise RuntimeError('an unexpected parser failure')
+
+    monkeypatch.setattr('distropack_builder.published.versions', broken)
+    status = run_main(
+        FakeRunner(environment()), FEDORA, ['hello-lib'], prepare=published_at(PUBLISHED)
+    )
+    assert status == 1
+    assert not (tmp_path / 'project' / 'repositories' / 'fedora').exists()
