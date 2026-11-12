@@ -14,6 +14,9 @@ from typing import Any
 from distropack_builder.docker import Cancellation, Mount, RunResult
 from support import write_tarball
 
+# What a fake dependency container reports it installed.
+INSTALLED = 'base-files 13.8\ndebhelper 13.24\n'
+
 
 class StopBuild(Exception):
     """Raised by a response to end the build where the test has seen enough."""
@@ -197,6 +200,7 @@ def tools_respond(call: Call) -> RunResult | None:
 
     aptly's publish writes the Release file of its distribution, with a trailing space on its
     first line, as the signer then has to drop. uscan and mk-origtargz write the upstream tarballs.
+    A dependency container reports INSTALLED.
     """
     if call.args[:1] == ('uscan',):
         answer_uscan(call)
@@ -209,4 +213,6 @@ def tools_respond(call: Call) -> RunResult | None:
         release.write_text(f'Origin: hello \nCodename: {distribution}\n')
     if '_builder:' in call.image and call.args[:1] == ('query',):
         answer_queries(call)
+    if call.is_deps:
+        (call.targets['/buildenv'].source / 'installed').write_text(INSTALLED)
     return None

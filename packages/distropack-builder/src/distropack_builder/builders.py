@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 
 import jinja2
 from debian.changelog import Changelog
-from debian.deb822 import Deb822, _PkgRelationMixin
+from debian.deb822 import Deb822, Dsc, _PkgRelationMixin
 
 from distro_releases import Release
 from distropack_builder import readme, repodata, rpmquery, signing, sources, targets
@@ -37,10 +37,11 @@ from distropack_builder.graph import closure, dependencies
 from distropack_builder.publication import published
 from distropack_builder.report import Reporter, Unreproducible, build_logger
 from distropack_builder.rpmquery import SpecFailed, SpecInfo
-from distropack_builder.scheduler import Succeeded, schedule
+from distropack_builder.scheduler import Reused, Succeeded, schedule
 from distropack_builder.signing import Signer
+from distropack_builder.state import RELEASE_CHANNEL, StoredPackage, packaging_key, static_key
 from distropack_builder.uscan import OrigFiles, fetch_origs
-from distropack_builder.versions import deb_base_version, deb_version
+from distropack_builder.versions import binnmu_entry, deb_base_version, deb_version, rpm_release
 
 # The host name of the build containers, the same in every run.
 BUILD_HOSTNAME = 'builder'
@@ -131,6 +132,8 @@ class Container:
 
 # The one architecture packages are built and published for: binNMU entries and aptly name it.
 ARCHITECTURE = 'amd64'
+# The binNMU's changelog entry, beside the stored source package in its /src.
+BINNMU_CHANGELOG = 'binnmu.changelog'
 
 # The configuration of aptly: its database in /aptlyroot, what it publishes in /aptlyout. It reads
 # the clear-signed .dsc with its own OpenPGP code: gpg needs a home to write to, which the user a
@@ -185,8 +188,26 @@ class Control(Deb822, _PkgRelationMixin):
         _PkgRelationMixin.__init__(self, *args, **kwargs)
 
 
+class UnversionedChange(Exception):
+    """A package whose sources or packaging changed, its version not: it cannot be built."""
+
+    def __init__(self, package: str) -> None:
+        """The failure of package, which says what to do."""
+        super().__init__(
+            f'{package}: sources or packaging changed without a new version '
+            '(add a debian/changelog entry / bump Release in the spec)'
+        )
+
+
 class PackageBuilder:
-    """The build of one package for one release, the base of the builders of each family."""
+    """The build of one package for one release, the base of the builders of each family.
+
+    Its mode follows what the release's state stores of it (stored): without it, or for another
+    base version, a build from source; for the same base version and static key, a rebuild
+    candidate, which the dependency container finds unneeded when the environment is the stored
+    one (the stored package is reused) and otherwise rebuilds with the next rebuild number; for the
+    same base version and another static key, a failure, before any container.
+    """
 
     # The suffix of the build's work directory.
     family: ClassVar[Literal['deb', 'rpm']]
@@ -206,13 +227,24 @@ class PackageBuilder:
         self.bin_depends: set[str] = set()
         # the repositories of other packages its dependencies may come from, set by run_builds
         self.extras: Sequence[ExtraRepository] = ()
-        # the environment key of the last build stored, if any (Phase 12); a build whose
-        # dependency container installs the same environment builds nothing
-        self.known_env: str | None = None
+        # what the release's state stores of the package, set by run_builds
+        self.stored: StoredPackage | None = None
+        # the environment key of a rebuild candidate: a dependency container that installs the
+        # same environment builds nothing
+        self._known_env: str | None = None
         # what this build's dependency container installed, as its sha256, and whether it was
-        # known_env: then no package was built
+        # _known_env: then no package was built
         self.env_key: str | None = None
         self.unchanged = False
+        # what build() made of it: its versions, keys, and which of its files are its source
+        # package and its Architecture: all packages
+        self.base_version = ''
+        self.rebuild = 0
+        self.version = ''
+        self.static_key = ''
+        self.packaging_hash = ''
+        self.source_files: list[str] = []
+        self.arch_all_files: list[str] = []
 
     def __str__(self) -> str:
         """The package's name, as the report names the build a skipped one waited for."""
@@ -227,12 +259,16 @@ class PackageBuilder:
         """The URLs of the files the build needs downloaded."""
         return []
 
-    def build(self, deps: Set['PackageBuilder'], files: Files) -> None:
+    def build(self, deps: Set['PackageBuilder'], files: Files) -> Reused | None:
         """Build, with the outputs of deps in the local repository, and files downloaded.
+
+        Returns:
+            Reused() when the stored package stands, which is then the output; None when built.
 
         Raises:
             DownloadFailed: a file the build needs could not be downloaded, or does not match
                 the package's sources line.
+            UnversionedChange: the sources or packaging changed, the base version did not.
         """
         expected = sources.read(self._base_dir / self.name)
         for url in self.sources():
@@ -243,11 +279,65 @@ class PackageBuilder:
             if mismatch is not None:
                 raise mismatch
         self._check_own_downloads(expected)
+        self._prepare()
+        packaging = self._packaging()
+        self.base_version = self._base_version()
+        self.static_key = static_key(packaging, self._source_files(files), RELEASE_CHANNEL)
+        self.packaging_hash = packaging_key(packaging)
+        stored = self.stored
+        if stored is None or stored.base_version != self.base_version:
+            self.rebuild = 0
+        elif stored.static_key != self.static_key:
+            raise UnversionedChange(self.name)
+        else:
+            self.rebuild = stored.rebuild + 1
+            self._known_env = stored.env_key
+            if not self._rebuilds_binaries():
+                return self._reuse(stored)
+        self.version = self._version(self.rebuild)
         wk_dir = self._context.workdir / f'{self.name}.{self.dist_release.uid}.{self.family}-build'
         wk_dir.mkdir()
         self.outdir = wk_dir / 'output'
         self.outdir.mkdir()
         self._build(wk_dir, self.outdir, set(deps) | {self}, files)
+        if self.unchanged:
+            assert stored is not None  # only a rebuild candidate knows an environment
+            return self._reuse(stored)
+        return None
+
+    def _reuse(self, stored: StoredPackage) -> Reused:
+        """Make the stored package the output, with what it was built from."""
+        self.unchanged = True
+        self.outdir = stored.directory
+        self.rebuild = stored.rebuild
+        self.version = stored.version
+        self.env_key = stored.env_key
+        self.source_files = list(stored.source_files)
+        self.arch_all_files = list(stored.arch_all_files)
+        return Reused()
+
+    def _prepare(self) -> None:
+        """Raise when the packaging cannot say its version."""
+
+    def _packaging(self) -> Path:
+        """The packaging the static key covers."""
+        raise NotImplementedError
+
+    def _source_files(self, files: Files) -> dict[str, Path]:
+        """The source files the static key covers, by name: those downloaded for the build."""
+        raise NotImplementedError
+
+    def _base_version(self) -> str:
+        """The version of a first build for the release, without rebuild number."""
+        raise NotImplementedError
+
+    def _version(self, rebuild: int) -> str:
+        """The full version of the rebuild-th build of the base version."""
+        raise NotImplementedError
+
+    def _rebuilds_binaries(self) -> bool:
+        """Whether a rebuild of the same source makes any package."""
+        return True
 
     def _check_own_downloads(self, expected: Mapping[str, str]) -> None:
         """Raise DownloadFailed for a file the builder downloaded itself that is not expected."""
@@ -282,8 +372,8 @@ class PackageBuilder:
         buildenv.mkdir()
         deps_mounts = [*deps_mounts, Mount('/buildenv', buildenv), *self._extra_mounts()]
         deps_env = dict(env or {})
-        if self.known_env is not None:
-            deps_env['DISTROPACK_KNOWN_ENV'] = self.known_env
+        if self._known_env is not None:
+            deps_env['DISTROPACK_KNOWN_ENV'] = self._known_env
         run = self._context.run
         common: dict[str, Any] = {
             'env': env,
@@ -302,12 +392,16 @@ class PackageBuilder:
             **{**common, 'env': deps_env},
         )
         installed = buildenv / 'installed'
-        if installed.is_file():
-            self.env_key = hashlib.sha256(installed.read_bytes()).hexdigest()
+        if not installed.is_file():
+            raise RuntimeError('the builder image reported no environment')
+        self.env_key = hashlib.sha256(installed.read_bytes()).hexdigest()
         if (buildenv / 'unchanged').exists():
             self.unchanged = True
             return
         check = self._context.check_reproducible
+        first = next(m.source for m in build_mounts if m.target == outputs)
+        # a binNMU's stored source, which the build reads and does not make
+        inputs = {path.name for path in first.iterdir()}
         try:
             run(
                 self._context.engine,
@@ -324,7 +418,7 @@ class PackageBuilder:
                 self._context.engine.remove_image(temporary)
             raise
         if check:
-            self._check_reproducible(temporary, build_args, build_mounts, outputs, common)
+            self._check_reproducible(temporary, build_args, build_mounts, outputs, common, inputs)
 
     def _check_reproducible(
         self,
@@ -333,8 +427,9 @@ class PackageBuilder:
         build_mounts: Sequence[Mount],
         outputs: str,
         common: Mapping[str, Any],
+        inputs: Set[str] = frozenset(),
     ) -> None:
-        """Build again from image, varied, and compare the packages of both builds.
+        """Build again from image, varied, and compare the packages of both builds, not inputs.
 
         What must not matter varies, as reprotest varies it: the umask, the time zone, the locale,
         the parallelism, the time (a later start), and for deb the build path and the host name:
@@ -374,7 +469,7 @@ class PackageBuilder:
             path.name
             for directory in (first, second)
             for path in directory.iterdir()
-            if path.is_file() and path.name.endswith(PACKAGE_FILES)
+            if path.is_file() and path.name.endswith(PACKAGE_FILES) and path.name not in inputs
         }
         differing = sorted(
             name
@@ -480,7 +575,10 @@ class DebPackageBuilder(PackageBuilder):
             control_paragraphs = Deb822.iter_paragraphs(
                 raw_control, strict={'whitespace-separates-paragraphs': False}
             )
-            self.bin_provides = {pkg['Package'] for pkg in control_paragraphs if 'Package' in pkg}
+            binaries = [pkg for pkg in control_paragraphs if 'Package' in pkg]
+            self.bin_provides = {pkg['Package'] for pkg in binaries}
+            # whether a binNMU, which builds the Architecture: any packages only, makes any
+            self._arch_any = any(pkg.get('Architecture', '').strip() != 'all' for pkg in binaries)
         with (self._debian_dir / 'control').open() as raw_control:
             control = Control(raw_control)
             self.bin_depends = {
@@ -504,52 +602,106 @@ class DebPackageBuilder(PackageBuilder):
             if mismatch is not None:
                 raise mismatch
 
-    def _build(self, wk_dir: Path, outdir: Path, deps: Set[PackageBuilder], files: Files) -> None:
-        pkg_dir = wk_dir / 'pkg'
-        pkg_dir.mkdir()
-        release_codename = codename(self.dist_release)
-
-        # a fresh copy of the changelog: each release adds its own entry
-        with (self._debian_dir / 'changelog').open() as raw_changelog:
-            changelog = Changelog(raw_changelog)
-        source_dir = pkg_dir / f'{changelog.package}-{changelog.upstream_version}'
+    def _prepare(self) -> None:
+        """Raise when the upstream tarball a 3.0 (quilt) source needs is missing."""
         if self.needs_orig:
             if self.orig is None:
                 raise ValueError(f'the upstream tarball of {self.name} was not downloaded')
             if isinstance(self.orig, DownloadFailed):
                 raise self.orig
-            debian_dir = Path(copytree(self._debian_dir, source_dir / 'debian'))
-        elif self._format == '3.0 (native)':
-            debian_dir = Path(copytree(self._debian_dir.parent, source_dir)) / 'debian'
-        else:
+        elif self._format != '3.0 (native)':
             raise ValueError(f'unsupported deb source format: {self._format}')
 
-        # the rebuild's own changelog entry, versioned and dated from the packaging alone, so that
-        # the same inputs give the same package (dpkg derives SOURCE_DATE_EPOCH from this date)
-        changelog.new_block(
-            package=changelog.package,
-            version=deb_version(
-                deb_base_version(str(changelog.version), self.dist_release.version), 0
-            ),
-            distributions=release_codename,
-            urgency=changelog.urgency,
-            changes=['  * Rebuild for ' + str(self.dist_release)],
-            author=self._gpg.uid,
-            date=changelog.date,
-        )
-        with (debian_dir / 'changelog').open('w') as raw_changelog:
-            changelog.write_to_open_file(raw_changelog)
+    def _packaging(self) -> Path:
+        """debian/, or the whole source of a native package."""
+        return self._debian_dir if self.needs_orig else self._debian_dir.parent
+
+    def _source_files(self, files: Files) -> dict[str, Path]:
+        """The upstream tarball of a 3.0 (quilt) source, none for a native one."""
+        if isinstance(self.orig, OrigFiles):
+            return {self.orig.orig.name: self.orig.orig}
+        return {}
+
+    def _base_version(self) -> str:
+        """The changelog's version, made release-specific (`~bpo<version>`) where it has one."""
+        return deb_base_version(str(self._changelog.version), self.dist_release.version)
+
+    def _version(self, rebuild: int) -> str:
+        """The base version, then `+b<rebuild>` for a binNMU."""
+        return deb_version(self.base_version, rebuild)
+
+    def _rebuilds_binaries(self) -> bool:
+        """Whether there are Architecture: any packages, the only ones a binNMU rebuilds."""
+        return self._arch_any
+
+    def _source_tree(self, pkg_dir: Path) -> None:
+        """Lay out the source in pkg_dir: its tree, and the upstream tarball of a quilt one."""
+        # a fresh copy of the changelog, to which the release may add its own entry
+        with (self._debian_dir / 'changelog').open() as raw_changelog:
+            changelog = Changelog(raw_changelog)
+        source_dir = pkg_dir / f'{changelog.package}-{changelog.upstream_version}'
+        if self.needs_orig:
+            debian_dir = Path(copytree(self._debian_dir, source_dir / 'debian'))
+        else:
+            debian_dir = Path(copytree(self._debian_dir.parent, source_dir)) / 'debian'
+
+        # the release's own changelog entry when the base version is not the changelog's,
+        # versioned and dated from the packaging alone, so that the same inputs give the same
+        # package (dpkg derives SOURCE_DATE_EPOCH from this date)
+        if self.base_version != str(changelog.version):
+            changelog.new_block(
+                package=changelog.package,
+                version=self.version,
+                distributions=codename(self.dist_release),
+                urgency=changelog.urgency,
+                changes=['  * Rebuild for ' + str(self.dist_release)],
+                author=self._gpg.uid,
+                date=changelog.date,
+            )
+            with (debian_dir / 'changelog').open('w') as raw_changelog:
+                changelog.write_to_open_file(raw_changelog)
 
         if isinstance(self.orig, OrigFiles):
             # named after the upstream version of the entry packaged, not the rebuild's new one
             link_or_copy(self.orig.orig.resolve(), pkg_dir / self.orig.orig.name)
 
+    def _binnmu_source(self, pkg_dir: Path, stored: StoredPackage) -> None:
+        """Put in pkg_dir copies of the stored source package and the binNMU's changelog entry.
+
+        Copies, not links: the build container takes ownership of what /src holds.
+        """
+        for name in stored.source_files:
+            copy2(stored.directory / name, pkg_dir / name)
+        entry = binnmu_entry(
+            self._changelog.package,
+            self.version,
+            codename(self.dist_release),
+            self._gpg.uid,
+            self._changelog.date,
+            ARCHITECTURE,
+        )
+        (pkg_dir / BINNMU_CHANGELOG).write_text(entry + '\n')
+
+    def _build(self, wk_dir: Path, outdir: Path, deps: Set[PackageBuilder], files: Files) -> None:
+        pkg_dir = wk_dir / 'pkg'
+        pkg_dir.mkdir()
+        stored = self.stored if self.rebuild > 0 else None
+        if stored is None:
+            self._source_tree(pkg_dir)
+        else:
+            self._binnmu_source(pkg_dir, stored)
+
         localrepo = wk_dir / 'repo'
         self._local_repository(DebRepoBuilder, localrepo, deps)
 
+        release_codename = codename(self.dist_release)
         profiles = f'{self.dist_release.distribution.id},{release_codename}'
         self._run_builder(
-            build_args=[f'-j{self._context.jobs}', '-sa', f'-P{profiles}'],
+            build_args=[
+                f'-j{self._context.jobs}',
+                '-sa' if stored is None else '-B',
+                f'-P{profiles}',
+            ],
             deps_mounts=[Mount('/src', pkg_dir), Mount('/localrepo', localrepo)],
             build_mounts=[Mount('/src', pkg_dir)],
             outputs='/src',
@@ -560,14 +712,31 @@ class DebPackageBuilder(PackageBuilder):
             rmtree(pkg_dir)
             return
 
-        # Sign the source package: nothing reads the .changes, aptly adds the .dsc as it is
-        for dsc in pkg_dir.glob('*.dsc'):
-            dsc.write_bytes(self._gpg.clearsign(dsc.read_bytes()))
+        if stored is None:
+            # Sign the source package: nothing reads the .changes, aptly adds the .dsc as it is
+            self.source_files = []
+            for dsc in sorted(pkg_dir.glob('*.dsc')):
+                with dsc.open() as raw_dsc:
+                    listed = [entry['name'] for entry in Dsc(raw_dsc).get('Files', [])]
+                self.source_files += [dsc.name, *listed]
+                dsc.write_bytes(self._gpg.clearsign(dsc.read_bytes()))
+        else:
+            # the binNMU made its binaries only: the release keeps the stored source package and
+            # Architecture: all packages
+            for name in [*stored.source_files, BINNMU_CHANGELOG]:
+                (pkg_dir / name).unlink()
+            for name in [*stored.source_files, *stored.arch_all_files]:
+                link_or_copy(stored.directory / name, outdir / name)
+            self.source_files = list(stored.source_files)
 
         for file in pkg_dir.iterdir():
             if file.is_file():
                 file.rename(outdir / file.name)
         rmtree(pkg_dir)
+        if stored is None:
+            self.arch_all_files = sorted(path.name for path in outdir.glob('*_all.deb'))
+        else:
+            self.arch_all_files = list(stored.arch_all_files)
 
 
 class RpmPackageBuilder(PackageBuilder):
@@ -609,9 +778,37 @@ class RpmPackageBuilder(PackageBuilder):
         """The URLs of the spec's Source: lines."""
         return list(self._sources)
 
-    def _build(self, wk_dir: Path, outdir: Path, deps: Set[PackageBuilder], files: Files) -> None:
+    def _prepare(self) -> None:
+        """Raise when the release's rpm could not read the spec."""
         if isinstance(self._spec_info, SpecFailed):
             raise ValueError(self._spec_info.message)
+
+    def _info(self) -> SpecInfo:
+        assert isinstance(self._spec_info, SpecInfo)  # _prepare raised otherwise
+        return self._spec_info
+
+    def _packaging(self) -> Path:
+        """The spec, as written."""
+        return self._spec
+
+    def _source_files(self, files: Files) -> dict[str, Path]:
+        """The files of the spec's Source: lines, by name."""
+        found: dict[str, Path] = {}
+        for url in self._sources:
+            file = files[url]
+            assert isinstance(file, Path)  # build raised the download's failure
+            found[source_name(url)] = file
+        return found
+
+    def _base_version(self) -> str:
+        """The spec's Version-Release, expanded by the release's rpm."""
+        return f'{self._info().version}-{self._info().release}'
+
+    def _version(self, rebuild: int) -> str:
+        """The spec's Version, and its Release with `.<rebuild>` after it."""
+        return f'{self._info().version}-{rpm_release(self._info().release, rebuild)}'
+
+    def _build(self, wk_dir: Path, outdir: Path, deps: Set[PackageBuilder], files: Files) -> None:
         pkg_dir = wk_dir / 'pkg'
         pkg_dir.mkdir()
         copy2(self._spec, pkg_dir / self._spec.name)

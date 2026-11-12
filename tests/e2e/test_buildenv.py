@@ -12,11 +12,12 @@ from pathlib import Path
 import pytest
 
 from distro_releases import Release, distribution
-from distropack_builder import builders
+from distropack_builder import builders, state
 from distropack_builder.bake import REGISTRY
 from distropack_builder.context import BuildContext
 from distropack_builder.docker import Cancellation, Engine, Mount, run
 from distropack_builder.rpmquery import SpecInfo
+from distropack_builder.scheduler import Reused
 from distropack_builder.signing import Signer
 from distropack_builder.versions import binnmu_entry
 from support import FIXTURE_PASSPHRASE, FIXTURE_PROJECT
@@ -111,12 +112,29 @@ def test_deb_environment_reported_and_known(project: Path, tmp_path: Path) -> No
     assert lines == sorted(lines) and any(line.startswith('debhelper ') for line in lines)
     assert first.env_key == hashlib.sha256(installed.encode()).hexdigest()
     assert first.outdir is not None and list(first.outdir.glob('tiny_*_amd64.deb'))
-    # the same environment again: nothing is built
+    # stored, then built again in the same environment: nothing is built, the stored package stands
+    root = tmp_path / 'state'
+    writer = state.ReleaseStateWriter(root, state.RELEASE_CHANNEL, 'debian-13-trixie')
+    writer.add(
+        'tiny',
+        static_key=first.static_key,
+        env_key=first.env_key,
+        base_version=first.base_version,
+        rebuild=first.rebuild,
+        version=first.version,
+        snapshot_commit=None,
+        packaging_hash=first.packaging_hash,
+        outdir=first.outdir,
+        source_files=first.source_files,
+        arch_all_files=first.arch_all_files,
+    )
+    writer.commit()
     second = deb_builder(context(tmp_path / 'again'), project)
-    second.known_env = first.env_key
-    second.build(frozenset({second}), {})
-    assert second.unchanged
-    assert second.outdir is not None and list(second.outdir.iterdir()) == []
+    second.stored = state.ReleaseState(root, state.RELEASE_CHANNEL, 'debian-13-trixie').package(
+        'tiny'
+    )
+    assert second.build(frozenset({second}), {}) == Reused()
+    assert second.stored is not None and second.outdir == second.stored.directory
 
 
 def test_rpm_environment_reported(project: Path, tmp_path: Path) -> None:

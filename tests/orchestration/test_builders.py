@@ -29,14 +29,15 @@ from typer.testing import CliRunner
 
 from distro_releases import Release, distribution
 from distropack_builder import builders as builders_module
+from distropack_builder import state
 from distropack_builder.bake import PROTOCOL
 from distropack_builder.context import BuildContext
 from distropack_builder.docker import Cancellation, Cancelled, ContainerFailed, RunResult
 from distropack_builder.rpmquery import SpecInfo
-from distropack_builder.scheduler import Interrupted, schedule
+from distropack_builder.scheduler import Interrupted, Reused, schedule
 from distropack_builder.signing import Signer
 from distropack_builder.uscan import OrigFiles
-from fake_runner import Call, FakeRunner, StopBuild, tools_respond
+from fake_runner import INSTALLED, Call, FakeRunner, StopBuild, tools_respond
 from support import FIXTURE_PASSPHRASE, FIXTURE_PROJECT, make_project, write_tarball
 
 REGISTRY = 'ghcr.io/jbigot/distropack-builder/'
@@ -50,7 +51,9 @@ def release(dist: str, name: str, on: date) -> Release:
 
 
 def respond(call: Call) -> RunResult | None:
-    """Stop at the builder's container; other tools succeed silently."""
+    """Stop at the builder's container; other tools succeed silently, deps reports INSTALLED."""
+    if call.is_deps:
+        (call.targets['/buildenv'].source / 'installed').write_text(INSTALLED)
     if call.is_build:
         raise StopBuild()
     return None
@@ -191,7 +194,7 @@ def test_cancelled_builder_is_interrupted(
     def cancelled(call: Call) -> RunResult | None:
         if call.is_build:
             raise Cancelled()
-        return None
+        return tools_respond(call)
 
     runner.respond = cancelled
     found = builder(builders, context, release(dist, name, frozen))
@@ -1127,9 +1130,6 @@ def test_download_dir_kept_across_runs(run_main: Callable[..., int], tmp_path: P
     assert list((kept / 'origs').glob('*/hello-lib-1.0.tar.gz'))
 
 
-INSTALLED = 'base-files 13.8\ndebhelper 13.24\n'
-
-
 @pytest.mark.parametrize(('dist', 'name'), [('debian', 'trixie'), ('fedora', '44')])
 def test_deps_reports_its_environment(
     builders: ModuleType,
@@ -1158,35 +1158,6 @@ def test_deps_reports_its_environment(
     assert deps.commit_unless == deps.targets['/buildenv'].source / 'unchanged'
     assert under.env_key == hashlib.sha256(INSTALLED.encode()).hexdigest()
     assert not under.unchanged
-
-
-def test_known_environment_builds_nothing(
-    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date
-) -> None:
-    known = hashlib.sha256(INSTALLED.encode()).hexdigest()
-
-    def respond(call: Call) -> RunResult | None:
-        if call.is_deps:
-            assert call.env['DISTROPACK_KNOWN_ENV'] == known
-            buildenv = call.targets['/buildenv'].source
-            (buildenv / 'installed').write_text(INSTALLED)
-            (buildenv / 'unchanged').touch()
-        return None
-
-    runner.respond = respond
-    signer = Signer.load(FIXTURE_PROJECT / 'key.gpg', FIXTURE_PASSPHRASE)
-    trixie = release('debian', 'trixie', frozen)
-    # a quilt package, whose orig tarball goes into its source directory
-    under = builders.DebPackageBuilder(context, trixie, FIXTURE_PROJECT, signer, 'hello-lib')
-    tarball_path = context.workdir / 'hello-lib-1.0.tar.gz'
-    tarball_path.write_bytes(b'upstream')
-    (context.workdir / 'hello-lib_1.0.orig.tar.gz').symlink_to(tarball_path.name)
-    under.orig = OrigFiles(tarball_path, context.workdir / 'hello-lib_1.0.orig.tar.gz', True)
-    under.known_env = known
-    under.build(frozenset(), {})
-    assert not [c for c in runner.calls if c.is_build]
-    assert under.unchanged and under.env_key == known
-    assert list(under.outdir.iterdir()) == []  # no package: the stored ones stand
 
 
 def reproducibility(differ: set[str] | None = None) -> Callable[[Call], RunResult | None]:
@@ -1273,3 +1244,331 @@ def test_rpm_check_keeps_the_host_name(run_main: Callable[..., int]) -> None:
     first, second = [c for c in runner.calls if c.is_build]
     assert first.hostname == second.hostname == 'builder'
     assert 'DISTROPACK_BUILD_PATH' not in second.env  # the source rpm records the spec expanded
+
+
+# The build modes (Phase 12): hello-app, native, an Architecture: any package and an all one.
+APP_BASE = '1.0~bpo13'
+APP_SOURCE = (f'hello-app_{APP_BASE}.dsc', f'hello-app_{APP_BASE}.tar.xz')
+APP_ALL = f'hello-app-doc_{APP_BASE}_all.deb'
+ENV_KEY = hashlib.sha256(INSTALLED.encode()).hexdigest()
+UNVERSIONED = (
+    'hello-app: sources or packaging changed without a new version '
+    '(add a debian/changelog entry / bump Release in the spec)'
+)
+
+
+def fixture_signer() -> Signer:
+    return Signer.load(FIXTURE_PROJECT / 'key.gpg', FIXTURE_PASSPHRASE)
+
+
+def app_key() -> str:
+    """The static key of the fixture's hello-app deb: its whole directory, native."""
+    return state.static_key(FIXTURE_PROJECT / 'hello-app', {}, state.RELEASE_CHANNEL)
+
+
+def write_app_sources(directory: Path, version: str) -> None:
+    """A native source package of hello-app at version, its .dsc listing its tarball."""
+    (directory / f'hello-app_{version}.tar.xz').write_bytes(b'source of ' + version.encode())
+    (directory / f'hello-app_{version}.dsc').write_text(
+        f'Format: 3.0 (native)\nSource: hello-app\nVersion: {version}\nFiles:\n'
+        f' 0123456789abcdef0123456789abcdef 14 hello-app_{version}.tar.xz\n'
+    )
+
+
+def stored_app(
+    tmp_path: Path,
+    *,
+    base: str = APP_BASE,
+    rebuild: int = 0,
+    key: str | None = None,
+    env_key: str = 'stored-environment',
+) -> state.StoredPackage:
+    """hello-app as a committed state of trixie stores it, read back."""
+    built = tmp_path / 'stored-build'
+    built.mkdir()
+    version = base if rebuild == 0 else f'{base}+b{rebuild}'
+    write_app_sources(built, base)
+    (built / APP_ALL).write_bytes(b'doc deb')
+    (built / f'hello-app_{version}_amd64.deb').write_bytes(b'app deb')
+    root = tmp_path / 'state'
+    writer = state.ReleaseStateWriter(root, state.RELEASE_CHANNEL, 'debian-13-trixie')
+    writer.add(
+        'hello-app',
+        static_key=app_key() if key is None else key,
+        env_key=env_key,
+        base_version=base,
+        rebuild=rebuild,
+        version=version,
+        snapshot_commit=None,
+        packaging_hash='packaging',
+        outdir=built,
+        source_files=list(APP_SOURCE),
+        arch_all_files=[APP_ALL],
+    )
+    writer.commit()
+    found = state.ReleaseState(root, state.RELEASE_CHANNEL, 'debian-13-trixie').package('hello-app')
+    assert found is not None
+    return found
+
+
+def app_builder(
+    builders: ModuleType, context: BuildContext, rel: Release, stored: Any = None
+) -> Any:
+    under = builders.DebPackageBuilder(context, rel, FIXTURE_PROJECT, fixture_signer(), 'hello-app')
+    under.stored = stored
+    return under
+
+
+def deb_build(
+    version: str = APP_BASE, *, sourceful: bool = True, unchanged: bool = False
+) -> Callable[[Call], RunResult | None]:
+    """deps reports INSTALLED (unchanged if asked); build writes what dpkg-buildpackage does."""
+
+    def respond(call: Call) -> RunResult | None:
+        if call.is_deps:
+            buildenv = call.targets['/buildenv'].source
+            (buildenv / 'installed').write_text(INSTALLED)
+            if unchanged:
+                (buildenv / 'unchanged').touch()
+        if call.is_build:
+            src = call.targets['/src'].source
+            if sourceful:
+                write_app_sources(src, version)
+                (src / f'hello-app-doc_{version}_all.deb').write_bytes(b'new doc deb')
+            (src / f'hello-app_{version}_amd64.deb').write_bytes(b'new app deb')
+            (src / f'hello-app_{version}_amd64.buildinfo').write_text('buildinfo')
+            (src / f'hello-app_{version}_amd64.changes').write_text('changes')
+        return None
+
+    return respond
+
+
+def test_no_state_builds_sourceful(
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date
+) -> None:
+    runner.respond = deb_build()
+    under = app_builder(builders, context, release('debian', 'trixie', frozen))
+    assert under.build(frozenset(), {}) is None
+    assert 'DISTROPACK_KNOWN_ENV' not in builder_call(runner).env
+    assert '-sa' in build_call(runner).args and '-B' not in build_call(runner).args
+    assert (under.base_version, under.rebuild, under.version) == (APP_BASE, 0, APP_BASE)
+    assert under.static_key == app_key()
+    assert under.packaging_hash == state.packaging_key(FIXTURE_PROJECT / 'hello-app')
+    assert under.env_key == ENV_KEY
+    assert sorted(under.source_files) == sorted(APP_SOURCE)
+    assert under.arch_all_files == [APP_ALL]
+
+
+def test_other_base_builds_sourceful(
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date, tmp_path: Path
+) -> None:
+    runner.respond = deb_build()
+    stored = stored_app(tmp_path, base='0.9~bpo13', rebuild=3, key='other')
+    under = app_builder(builders, context, release('debian', 'trixie', frozen), stored)
+    assert under.build(frozenset(), {}) is None
+    assert 'DISTROPACK_KNOWN_ENV' not in builder_call(runner).env
+    assert '-sa' in build_call(runner).args
+    assert (under.rebuild, under.version) == (0, APP_BASE)
+
+
+def test_sid_changelog_used_unchanged(
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date
+) -> None:
+    """On a release without a version, the base is the changelog's: no generated entry."""
+    tops: list[list[str]] = []
+
+    def respond(call: Call) -> RunResult | None:
+        if call.is_deps:
+            (source,) = [d for d in call.targets['/src'].source.iterdir() if d.is_dir()]
+            tops.append(
+                [str(b.version) for b in Changelog((source / 'debian/changelog').read_text())]
+            )
+        return deb_build('1.0')(call)
+
+    runner.respond = respond
+    under = app_builder(builders, context, release('debian', 'sid', frozen))
+    under.build(frozenset(), {})
+    assert tops == [['1.0']]
+    assert under.version == '1.0'
+
+
+def test_changed_packaging_same_version_refused(
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date, tmp_path: Path
+) -> None:
+    stored = stored_app(tmp_path, key='the key of other packaging')
+    under = app_builder(builders, context, release('debian', 'trixie', frozen), stored)
+    with pytest.raises(builders.UnversionedChange) as raised:
+        under.build(frozenset(), {})
+    assert str(raised.value) == UNVERSIONED
+    assert runner.calls == []
+
+
+def test_same_key_passes_the_known_environment(
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date, tmp_path: Path
+) -> None:
+    runner.respond = deb_build(f'{APP_BASE}+b1', sourceful=False)
+    stored = stored_app(tmp_path, env_key='abc')
+    under = app_builder(builders, context, release('debian', 'trixie', frozen), stored)
+    under.build(frozenset(), {})
+    assert builder_call(runner).env['DISTROPACK_KNOWN_ENV'] == 'abc'
+
+
+def test_binnmu_layout(
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date, tmp_path: Path
+) -> None:
+    seen: dict[str, Any] = {}
+    build = deb_build(f'{APP_BASE}+b1', sourceful=False)
+
+    def respond(call: Call) -> RunResult | None:
+        if call.is_deps:
+            src = call.targets['/src'].source
+            seen['files'] = sorted(p.name for p in src.iterdir())
+            seen['inodes'] = {p.name: p.stat().st_ino for p in src.iterdir()}
+            seen['changelog'] = (src / 'binnmu.changelog').read_text()
+        return build(call)
+
+    runner.respond = respond
+    stored = stored_app(tmp_path)
+    under = app_builder(builders, context, release('debian', 'trixie', frozen), stored)
+    under.build(frozenset(), {})
+    assert seen['files'] == sorted([*APP_SOURCE, 'binnmu.changelog'])
+    for name in APP_SOURCE:  # copies: the build chowns /src, the state's files stay as they are
+        assert seen['inodes'][name] != (stored.directory / name).stat().st_ino
+    changelog = seen['changelog']
+    assert changelog.startswith(
+        f'hello-app ({APP_BASE}+b1) trixie; urgency=medium, binary-only=yes\n'
+    )
+    assert 'Binary-only non-maintainer upload for amd64;' in changelog
+    packaged = Changelog((FIXTURE_PROJECT / 'hello-app/debian/changelog').read_text())
+    assert f' -- {fixture_signer().uid}  {packaged.date}\n' in changelog
+    assert changelog.endswith('\n\n')  # a blank line before the stored changelog
+    args = build_call(runner).args
+    assert '-B' in args and '-sa' not in args
+
+
+def test_unchanged_environment_is_reused(
+    builders: ModuleType,
+    context: BuildContext,
+    runner: FakeRunner,
+    frozen: date,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner.respond = deb_build(unchanged=True)
+    stored = stored_app(tmp_path, rebuild=2, env_key=ENV_KEY)
+    under = app_builder(builders, context, release('debian', 'trixie', frozen), stored)
+    monkeypatch.setattr(type(under._gpg), 'clearsign', lambda *a: pytest.fail('signed'))
+    assert under.build(frozenset(), {}) == Reused()
+    assert not [c for c in runner.calls if c.is_build]
+    assert under.outdir == stored.directory
+    assert (under.rebuild, under.version) == (2, f'{APP_BASE}+b2')
+    assert under.env_key == ENV_KEY
+    assert (tuple(under.source_files), tuple(under.arch_all_files)) == (
+        stored.source_files,
+        stored.arch_all_files,
+    )
+
+
+def test_binnmu_output_keeps_the_stored_source(
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date, tmp_path: Path
+) -> None:
+    runner.respond = deb_build(f'{APP_BASE}+b1', sourceful=False)
+    stored = stored_app(tmp_path)
+    stored_dsc = (stored.directory / APP_SOURCE[0]).read_bytes()
+    under = app_builder(builders, context, release('debian', 'trixie', frozen), stored)
+    assert under.build(frozenset(), {}) is None
+    out = under.outdir
+    assert sorted(p.name for p in out.iterdir()) == sorted(
+        [
+            *APP_SOURCE,
+            APP_ALL,
+            f'hello-app_{APP_BASE}+b1_amd64.deb',
+            f'hello-app_{APP_BASE}+b1_amd64.buildinfo',
+            f'hello-app_{APP_BASE}+b1_amd64.changes',
+        ]
+    )
+    for name in [*APP_SOURCE, APP_ALL]:
+        assert (out / name).stat().st_ino == (stored.directory / name).stat().st_ino
+    assert (out / APP_SOURCE[0]).read_bytes() == stored_dsc  # not signed again
+    assert (under.rebuild, under.version) == (1, f'{APP_BASE}+b1')
+    assert (tuple(under.source_files), tuple(under.arch_all_files)) == (APP_SOURCE, (APP_ALL,))
+
+
+def test_missing_stored_file_builds_sourceful(
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date, tmp_path: Path
+) -> None:
+    """A stored file deleted by hand: the package is absent from the state, built sourceful."""
+    stored = stored_app(tmp_path)
+    (stored.directory / APP_SOURCE[1]).unlink()
+    reread = state.ReleaseState(tmp_path / 'state', state.RELEASE_CHANNEL, 'debian-13-trixie')
+    assert reread.package('hello-app') is None
+    runner.respond = deb_build()
+    under = app_builder(builders, context, release('debian', 'trixie', frozen), None)
+    assert under.build(frozenset(), {}) is None
+    assert '-sa' in build_call(runner).args and under.rebuild == 0
+
+
+def test_no_environment_report_fails(
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date
+) -> None:
+    runner.respond = lambda call: None
+    under = app_builder(builders, context, release('debian', 'trixie', frozen))
+    with pytest.raises(RuntimeError, match='the builder image reported no environment'):
+        under.build(frozenset(), {})
+    assert not [c for c in runner.calls if c.is_build]
+
+
+def test_arch_all_only_rebuild_candidate_is_reused(
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date, tmp_path: Path
+) -> None:
+    """hello-lib builds Architecture: all packages only, which a binNMU never rebuilds."""
+    trixie = release('debian', 'trixie', frozen)
+    under = builders.DebPackageBuilder(
+        context, trixie, FIXTURE_PROJECT, fixture_signer(), 'hello-lib'
+    )
+    tarball_path = context.workdir / 'hello-lib-1.0.tar.gz'
+    tarball_path.write_bytes(b'upstream')
+    orig = context.workdir / 'hello-lib_1.0.orig.tar.gz'
+    orig.symlink_to(tarball_path.name)
+    under.orig = OrigFiles(tarball_path, orig, True)
+    key = state.static_key(
+        FIXTURE_PROJECT / 'hello-lib' / 'debian', {orig.name: orig}, state.RELEASE_CHANNEL
+    )
+    built = tmp_path / 'built'
+    built.mkdir()
+    (built / 'hello-lib_1.0-1~bpo13_all.deb').write_bytes(b'lib deb')
+    root = tmp_path / 'state'
+    writer = state.ReleaseStateWriter(root, state.RELEASE_CHANNEL, trixie.uid)
+    writer.add(
+        'hello-lib',
+        static_key=key,
+        env_key='old',
+        base_version='1.0-1~bpo13',
+        rebuild=0,
+        version='1.0-1~bpo13',
+        snapshot_commit=None,
+        packaging_hash='p',
+        outdir=built,
+        source_files=[],
+        arch_all_files=['hello-lib_1.0-1~bpo13_all.deb'],
+    )
+    writer.commit()
+    under.stored = state.ReleaseState(root, state.RELEASE_CHANNEL, trixie.uid).package('hello-lib')
+    assert under.build(frozenset(), {}) == Reused()
+    assert runner.calls == []
+    assert under.outdir == under.stored.directory and under.version == '1.0-1~bpo13'
+
+
+def test_binnmu_check_ignores_the_stored_source(
+    builders: ModuleType, runner: FakeRunner, frozen: date, tmp_path: Path
+) -> None:
+    """The varied build of a binNMU moves back its debs only, as the first: no false difference."""
+    workdir = tmp_path / 'checked'
+    workdir.mkdir()
+    checked = BuildContext(cast(Any, None), runner, Cancellation(), workdir, 1, True)
+    runner.respond = deb_build(f'{APP_BASE}+b1', sourceful=False)
+    under = app_builder(
+        builders, checked, release('debian', 'trixie', frozen), stored_app(tmp_path)
+    )
+    assert under.build(frozenset(), {}) is None
+    assert len([c for c in runner.calls if c.is_build]) == 2

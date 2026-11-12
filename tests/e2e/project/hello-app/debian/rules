@@ -8,3 +8,4 @@ override_dh_auto_build:
 
 override_dh_auto_install:
 	install -D -m 644 greeting debian/hello-app/usr/share/hello-app/greeting
+	install -D -m 644 greeting debian/hello-app-doc/usr/share/doc/hello-app-doc/greeting.example
