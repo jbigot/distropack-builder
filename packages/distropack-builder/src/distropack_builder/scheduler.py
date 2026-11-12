@@ -19,6 +19,11 @@ class Succeeded:
 
 
 @dataclass(frozen=True)
+class Reused:
+    """The work ran and found its previous result still valid: it kept it."""
+
+
+@dataclass(frozen=True)
 class Failed:
     """The work ran and raised error."""
 
@@ -37,7 +42,7 @@ class Interrupted:
     """The run was cancelled before the work ended, or before it started."""
 
 
-type Outcome = Succeeded | Failed | Skipped | Interrupted
+type Outcome = Succeeded | Reused | Failed | Skipped | Interrupted
 
 # How often the waiting thread wakes up, to see a KeyboardInterrupt that no signal delivers.
 _POLL = 0.1
@@ -60,7 +65,7 @@ def _descendants[T: Hashable](dependents: Mapping[T, Set[T]], node: T) -> set[T]
 
 def schedule[T: Hashable](
     graph: Mapping[T, Set[T]],
-    work: Callable[[T], None],
+    work: Callable[[T], Reused | None],
     *,
     jobs: int,
     cancellation: Cancellation,
@@ -69,7 +74,8 @@ def schedule[T: Hashable](
 ) -> dict[T, Outcome]:
     """Run work on every node of graph, each after the nodes it maps to, at most jobs at once.
 
-    A node whose work raises fails, and the nodes that depend on it, directly or not, are skipped.
+    A node whose work returns Reused() has that outcome, Succeeded() when it returns None. A node
+    whose work raises fails, and the nodes that depend on it, directly or not, are skipped.
     Once cancellation is set, no work starts any more. The callbacks run in the calling thread:
     on_start before a node's work starts, on_finish once for every node, whatever its outcome.
 
@@ -98,7 +104,7 @@ def schedule[T: Hashable](
                 finish(descendant, stopped)
 
     with ThreadPoolExecutor(jobs) as pool:
-        running: dict[Future[None], T] = {}
+        running: dict[Future[Reused | None], T] = {}
         try:
             while sorter.is_active():
                 for node in sorter.get_ready():
@@ -131,13 +137,13 @@ def schedule[T: Hashable](
     return outcomes
 
 
-def _outcome(future: Future[None]) -> Outcome:
+def _outcome(future: Future[Reused | None]) -> Outcome:
     """The outcome of a work that ended, or never started."""
     if future.cancelled():
         return Interrupted()
     error = future.exception()
     if error is None:
-        return Succeeded()
+        return future.result() or Succeeded()
     if isinstance(error, Cancelled):
         return Interrupted()
     return Failed(error)

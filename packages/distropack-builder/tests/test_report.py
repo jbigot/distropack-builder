@@ -8,8 +8,8 @@ from pathlib import Path
 
 from rich.console import Console
 
-from distropack_builder.report import Reporter, build_logger, github_mode
-from distropack_builder.scheduler import Failed, Interrupted, Skipped, Succeeded
+from distropack_builder.report import Reporter, build_logger, github_mode, status_line
+from distropack_builder.scheduler import Failed, Interrupted, Reused, Skipped, Succeeded
 from support import FORKY, TRIXIE
 
 
@@ -191,3 +191,32 @@ def test_release_failed_github_error() -> None:
     with Reporter(con, verbose=False, github=True) as reporter:
         reporter.release_failed(TRIXIE, 'not published yet')
     assert out.getvalue() == f'::error::no builder image for {TRIXIE}: not published yet\n'
+
+
+def test_reused_line() -> None:
+    assert status_line('hello', TRIXIE, Reused()).plain == f'reused hello on {TRIXIE}'
+
+
+def test_summary_counts_reused_as_success(tmp_path: Path) -> None:
+    con, out = console()
+    summary = tmp_path / 'summary.md'
+    with Reporter(con, verbose=False, github=True, summary=summary) as reporter:
+        reporter.summarize({('hello', TRIXIE): Reused(), ('app', TRIXIE): Succeeded()})
+    assert f'| hello | {TRIXIE} | reused |' in summary.read_text().splitlines()
+    assert 'did not succeed' not in out.getvalue()
+
+
+def test_state_kept_line(tmp_path: Path) -> None:
+    con, out = console()
+    summary = tmp_path / 'summary.md'
+    with Reporter(con, verbose=False, github=False, summary=summary) as reporter:
+        reporter.state_kept(TRIXIE)
+    assert out.getvalue() == f'kept the previous state of {TRIXIE}\n'
+    assert summary.read_text() == f'\n- kept the previous state of {TRIXIE}\n'
+
+
+def test_state_kept_github_warning() -> None:
+    con, out = console()
+    with Reporter(con, verbose=False, github=True) as reporter:
+        reporter.state_kept(TRIXIE)
+    assert out.getvalue() == f'::warning::kept the previous state of {TRIXIE}\n'

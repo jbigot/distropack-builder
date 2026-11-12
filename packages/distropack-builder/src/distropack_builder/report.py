@@ -22,7 +22,7 @@ from rich.progress import BarColumn, MofNCompleteColumn, Progress, TaskID, TextC
 from rich.text import Text
 
 from distro_releases import Release
-from distropack_builder.scheduler import Failed, Interrupted, Outcome, Skipped, Succeeded
+from distropack_builder.scheduler import Failed, Interrupted, Outcome, Reused, Skipped, Succeeded
 
 # The logger every logger of the builder descends from.
 ROOT = 'distropack_builder'
@@ -54,6 +54,8 @@ def status(outcome: Outcome) -> tuple[str, str | None]:
     match outcome:
         case Succeeded():
             return 'built', None
+        case Reused():
+            return 'reused', None
         case Failed(Unreproducible() as error):
             return 'unreproducible', str(error)
         case Failed(error):
@@ -64,7 +66,13 @@ def status(outcome: Outcome) -> tuple[str, str | None]:
             return 'interrupted', None
 
 
-_STYLES = {Succeeded: 'green', Failed: 'red', Skipped: 'yellow', Interrupted: 'yellow'}
+_STYLES = {
+    Succeeded: 'green',
+    Reused: 'cyan',
+    Failed: 'red',
+    Skipped: 'yellow',
+    Interrupted: 'yellow',
+}
 
 
 def status_line(package: str, release: Release, outcome: Outcome) -> Text:
@@ -212,6 +220,18 @@ class Reporter:
                 with self._summary.open('a') as summary:
                     summary.write(f'\n- {message}\n')
 
+    def state_kept(self, release: Release) -> None:
+        """Not all builds of release succeeded: it keeps its previous state, if it had one."""
+        message = f'kept the previous state of {release}'
+        with self._lock:
+            if self._github:
+                self._print(f'::warning::{message}')
+            else:
+                self._print(Text(message, 'yellow'))
+            if self._summary is not None:
+                with self._summary.open('a') as summary:
+                    summary.write(f'\n- {message}\n')
+
     def publication_failed(self, what: str, error: BaseException) -> None:
         """The publication of what (a release, or a whole distribution) failed with error."""
         with self._lock:
@@ -221,7 +241,7 @@ class Reporter:
                 self._print(Text('  ' + line))
 
     def summarize(self, outcomes: Mapping[Build, Outcome]) -> None:
-        """List the builds that did not succeed; in GitHub mode, append a table of them all."""
+        """List the builds neither built nor reused; in GitHub mode, append a table of them all."""
         builds = sorted(outcomes, key=lambda build: (build[1].uid, build[0]))
         if self._summary is not None:
             rows = ['', '| Package | Release | Outcome |', '| --- | --- | --- |']
@@ -231,7 +251,7 @@ class Reporter:
                 rows.append(f'| {package} | {release} | {cell} |')
             with self._summary.open('a') as summary:
                 summary.write('\n'.join(rows) + '\n')
-        unsuccessful = [b for b in builds if not isinstance(outcomes[b], Succeeded)]
+        unsuccessful = [b for b in builds if not isinstance(outcomes[b], Succeeded | Reused)]
         if unsuccessful:
             self._print(f'{len(unsuccessful)} of {len(builds)} builds did not succeed:')
         for package, release in unsuccessful:

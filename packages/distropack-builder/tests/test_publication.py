@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from distro_releases import Release
 from distropack_builder.publication import published
-from distropack_builder.scheduler import Failed, Interrupted, Outcome, Skipped, Succeeded
+from distropack_builder.scheduler import Failed, Interrupted, Outcome, Reused, Skipped, Succeeded
 from support import FORKY, TRIXIE
 
 
@@ -36,3 +36,8 @@ def test_skipped_withholds() -> None:
         Build('a', FORKY): Interrupted(),
     }
     assert published(outcomes) == set()
+
+
+def test_reused_release_is_published() -> None:
+    outcomes: dict[Build, Outcome] = {Build('a', TRIXIE): Reused(), Build('b', TRIXIE): Succeeded()}
+    assert published(outcomes) == {TRIXIE}

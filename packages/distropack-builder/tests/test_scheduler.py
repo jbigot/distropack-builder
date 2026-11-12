@@ -15,6 +15,7 @@ from distropack_builder.scheduler import (
     Failed,
     Interrupted,
     Outcome,
+    Reused,
     Skipped,
     Succeeded,
     schedule,
@@ -180,3 +181,16 @@ def test_callback_error_cancels_and_drains() -> None:
         )
     assert time.monotonic() - start < 2
     assert cancellation.cancelled
+
+
+def test_reused_work_has_its_outcome() -> None:
+    graph = {'a': set(), 'b': {'a'}}
+    started: list[str] = []
+
+    def work(node: str) -> Reused | None:
+        started.append(node)
+        return Reused() if node == 'a' else None
+
+    outcomes = schedule(graph, work, jobs=1, cancellation=Cancellation())
+    assert outcomes == {'a': Reused(), 'b': Succeeded()}
+    assert started == ['a', 'b']
