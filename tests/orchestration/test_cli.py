@@ -791,3 +791,87 @@ def test_release_outside_a_git_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     result = invoke('release', 'build.conf', '1.2.0')
     assert result.exit_code == 2
     assert 'git' in result.output
+
+
+# The state commands (Phase 14).
+def test_state_pull_missing_tag_succeeds(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        'distropack_builder.registry.Registry.pull',
+        lambda self, channel, uids, states: [f'{channel}.{uid}' for uid in uids],
+    )
+    result = invoke(
+        'state',
+        'pull',
+        '--registry',
+        'ghcr.io/pdidev/pkgs/state',
+        '--channel',
+        'stable',
+        '--release',
+        'debian-13-trixie',
+        '--state-dir',
+        str(tmp_path),
+    )
+    assert result.exit_code == 0, result.output
+    assert 'no state for stable.debian-13-trixie' in result.stdout
+
+
+def test_state_pull_failure_exit_1(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from distropack_builder import registry
+
+    def refused(self: object, channel: str, uids: list[str], states: Path) -> list[str]:
+        raise registry.RegistryError('ghcr.io/pdidev/pkgs/state: 401 Unauthorized')
+
+    monkeypatch.setattr('distropack_builder.registry.Registry.pull', refused)
+    result = invoke(
+        'state',
+        'pull',
+        '--registry',
+        'ghcr.io/pdidev/pkgs/state',
+        '--channel',
+        'stable',
+        '--release',
+        'debian-13-trixie',
+        '--state-dir',
+        str(tmp_path),
+    )
+    assert result.exit_code == 1
+    assert '401 Unauthorized' in result.output
+
+
+def test_state_push_annotations(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+
+    def push(
+        self: object, channel: str, uid: str, states: Path, annotations: dict[str, str]
+    ) -> str:
+        seen.update(channel=channel, uid=uid, annotations=annotations)
+        return 'sha256:abc'
+
+    monkeypatch.setattr('distropack_builder.registry.Registry.push', push)
+    result = invoke(
+        'state',
+        'push',
+        '--registry',
+        'ghcr.io/pdidev/pkgs/state',
+        '--channel',
+        'stable',
+        '--release',
+        'debian-13-trixie',
+        '--state-dir',
+        str(tmp_path),
+        '--annotation',
+        'k=v',
+        env={'GITHUB_SERVER_URL': 'https://github.com', 'GITHUB_REPOSITORY': 'pdidev/pkgs'},
+    )
+    assert result.exit_code == 0, result.output
+    assert 'sha256:abc' in result.stdout
+    assert seen['annotations'] == {
+        'org.opencontainers.image.source': 'https://github.com/pdidev/pkgs',
+        'k': 'v',
+    }
+
+
+def test_state_prune_needs_ghcr(tmp_path: Path) -> None:
+    result = invoke('state', 'prune', '--registry', 'registry.example.org/state', '--token', 'x')
+    assert result.exit_code == 2
+    assert "--keep-untagged needs ghcr.io's API" in result.output

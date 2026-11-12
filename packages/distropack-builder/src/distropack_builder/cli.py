@@ -26,7 +26,7 @@ import typer
 from rich.console import Console
 
 from distro_releases import Release, SelectorError, SourceError, UnknownDistribution
-from distropack_builder import bake, config, readme, snapshots, targets
+from distropack_builder import bake, config, readme, registry, snapshots, targets
 from distropack_builder import release as release_tool
 from distropack_builder.availability import AvailabilityError, image_available
 from distropack_builder.builders import run_builds, write_sources
@@ -175,6 +175,28 @@ def _interrupt(signum: int, frame: FrameType | None) -> None:
     raise KeyboardInterrupt()
 
 
+RegistryRef = Annotated[
+    str,
+    typer.Option(
+        '--registry', metavar='REPOSITORY', help='The repository (ghcr.io/pdidev/pkgs/state).'
+    ),
+]
+StateChannel = Annotated[str, typer.Option('--channel', metavar='NAME', help='The channel.')]
+StateDir = Annotated[
+    Path,
+    typer.Option('--state-dir', metavar='DIR', file_okay=False, help='The states directory.'),
+]
+Token = Annotated[
+    str | None,
+    typer.Option(
+        '--token',
+        metavar='TOKEN',
+        envvar='DISTROPACK_REGISTRY_TOKEN',
+        help="The registry's token (default: Docker's credentials).",
+        show_default=False,
+    ),
+]
+Insecure = Annotated[bool, typer.Option('--insecure', help='Plain HTTP, for a local registry.')]
 BuildConf = Annotated[
     Path, typer.Argument(metavar='BUILD_CONF', help='The build configuration.', show_default=True)
 ]
@@ -237,6 +259,10 @@ def make_app(
     app.add_typer(images, name='images')
     app.add_typer(config_app, name='config')
     app.add_typer(releases, name='releases')
+    state_app = typer.Typer(
+        help='Keeps the states of releases in an OCI registry.', no_args_is_help=True
+    )
+    app.add_typer(state_app, name='state')
 
     def build(
         build_conf: Path,
@@ -719,6 +745,111 @@ def make_app(
                 typer.echo(f'{PROG}: {name}: {failure}', err=True)
         if any(failure is not None for failure in failures.values()):
             raise typer.Exit(1)
+
+    @state_app.command('pull')
+    def state_pull(
+        registry_ref: RegistryRef,
+        channel: StateChannel,
+        release: Annotated[
+            list[str],
+            typer.Option(
+                '--release', metavar='UID', help='A release uid (debian-13-trixie); repeat it.'
+            ),
+        ],
+        state_dir: StateDir,
+        token: Token = None,
+        insecure: Insecure = False,
+    ) -> None:
+        """Makes each release's state the registry's; a release it has none of keeps none."""
+        try:
+            missing = registry.Registry(registry_ref, token, insecure).pull(
+                channel, release, state_dir.resolve()
+            )
+        except registry.RegistryError as error:
+            _fail(1, error)
+        for tag in missing:
+            typer.echo(f'no state for {tag}')
+
+    @state_app.command('push')
+    def state_push(
+        registry_ref: RegistryRef,
+        channel: StateChannel,
+        release: Annotated[
+            str,
+            typer.Option('--release', metavar='UID', help='The release uid (debian-13-trixie).'),
+        ],
+        state_dir: StateDir,
+        annotation: Annotated[
+            list[str] | None,
+            typer.Option(
+                '--annotation',
+                metavar='KEY=VALUE',
+                help='An annotation of the artifact, beside those of GitHub Actions; repeat it.',
+                show_default=False,
+            ),
+        ] = None,
+        token: Token = None,
+        insecure: Insecure = False,
+    ) -> None:
+        """Pushes a release's state under its tag, which moves once the push is complete."""
+        notes = registry.annotations(os.environ)
+        for value in annotation or []:
+            key, separator, text = value.partition('=')
+            if not separator or not key:
+                _fail(2, ValueError(f'--annotation {value}: expected KEY=VALUE'))
+            notes[key] = text
+        try:
+            digest = registry.Registry(registry_ref, token, insecure).push(
+                channel, release, state_dir.resolve(), notes
+            )
+        except registry.RegistryError as error:
+            _fail(1, error)
+        typer.echo(digest)
+
+    @state_app.command('tag')
+    def state_tag(
+        registry_ref: RegistryRef,
+        digest: Annotated[
+            str, typer.Argument(metavar='DIGEST', help='The version to tag (sha256:…).')
+        ],
+        tag: Annotated[
+            str, typer.Argument(metavar='TAG', help='The tag (stable.debian-13-trixie).')
+        ],
+        token: Token = None,
+        insecure: Insecure = False,
+    ) -> None:
+        """Makes a tag name an older version of a state: a rollback."""
+        try:
+            registry.Registry(registry_ref, token, insecure).tag(digest, tag)
+        except registry.RegistryError as error:
+            _fail(1, error)
+
+    @state_app.command('prune')
+    def state_prune(
+        registry_ref: RegistryRef,
+        keep_untagged: Annotated[
+            int,
+            typer.Option(
+                '--keep-untagged', metavar='N', min=0, help='How many untagged versions to keep.'
+            ),
+        ] = 50,
+        token: Token = None,
+    ) -> None:
+        """Deletes the untagged versions of the states beyond the most recent, on ghcr.io.
+
+        A tagged version is never deleted. The token needs the packages' delete permission.
+        """
+        secret = token or os.environ.get('GITHUB_TOKEN')
+        if not secret:
+            _fail(2, ValueError('state prune needs a token: --token, $DISTROPACK_REGISTRY_TOKEN'))
+        try:
+            with new_client() as client:
+                removed = registry.prune(registry_ref, secret, keep_untagged, client)
+        except ValueError as error:
+            _fail(2, error)
+        except registry.RegistryError as error:
+            _fail(1, error)
+        typer.echo(f'deleted {len(removed)} untagged versions')
 
     @images.command('bake-file')
     def bake_file(output: Output = None) -> None:

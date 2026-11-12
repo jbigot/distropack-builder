@@ -4,6 +4,7 @@
 
 """A release's state in an OCI registry: pushed, pulled, tagged back; absent versus unreachable."""
 
+import re
 import subprocess
 import threading
 import time
@@ -11,7 +12,9 @@ from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import httpx
 import pytest
+import respx
 
 from distropack_builder import registry, state
 
@@ -204,3 +207,64 @@ def test_tag_rolls_back(local_registry: str, tmp_path: Path) -> None:
     other = tmp_path / 'other'
     reg.pull('stable', [UID], other)
     assert files(other) == first
+
+
+# Pruning through GitHub's Packages API.
+API = 'https://api.github.com'
+
+
+def versions_page(ids: range, tagged: set[int]) -> list[dict[str, object]]:
+    return [
+        {
+            'id': i,
+            'created_at': f'2026-11-{1 + i // 24:02d}T{i % 24:02d}:00:00Z',
+            'metadata': {'container': {'tags': [f'stable.r{i}'] if i in tagged else []}},
+        }
+        for i in ids
+    ]
+
+
+def test_prune_keeps_tagged_and_recent(respx_mock: respx.MockRouter) -> None:
+    tagged = set(range(0, 120, 4))  # 30 tagged
+    base = f'{API}/orgs/pdidev/packages/container/pkgs%2Fstate/versions'
+    # the second page first: respx matches the parameters given, others allowed
+    respx_mock.get(base, params={'per_page': '100', 'page': '2'}).respond(
+        200, json=versions_page(range(100, 120), tagged)
+    )
+    respx_mock.get(base, params={'per_page': '100'}).respond(
+        200,
+        json=versions_page(range(100), tagged),
+        headers={'Link': f'<{base}?per_page=100&page=2>; rel="next"'},
+    )
+    deleted = respx_mock.delete(url__regex=rf'^{re.escape(base)}/\d+$').respond(204)
+    with httpx.Client() as client:
+        removed = registry.prune('ghcr.io/pdidev/pkgs/state', 'tok', 50, client)
+    untagged = sorted(set(range(120)) - tagged)  # 90, the 50 newest kept
+    assert sorted(removed) == untagged[:40]
+    assert deleted.call_count == 40
+    assert not set(removed) & tagged
+    assert all(c.request.headers['Authorization'] == 'Bearer tok' for c in deleted.calls)
+
+
+def test_prune_user_package(respx_mock: respx.MockRouter) -> None:
+    respx_mock.get(f'{API}/orgs/jbigot/packages/container/state/versions').respond(404)
+    user = respx_mock.get(f'{API}/users/jbigot/packages/container/state/versions').respond(
+        200, json=versions_page(range(3), set())
+    )
+    with httpx.Client() as client:
+        assert registry.prune('ghcr.io/jbigot/state', 'tok', 50, client) == []
+    assert user.called
+
+
+def test_prune_needs_ghcr() -> None:
+    with (
+        httpx.Client() as client,
+        pytest.raises(ValueError, match="--keep-untagged needs ghcr.io's API"),
+    ):
+        registry.prune('registry.example.org/state', 'tok', 50, client)
+
+
+def test_prune_api_failure(respx_mock: respx.MockRouter) -> None:
+    respx_mock.get(url__startswith=f'{API}/orgs/').respond(500)
+    with httpx.Client() as client, pytest.raises(registry.RegistryError):
+        registry.prune('ghcr.io/pdidev/state', 'tok', 50, client)

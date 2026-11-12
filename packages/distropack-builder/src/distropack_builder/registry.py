@@ -17,10 +17,12 @@ given.
 
 import hashlib
 import tempfile
+import urllib.parse
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+import httpx
 import oras.provider
 import requests
 
@@ -186,3 +188,60 @@ def _status(response: requests.Response) -> str:
 def _reason(error: Exception) -> str:
     """An error of a transfer, on one line."""
     return ' '.join(str(error).split()) or type(error).__name__
+
+
+GITHUB_API = 'https://api.github.com'
+
+
+def prune(reference: str, token: str, keep_untagged: int, client: httpx.Client) -> list[int]:
+    """Delete the untagged versions of a ghcr package beyond the keep_untagged most recent.
+
+    A tagged version is never deleted. The OCI API cannot list untagged manifests: GitHub's
+    Packages API does, for an organisation's package or a user's.
+
+    Returns:
+        The ids of the versions deleted.
+
+    Raises:
+        ValueError: the registry is not ghcr.io.
+        RegistryError: the API failed.
+    """
+    host, _, path = reference.removesuffix('/').partition('/')
+    if host != 'ghcr.io' or '/' not in path:
+        raise ValueError("--keep-untagged needs ghcr.io's API")
+    owner, _, name = path.partition('/')
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+    }
+    package = urllib.parse.quote(name, safe='')
+    versions: list[dict[str, Any]] = []
+    base = ''
+    try:
+        for kind in ('orgs', 'users'):
+            base = f'{GITHUB_API}/{kind}/{owner}/packages/container/{package}/versions'
+            response = client.get(base, params={'per_page': '100'}, headers=headers)
+            if response.status_code == 404 and kind == 'orgs':
+                continue
+            break
+        seen: set[str] = set()
+        while True:
+            response.raise_for_status()
+            versions += response.json()
+            following = response.links.get('next', {}).get('url')
+            if not following or following in seen:  # a server repeating a page ends the listing
+                break
+            seen.add(following)
+            response = client.get(following, headers=headers)
+        untagged = [
+            v for v in versions if not v.get('metadata', {}).get('container', {}).get('tags')
+        ]
+        untagged.sort(key=lambda v: str(v['created_at']), reverse=True)
+        removed = []
+        for version in untagged[keep_untagged:]:
+            client.delete(f'{base}/{version["id"]}', headers=headers).raise_for_status()
+            removed.append(int(version['id']))
+    except httpx.HTTPError as error:
+        raise RegistryError(f'{reference}: {_reason(error)}') from error
+    return removed
