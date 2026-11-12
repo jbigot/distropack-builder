@@ -544,6 +544,22 @@
       "title": "Channels",
       "type": "object"
     },
+    "check_install": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "The binary packages `distropack-build check-install` installs (default: every binary\npackage of the repository, for each release and channel).",
+      "title": "Check Install"
+    },
     "distribs": {
       "additionalProperties": {
         "$ref": "#/$defs/Distrib"

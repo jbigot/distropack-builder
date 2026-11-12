@@ -4,6 +4,7 @@
 
 """What the builders ask of the engine: images, mounts, users; no container runs."""
 
+import contextlib
 import dataclasses
 import hashlib
 import importlib
@@ -2967,6 +2968,70 @@ def test_site_extra_outside_refused(
     )
     assert status == 2
     assert 'inside the site' in out
+
+
+# The install check (Phase 14, Part B), on a fake engine.
+@contextlib.contextmanager
+def fake_network(engine: object) -> Iterator[str]:
+    yield 'distropack-test'
+
+
+@contextlib.contextmanager
+def fake_sidecar(*args: object, **kwargs: object) -> Iterator[None]:
+    yield
+
+
+def check_install(
+    cli: ModuleType, runner: FakeRunner, monkeypatch: pytest.MonkeyPatch, *args: str
+) -> tuple[int, str]:
+    """check-install on the project, with check_install: the fake aptly indexes nothing."""
+    conf = yaml.safe_load(Path('build.conf').read_text())
+    conf['check_install'] = ['hello-lib']
+    Path('build.conf').write_text(yaml.safe_dump(conf))
+    monkeypatch.setattr('distropack_builder.install_check.private_network', fake_network)
+    monkeypatch.setattr('distropack_builder.install_check.serve', fake_sidecar)
+    app = cli.make_app(runner=runner, connect=lambda host: cast(Any, None))
+    result = CliRunner().invoke(app, ['check-install', *args, 'build.conf'], catch_exceptions=False)
+    return result.exit_code, result.stdout + result.stderr
+
+
+def test_check_install_every_release(
+    run_main: Callable[..., int],
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    states = built_states(run_main, tmp_path)
+    output = tmp_path / 'site'
+    assert make_site(cli, '--output', str(output), '--state-dir', states)[0] == 0
+    runner = FakeRunner()
+    status, out = check_install(cli, runner, monkeypatch, '--site', str(output))
+    assert status == 0, out
+    images = sorted(c.image for c in runner.calls)
+    assert images == ['debian:trixie-slim', 'fedora:44'], images
+    for call in runner.calls:
+        assert call.network == 'distropack-test'
+        assert 'hello-lib' in call.args[-1]
+    assert 'install check passed: Debian GNU/Linux 13 (Trixie), channel stable' in out
+
+
+def test_check_install_failure_exit_1(
+    run_main: Callable[..., int],
+    cli: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    states = built_states(run_main, tmp_path)
+    output = tmp_path / 'site'
+    assert make_site(cli, '--output', str(output), '--state-dir', states)[0] == 0
+    runner = FakeRunner(lambda call: RunResult(100, 'E: Release file is not signed', ''))
+    status, out = check_install(
+        cli, runner, monkeypatch, '--site', str(output), '--previous', 'debian=https://old.test/d'
+    )
+    assert status == 1
+    assert 'install check failed' in out and 'not signed' in out
+    debian = [c for c in runner.calls if 'debian' in c.image]
+    assert debian and debian[0].network is True and debian[0].args[-1].count('https://old.test/d')
 
 
 def test_every_distribution_published_after_the_guard(

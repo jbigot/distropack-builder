@@ -75,3 +75,28 @@ or channel `path`, the version guard included, then:
   directory. GitHub Pages serves at most 1 GB.
 
 It needs the signing key, as any publication.
+
+## Check that the site installs
+
+```sh
+distropack-build check-install --site site
+distropack-build check-install --site site --previous debian=https://repo.example.org/debian/
+```
+
+For every release and channel the site holds, a clean container of the distribution's base image
+(not the builder's) installs from the site, served over HTTP by a sidecar container on a private
+network without any route outside:
+
+- it adds the repository as the page tells its users, with its keyring: apt without
+  `trusted=yes`, dnf and zypper with `gpgcheck=1` and `repo_gpgcheck=1`, so that a signature that
+  does not verify fails the check; a snapshot channel adds its component beside the release
+  channel's (deb), or its own repository (rpm);
+- it installs `build.conf`'s `check_install` packages, by default every binary package of the
+  release and channel;
+- with `--previous DIST=URL`, it first installs from that published URL (the container then has
+  the network), then switches to the site and upgrades: `apt-get --no-remove dist-upgrade`, `dnf
+  upgrade` without `--allowerasing`, `zypper update`, and fails when a package would be removed
+  or is left behind.
+
+Each result is printed, and listed in the GitHub Actions step summary; any failure exits 1. The
+containers and the network are removed however the check ends.

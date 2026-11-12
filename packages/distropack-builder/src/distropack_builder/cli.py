@@ -26,7 +26,16 @@ import typer
 from rich.console import Console
 
 from distro_releases import Release, SelectorError, SourceError, UnknownDistribution
-from distropack_builder import bake, config, readme, registry, site, snapshots, targets
+from distropack_builder import (
+    bake,
+    config,
+    install_check,
+    readme,
+    registry,
+    site,
+    snapshots,
+    targets,
+)
 from distropack_builder import release as release_tool
 from distropack_builder.availability import AvailabilityError, image_available
 from distropack_builder.builders import run_builds, write_sources
@@ -630,6 +639,97 @@ def make_app(
             _fail(
                 1, ValueError('nothing to compare: no release has a state, or no repository a URL')
             )
+
+    @app.command('check-install')
+    def check_install_command(
+        site_dir: Annotated[
+            Path,
+            typer.Option(
+                '--site', metavar='DIR', exists=True, file_okay=False, help='The site to install.'
+            ),
+        ],
+        build_conf: BuildConf = Path('build.conf'),
+        distributions: Patterns = None,
+        channel: Annotated[
+            list[str] | None,
+            typer.Option(
+                '--channel', metavar='NAME', help='Only this channel; repeat it (default: all).'
+            ),
+        ] = None,
+        previous: Annotated[
+            list[str] | None,
+            typer.Option(
+                '--previous',
+                metavar='DIST=URL',
+                help='Install from this published URL first, then upgrade from the site.',
+                show_default=False,
+            ),
+        ] = None,
+        docker_host: Annotated[
+            str | None,
+            typer.Option(
+                '--docker-host',
+                metavar='URL',
+                envvar='DISTROPACK_DOCKER_HOST',
+                help='The endpoint of the container engine.',
+            ),
+        ] = None,
+    ) -> None:
+        """Installs every repository of a site in a clean container of each release.
+
+        The site is served over HTTP on a private network; each release's base image adds the
+        repository as its page says, signatures checked, and installs build.conf's check_install
+        packages (default: every binary package). With --previous, it installs from the published
+        URL first, then upgrades from the site: no package may be held back nor removed.
+        """
+        urls: dict[str, str] = {}
+        for value in previous or []:
+            dist_id, separator, target = value.partition('=')
+            if not separator or not dist_id or not target:
+                _fail(2, ValueError(f'--previous {value}: expected DIST=URL'))
+            urls[dist_id] = target
+        with _errors():
+            loaded, selected = _selection(build_conf, distributions or [], date.today())
+        unknown = sorted(set(urls) - set(loaded.distribs)) + sorted(
+            set(channel or []) - set(loaded.channels)
+        )
+        if unknown:
+            _fail(
+                2, ValueError(f'{unknown[0]} is not a distribution nor a channel of {build_conf}')
+            )
+        try:
+            engine = connect(docker_host)
+        except (EngineNotFound, docker.errors.DockerException) as error:
+            _fail(1, error)
+        with TemporaryDirectory(prefix='distropack-check.') as workdir:
+            context = BuildContext(engine, runner, Cancellation(), Path(workdir), 1)
+            results = install_check.check(
+                context,
+                loaded,
+                site_dir.resolve(),
+                selected,
+                urls,
+                set(channel) if channel else None,
+            )
+        rows = []
+        for (release, name), result in sorted(
+            results.items(), key=lambda item: (item[0][0].uid, item[0][1])
+        ):
+            verdict = 'passed' if result.passed else 'failed'
+            typer.echo(f'install check {verdict}: {release}, channel {name}')
+            if not result.passed:
+                for line in result.output.splitlines()[-30:]:
+                    typer.echo(f'  {line}')
+            rows.append(f'| {release} | {name} | {verdict} |')
+        summary = os.environ.get('GITHUB_STEP_SUMMARY')
+        if summary and rows:
+            with Path(summary).open('a') as out:
+                out.write('\n| Release | Channel | Install check |\n| --- | --- | --- |\n')
+                out.write(''.join(f'{row}\n' for row in rows))
+        if not results:
+            _fail(1, ValueError(f'{site_dir} holds no repository of the releases selected'))
+        if not all(result.passed for result in results.values()):
+            raise typer.Exit(1)
 
     @app.command('site')
     def site_command(

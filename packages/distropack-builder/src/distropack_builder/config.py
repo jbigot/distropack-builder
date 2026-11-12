@@ -330,6 +330,10 @@ class ConfigFile(_Model):
     release: ReleaseTool = ReleaseTool()
     """The settings of the release tool."""
 
+    check_install: tuple[str, ...] | None = None
+    """The binary packages `distropack-build check-install` installs (default: every binary
+    package of the repository, for each release and channel)."""
+
     distribs: Mapping[TargetId, Distrib]
     """The distributions to build for, keyed by id."""
 
@@ -471,6 +475,7 @@ def load(path: Path) -> BuildConfig:
     return BuildConfig(
         channels=parsed.channels,
         release=parsed.release,
+        check_install=parsed.check_install,
         distribs=parsed.distribs,
         packages=parsed.packages,
         root=root,
