@@ -5,8 +5,6 @@
 """Upstream snapshots from git: describe, repack, commit signatures, branches."""
 
 import io
-import os
-import subprocess
 import tarfile
 import time
 from pathlib import Path
@@ -17,56 +15,9 @@ import pytest
 from distropack_builder import upstream
 from distropack_builder.signing import Signer
 from distropack_builder.versions import Snapshot
-from support import FIXTURE_PASSPHRASE, FIXTURE_PROJECT
+from git_history import commit, git, signed_commit
 
 DATA = Path(__file__).parent / 'data'
-ENV = {
-    'GIT_AUTHOR_NAME': 't',
-    'GIT_AUTHOR_EMAIL': 't@example.invalid',
-    'GIT_COMMITTER_NAME': 't',
-    'GIT_COMMITTER_EMAIL': 't@example.invalid',
-    'GIT_CONFIG_GLOBAL': '/dev/null',
-    'GIT_CONFIG_NOSYSTEM': '1',
-}
-
-
-def git(repo: Path, *args: str, input: bytes | None = None) -> str:
-    result = subprocess.run(
-        ['git', '-C', str(repo), *args],
-        env={**os.environ, **ENV},
-        input=input,
-        capture_output=True,
-        check=True,
-    )
-    return result.stdout.decode().strip()
-
-
-def commit(repo: Path, message: str) -> str:
-    (repo / message).write_text(message)  # a file per commit: the branches merge cleanly
-    git(repo, 'add', message)
-    git(repo, 'commit', '-q', '-m', message)
-    return git(repo, 'rev-parse', 'HEAD')
-
-
-@pytest.fixture
-def history(tmp_path: Path) -> Path:
-    """main: 1.11.0, 1.12.0, two commits; a branch from 1.11.0 tagged 1.11.1, merged back."""
-    repo = tmp_path / 'upstream'
-    repo.mkdir()
-    git(repo, 'init', '-q', '-b', 'main')
-    commit(repo, 'one')
-    git(repo, 'tag', '1.11.0')
-    git(repo, 'switch', '-q', '-c', 'stable')
-    commit(repo, 'fix')
-    git(repo, 'tag', '1.11.1')
-    git(repo, 'switch', '-q', 'main')
-    commit(repo, 'two')
-    git(repo, 'tag', '1.12.0')
-    commit(repo, 'three')
-    git(repo, 'merge', '-q', '--no-edit', 'stable')
-    commit(repo, 'four')
-    git(repo, 'tag', 'not-a-version')
-    return repo
 
 
 def test_describe(history: Path, tmp_path: Path) -> None:
@@ -115,24 +66,9 @@ def test_repack(tmp_path: Path) -> None:
         assert [m.mtime for m in tar.getmembers()] == [1700000000, 1700000000]
 
 
-def signed_commit(repo: Path, signature: bytes) -> str:
-    """A commit object of repo with signature in its gpgsig header."""
-    raw = git(repo, 'cat-file', 'commit', 'HEAD').encode()
-    head, _, body = raw.partition(b'\n\n')
-    lines = signature.decode().rstrip('\n').split('\n')
-    gpgsig = 'gpgsig ' + '\n '.join(lines)
-    obj = head + b'\n' + gpgsig.encode() + b'\n\n' + body + b'\n'
-    return git(repo, 'hash-object', '-t', 'commit', '-w', '--stdin', input=obj)
-
-
 def payload(repo: Path) -> bytes:
     raw = git(repo, 'cat-file', 'commit', 'HEAD').encode()
     return raw + b'\n'
-
-
-@pytest.fixture
-def signer() -> Signer:
-    return Signer.load(FIXTURE_PROJECT / 'key.gpg', FIXTURE_PASSPHRASE)
 
 
 def test_commit_signer(history: Path, signer: Signer) -> None:
@@ -207,3 +143,13 @@ def test_repack_needs_a_single_top_directory(tmp_path: Path) -> None:
             tar.addfile(info, io.BytesIO(b''))
     with pytest.raises(ValueError, match='single top-level directory'):
         upstream.repack(src, tmp_path / 'dst.tar.gz', 'top')
+
+
+def test_archive_has_prefix(history: Path, tmp_path: Path) -> None:
+    head = git(history, 'rev-parse', 'HEAD')
+    dst = tmp_path / 'snap.tar'
+    upstream.archive(history, head, f'pdi-{head}', dst)
+    with tarfile.open(dst) as tar:
+        names = [m.name for m in tar.getmembers()]
+    assert names and all(name.startswith(f'pdi-{head}') for name in names)
+    assert f'pdi-{head}/four' in names

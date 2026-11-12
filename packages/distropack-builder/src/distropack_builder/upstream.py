@@ -82,6 +82,14 @@ def describe(git_url: str, ref: str, clone_dir: Path) -> Snapshot:
     return Snapshot(commit, versions[tag], distance)
 
 
+def archive(clone_dir: Path, commit: str, prefix: str, dst: Path) -> None:
+    """A tar archive at dst of commit's tree, its members under prefix/, as uscan's git mode makes.
+
+    A blobless clone fetches the blobs it lacks from its origin.
+    """
+    _git(clone_dir, 'archive', '--format=tar', f'--prefix={prefix}/', '-o', str(dst), commit)
+
+
 def repack(src: Path, dst: Path, top_dir: str) -> None:
     """A gzip tarball of src's members, its top directory renamed top_dir, byte-deterministic.
 
