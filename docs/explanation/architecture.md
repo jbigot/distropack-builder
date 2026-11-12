@@ -74,7 +74,8 @@ upgrading a system to the next release upgrades the package too, as the official
 rebuild of the same version, its build dependencies having changed, adds a binNMU's `+b<n>`, and
 an rpm's release gains `.<n>`; the number comes from what a release keeps of its last build. A
 snapshot of an upstream branch takes its upstream version from the commit, `<last
-tag>+main.<commits since>.g<hash>`, with the epoch raised above the changelog's
+tag>+<label>.<commits since>.g<hash>`, the label naming the branch (or the channel), and its deb
+epoch is the changelog's raised by the channel's `epoch_bump`
 ({source}`versions.py <packages/distropack-builder/src/distropack_builder/versions.py>`).
 
 Ctrl-C and SIGTERM (`kill`, `timeout`, a cancelled CI job) take the same path: no build or download

@@ -10,6 +10,7 @@ upstream snapshot for a snapshot channel. Rebuilding the same base, its build de
 having changed, adds a rebuild number (`+b<n>` for deb, as a binNMU, `.<n>` in the rpm release).
 """
 
+import re
 from dataclasses import dataclass
 
 from debian.debian_support import Version
@@ -29,25 +30,44 @@ class Snapshot:
     base: str
     distance: int
 
-    def upstream(self) -> str:
-        """The upstream version: above base, below its next release, ordered by distance."""
-        return f'{self.base}+main.{self.distance}.g{self.commit[:7]}'
+    def upstream(self, label: str) -> str:
+        """The upstream version: above base, below its next release, ordered by distance.
+
+        The label (`version_label` of the ref, or the channel's) tells snapshots of different
+        branches apart.
+        """
+        return f'{self.base}+{label}.{self.distance}.g{self.commit[:7]}'
+
+
+def version_label(ref: str) -> str:
+    """The label of a ref in a snapshot version: every character outside `[A-Za-z0-9]` a `.`."""
+    return re.sub('[^A-Za-z0-9]', '.', ref)
+
+
+def tag_version(tag: str) -> str:
+    """The version a release tag names: a leading `v` dropped, `-` made `~` (a pre-release)."""
+    return tag.removeprefix('v').replace('-', '~')
 
 
 def deb_base_version(
-    changelog_version: str, release_id: str | None, snap: Snapshot | None = None
+    changelog_version: str,
+    release_id: str | None,
+    upstream: str | None = None,
+    epoch_bump: int = 0,
 ) -> str:
     """The base version of a deb built for a release, from the version of its changelog.
 
     For a release with a version, `~bpo<version>` sorts the package before that release's own
-    next version. A snapshot replaces the upstream part with its own and raises the epoch, so that
-    it sorts above every release of the changelog's upstream.
+    next version. A snapshot's upstream version replaces the changelog's upstream part, and the
+    channel's epoch_bump raises the epoch, so that the snapshot can sort above every release of the
+    changelog's upstream.
     """
     version = Version(changelog_version)
-    if snap is not None:
-        epoch = int(version.epoch or 0) + 1
+    if upstream is not None:
+        epoch = int(version.epoch or 0) + epoch_bump
+        prefix = f'{epoch}:' if epoch else ''
         revision = f'-{version.debian_revision}' if version.debian_revision else ''
-        version = Version(f'{epoch}:{snap.upstream()}{revision}')
+        version = Version(f'{prefix}{upstream}{revision}')
     result = str(version)
     return f'{result}~bpo{release_id}' if release_id else result
 
@@ -57,9 +77,9 @@ def deb_version(base_version: str, rebuild: int) -> str:
     return base_version if rebuild == 0 else f'{base_version}+b{rebuild}'
 
 
-def rpm_version(spec_version: str, snap: Snapshot | None = None) -> str:
+def rpm_version(spec_version: str, upstream: str | None = None) -> str:
     """The Version: of an rpm, the spec's or a snapshot's upstream version."""
-    return spec_version if snap is None else snap.upstream()
+    return spec_version if upstream is None else upstream
 
 
 def rpm_release(spec_release: str, rebuild: int) -> str:

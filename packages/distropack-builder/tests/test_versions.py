@@ -21,6 +21,8 @@ from distropack_builder.versions import (
     rpm_release,
     rpm_version,
     rpmvercmp,
+    tag_version,
+    version_label,
 )
 
 SNAP = Snapshot('abcdef0123456789abcdef0123456789abcdef01', '1.12.0', 37)
@@ -33,10 +35,34 @@ def test_deb_base_version() -> None:
 
 
 def test_deb_base_version_of_a_snapshot() -> None:
-    """The upstream part comes from the snapshot, the epoch is raised above the changelog's."""
-    assert deb_base_version('1.11.1-2', '13', SNAP) == '1:1.12.0+main.37.gabcdef0-2~bpo13'
-    assert deb_base_version('2:1.11.1-2', '13', SNAP) == '3:1.12.0+main.37.gabcdef0-2~bpo13'
-    assert deb_base_version('2026.01.01', '13', SNAP) == '1:1.12.0+main.37.gabcdef0~bpo13'
+    """The upstream part comes from the snapshot, the epoch is raised by the channel's bump."""
+    up = SNAP.upstream('main')
+    assert deb_base_version('1.11.1-2', '13', up, 1) == '1:1.12.0+main.37.gabcdef0-2~bpo13'
+    assert deb_base_version('2:1.11.1-2', '13', up, 1) == '3:1.12.0+main.37.gabcdef0-2~bpo13'
+    assert deb_base_version('2026.01.01', '13', up, 1) == '1:1.12.0+main.37.gabcdef0~bpo13'
+
+
+def test_snapshot_without_epoch_bump() -> None:
+    up = SNAP.upstream('main')
+    assert deb_base_version('1.11.1-2', '13', up) == '1.12.0+main.37.gabcdef0-2~bpo13'
+    assert deb_base_version('2:1.11.1-2', '13', up) == '2:1.12.0+main.37.gabcdef0-2~bpo13'
+
+
+def test_label_in_upstream() -> None:
+    assert '+weekly.37.' in SNAP.upstream('weekly')
+
+
+def test_version_label() -> None:
+    assert version_label('main') == 'main'
+    assert version_label('release/1.x') == 'release.1.x'
+    assert version_label('feature_a-b') == 'feature.a.b'
+
+
+def test_tag_version() -> None:
+    assert tag_version('1.13.0-rc1') == '1.13.0~rc1'
+    assert tag_version('v1.2.0') == '1.2.0'
+    assert tag_version('1.2.0') == '1.2.0'
+    assert Version('1.13.0~rc1') < Version('1.13.0')
 
 
 def test_deb_version() -> None:
@@ -49,7 +75,7 @@ def test_deb_version() -> None:
 def test_rpm() -> None:
     assert rpm_release('1', 0) == '1'
     assert rpm_release('1', 2) == '1.2'
-    assert rpm_version('1.11.1', SNAP) == '1.12.0+main.37.gabcdef0'
+    assert rpm_version('1.11.1', SNAP.upstream('main')) == '1.12.0+main.37.gabcdef0'
     assert rpm_version('1.11.1') == '1.11.1'
 
 
@@ -69,15 +95,16 @@ def test_orders() -> None:
     assert ordered(b, f'{b}+b1', f'{b}+b9', f'{b}+b10', '1.12.0-2~bpo13', '1.12.1-1~bpo13')
     assert ordered('1.11.1-2~bpo13.pdidev.1274962', b)  # published stable
     assert ordered('2026.01.01~bpo13.pdidev.26411822', '2026.11.04~bpo13')  # published keyring
-    snapshot = deb_base_version('1.11.1-2', '13', SNAP)
+    snapshot = deb_base_version('1.11.1-2', '13', SNAP.upstream('main'), 1)
     assert ordered('1790170994main-1~bpo13.pdidev.1275000', snapshot)
     assert ordered(deb_version(b, 10), snapshot)
-    assert ordered('1.12.0', SNAP.upstream(), '1.12.1')
-    nine = Snapshot('f' * 40, '1.12.0', 9).upstream()
-    ten = Snapshot('a' * 40, '1.12.0', 10).upstream()
+    assert ordered('1.12.0', SNAP.upstream('main'), '1.12.1')
+    nine = Snapshot('f' * 40, '1.12.0', 9).upstream('main')
+    ten = Snapshot('a' * 40, '1.12.0', 10).upstream('main')
     assert ordered(nine, ten)  # the commit count decides, not the sha
     assert ordered(
-        Snapshot('a' * 40, '1.12.0', 99).upstream(), Snapshot('a' * 40, '1.12.1', 1).upstream()
+        Snapshot('a' * 40, '1.12.0', 99).upstream('main'),
+        Snapshot('a' * 40, '1.12.1', 1).upstream('main'),
     )
 
 
