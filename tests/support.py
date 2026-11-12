@@ -139,6 +139,68 @@ def write_git_upstream(source: Path, target: Path, tag: str) -> None:
         git('clone', '-q', '--bare', str(work), str(target), cwd=Path(scratch))
 
 
+# The snapshot package of the tests of snapshot channels.
+SNAP = 'hello-snap'
+
+
+def use_channels(project: Path, release_channel: str = 'stable', snapshot: str = 'weekly') -> None:
+    """Declare the channels: release_channel, and the snapshot channel, epoch_bump 1."""
+    conf_path = project / 'build.conf'
+    conf = yaml.safe_load(conf_path.read_text())
+    conf['channels'] = {
+        release_channel: {'kind': 'release'},
+        snapshot: {'kind': 'snapshot', 'epoch_bump': 1},
+    }
+    if 'fedora' in conf['distribs']:
+        conf['distribs']['fedora']['repository']['channels'] = {
+            snapshot: {
+                'path': f'repositories/{snapshot}.fedora',
+                'url': f'http://repo.example.invalid/{snapshot}.fedora',
+            }
+        }
+    conf_path.write_text(yaml.safe_dump(conf))
+
+
+def add_snapshot_package(
+    project: Path, snapshot: str = 'weekly', orig_base: str = 'https://orig.test'
+) -> None:
+    """hello-snap: hello-app as a quilt source, built in snapshot from hello-lib's upstream main.
+
+    Its rpm spec unpacks the snapshot's <name>-<commit> directory, as a snapshot spec does.
+    """
+    target = project / SNAP
+    shutil.copytree(FIXTURE_PROJECT / 'hello-app', target)
+    for path in target.rglob('*'):
+        if path.is_file():
+            path.write_text(path.read_text().replace('hello-app', SNAP))
+    (target / 'hello-app.spec').rename(target / f'{SNAP}.spec')
+    changelog = target / 'debian' / 'changelog'
+    changelog.write_text(changelog.read_text().replace(f'{SNAP} (1.0)', f'{SNAP} (1.0-1)', 1))
+    (target / 'debian' / 'source' / 'format').write_text('3.0 (quilt)\n')
+    (target / 'debian' / 'watch').write_text((project / 'hello-lib/debian/watch').read_text())
+    # its release-channel builds download hello-lib's tarball under its own name
+    lib_line = (project / 'hello-lib' / 'sources').read_text()
+    (target / 'sources').write_text(lib_line.replace('hello-lib-1.0', f'{SNAP}-1.0'))
+    spec = target / f'{SNAP}.spec'
+    spec.write_text(
+        spec.read_text().replace(
+            '%description', f'Source0: {orig_base}/{SNAP}-%{{version}}.tar.gz\n\n%description', 1
+        )
+    )
+    conf_path = project / 'build.conf'
+    conf = yaml.safe_load(conf_path.read_text())
+    conf['packages'][SNAP] = {
+        'channels': {
+            snapshot: {
+                'git': f'file://{project}/upstream/hello-lib.git',
+                'ref': 'main',
+                'verify': 'none',
+            }
+        }
+    }
+    conf_path.write_text(yaml.safe_dump(conf))
+
+
 def add_upstream_commit(bare: Path, name: str) -> str:
     """Commit a file name to the main branch of the bare repository bare; the new commit."""
     env = {

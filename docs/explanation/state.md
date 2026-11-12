@@ -15,14 +15,17 @@ every package is built, as if for the first time.
 
 ## The state of a release
 
-`DIR/stable/<release>/` (`stable` is the one channel until snapshot channels come) holds a
-`manifest.json` and one directory per package with the files of its build: the source package,
-the binary packages, the `.buildinfo`. For each package, the manifest records:
+`DIR/<channel>/<release>/` holds a `manifest.json` and one directory per package with the files
+of its build: the source package, the binary packages, the `.buildinfo`. Each channel has its own
+states (`DIR/stable/` without `channels:` in `build.conf`). For each package, the manifest
+records:
 
 - its **base version**: the version a first build gets, `<changelog version>~bpo<release version>`
   for a deb (the changelog's own on a release without a version, as Debian's sid), the spec's
   `Version`-`Release` as the release's rpm expands it;
 - its **rebuild number** `n`, 0 for a first build, and its full version;
+- for a snapshot channel, the **commit** it was built from, and the hash of its packaging alone,
+  which `fetch` compares to tell whether anything changed;
 - its **static key**: a sha256 over its packaging (`debian/`, the whole source directory of a
   native deb, or the spec file), the files downloaded for it, and the channel; and its
   **environment key**: the sha256 of the list of every package installed in its build container
@@ -76,13 +79,25 @@ them as its new state, written aside and then put in place of the old one; a pac
 previous state, untouched, and the run says so (`kept the previous state of <release>`) and exits
 with status 1. An interrupted run commits no state.
 
+## A snapshot channel's fallback
+
+A snapshot channel builds only the packages that declare it. The local repository of each of its
+builds holds, beside the outputs of its dependencies, the packages of its fallback channel's state
+(the release channel's by default) that it does not build itself: a release without that state
+fails before any build (`no <fallback> state for <release>: build the <fallback> channel first`).
+A snapshot run only ever writes its own channel's states.
+
 ## Publication
 
 With `--state-dir`, the repositories are written again at each run from the state of every release
-`build.conf` selects, whatever `-D` builds: the repository directories are removed first, so that
-they hold exactly the releases that have a state, and their pages list those. A release without a
-state yet is left out (`no state for <release>`). Hence `repository.path` must be a directory inside
-the project, never the project itself.
+`build.conf` selects, whatever `-D` builds, and of every channel, whatever `--channel` builds: the
+repository directories are removed first, so that they hold exactly the releases that have a
+state, and their pages list those. A release without a state of the release channel yet is left
+out (`no state for <release>`). A deb repository publishes each channel as a component, an empty
+one for a release without that channel's state; an rpm snapshot channel is a repository of its
+own, holding its state's packages and its fallback's that it does not build, and a release without
+its state is left out of it (`no <channel> state for <release>`). Hence every repository path must
+be a directory inside the project, never the project itself.
 
 `--no-publish` builds and keeps the states without writing any repository; `--publish-only` builds
 nothing and writes the repositories from the states, so that the releases can be built in separate

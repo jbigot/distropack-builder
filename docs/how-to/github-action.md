@@ -56,7 +56,8 @@ jobs:
         path: ${{ fromJSON(steps.build.outputs.output-dirs)[matrix.distrib] }}
 ```
 
-`output-dirs` gives the absolute path of each repository published, by distribution id. A failed
+`output-dirs` gives the absolute path of each repository published, by distribution id, and
+`<distribution id>.<channel>` for an rpm snapshot channel's own repository. A failed
 build fails the step, once the releases all of whose builds succeeded are published; to go on
 anyway, set `continue-on-error: true` on the step and read its `failed` output.
 

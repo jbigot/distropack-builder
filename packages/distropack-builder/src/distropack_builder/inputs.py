@@ -27,6 +27,7 @@ from distropack_builder.docker import ContainerFailed
 from distropack_builder.downloads import DownloadFailed, fetch_all
 from distropack_builder.rpmquery import SpecFailed, SpecInfo
 from distropack_builder.snapshots import Record, Records, SnapshotFailed
+from distropack_builder.state import ReleaseState, packaging_key
 from distropack_builder.uscan import OrigFiles, fetch_origs, snapshot_orig
 
 # The files a build needs downloaded: each URL's file, or why it could not be.
@@ -129,12 +130,16 @@ def snapshot_entry(record: Record) -> str:
 
 
 def _snapshots(
-    config: BuildConfig, channel: str, download_dir: Path, given: Mapping[str, str]
+    config: BuildConfig,
+    channel: str,
+    download_dir: Path,
+    given: Mapping[str, str],
+    resolve: bool,
 ) -> Records:
     """The records of a snapshot channel: those download_dir holds, else resolved and written."""
     path = download_dir / SNAPSHOTS_FILE
     wanted = set(config.channel_packages(channel))
-    if not given:
+    if not given and not resolve:
         recorded = snapshots.read(path, channel)
         if recorded is not None and wanted <= set(recorded):
             return {name: recorded[name] for name in config.channel_packages(channel)}
@@ -151,16 +156,18 @@ def fetch(
     disabled: Mapping[str, Set[Release]],
     download_dir: Path,
     given: Mapping[str, str],
+    *,
+    resolve: bool = False,
 ) -> Inputs:
     """Gather the inputs of the builds of channel for the releases selected, in download_dir.
 
     A snapshot channel's commits are those download_dir's snapshots.json records for it, unless
-    commits are given; they are resolved, checked and recorded otherwise. A package whose snapshot
-    failed fails its tarball and specs with the same reason.
+    commits are given or resolve asks (`fetch` does); they are resolved, checked and recorded
+    otherwise. A package whose snapshot failed fails its tarball and specs with the same reason.
     """
     root = config.root
     release_channel = channel == config.release_channel
-    records = {} if release_channel else _snapshots(config, channel, download_dir, given)
+    records = {} if release_channel else _snapshots(config, channel, download_dir, given, resolve)
     packages = config.channel_packages(channel)
     packaging = {name: config.packaging_dir(name, channel) for name in packages}
 
@@ -244,6 +251,53 @@ def fetch(
     ]
     files = fetch_all(urls, downloads, jobs=context.jobs, cancellation=context.cancellation)
     return Inputs(records, origs, specs, built_specs, files)
+
+
+def changed(
+    config: BuildConfig,
+    channel: str,
+    found: Inputs,
+    states: Path,
+    selected: Mapping[str, Set[Release]],
+    disabled: Mapping[str, Set[Release]],
+) -> bool:
+    """Whether a build of channel would build anything its states do not hold already.
+
+    It would for a release without a state, and for a package whose stored build has another
+    packaging, or in a snapshot channel another commit; a change of build environment alone, which
+    only a build finds, does not count.
+    """
+    for dist_id, releases in selected.items():
+        deb = targets.is_deb(targets.target(dist_id))
+        for release in releases:
+            stored = ReleaseState(states, channel, release.uid)
+            if not stored.exists():
+                return True
+            for name in config.channel_packages(channel):
+                if release in disabled[name]:
+                    continue
+                packaging = _packaging(config.packaging_dir(name, channel), name, deb)
+                if packaging is None:
+                    continue
+                package = stored.package(name)
+                if package is None or package.packaging_hash != packaging_key(packaging):
+                    return True
+                record = found.snapshots.get(name)
+                commit = record.commit if isinstance(record, Record) else None
+                if channel != config.release_channel and package.snapshot_commit != commit:
+                    return True
+    return False
+
+
+def _packaging(directory: Path, name: str, deb: bool) -> Path | None:
+    """What the packaging hash of a build covers, as the builder hashes it; None without one."""
+    if not deb:
+        spec = spec_file(directory, name)
+        return spec if spec.is_file() else None
+    debian = directory / 'debian'
+    if not debian.is_dir():
+        return None
+    return debian if source_format(debian) == '3.0 (quilt)' else directory
 
 
 def _snapshot_orig(

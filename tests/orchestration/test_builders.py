@@ -44,8 +44,11 @@ from fake_runner import INSTALLED, Call, FakeRunner, StopBuild, tools_respond
 from support import (
     FIXTURE_PASSPHRASE,
     FIXTURE_PROJECT,
+    SNAP,
+    add_snapshot_package,
     add_upstream_commit,
     make_project,
+    use_channels,
     write_tarball,
 )
 
@@ -2145,63 +2148,6 @@ def test_rpm_lower_release_refused(
 
 
 # Snapshot channels (Phase 13).
-SNAP = 'hello-snap'
-
-
-def use_channels(project: Path, release_channel: str = STABLE, snapshot: str = 'weekly') -> None:
-    """Declare the channels: release_channel, and the snapshot channel, epoch_bump 1."""
-    conf_path = project / 'build.conf'
-    conf = yaml.safe_load(conf_path.read_text())
-    conf['channels'] = {
-        release_channel: {'kind': 'release'},
-        snapshot: {'kind': 'snapshot', 'epoch_bump': 1},
-    }
-    if 'fedora' in conf['distribs']:
-        conf['distribs']['fedora']['repository']['channels'] = {
-            snapshot: {
-                'path': f'repositories/{snapshot}.fedora',
-                'url': f'http://repo.example.invalid/{snapshot}.fedora',
-            }
-        }
-    conf_path.write_text(yaml.safe_dump(conf))
-
-
-def add_snapshot_package(project: Path, snapshot: str = 'weekly') -> None:
-    """hello-snap: hello-app as a quilt source, built in snapshot from hello-lib's upstream main.
-
-    Its rpm spec unpacks the snapshot's <name>-<commit> directory, as a snapshot spec does.
-    """
-    target = project / SNAP
-    shutil.copytree(FIXTURE_PROJECT / 'hello-app', target)
-    for path in target.rglob('*'):
-        if path.is_file():
-            path.write_text(path.read_text().replace('hello-app', SNAP))
-    (target / 'hello-app.spec').rename(target / f'{SNAP}.spec')
-    changelog = target / 'debian' / 'changelog'
-    changelog.write_text(changelog.read_text().replace(f'{SNAP} (1.0)', f'{SNAP} (1.0-1)', 1))
-    (target / 'debian' / 'source' / 'format').write_text('3.0 (quilt)\n')
-    (target / 'debian' / 'watch').write_text((project / 'hello-lib/debian/watch').read_text())
-    # its release-channel builds download hello-lib's tarball under its own name
-    lib_line = (project / 'hello-lib' / 'sources').read_text()
-    (target / 'sources').write_text(lib_line.replace('hello-lib-1.0', f'{SNAP}-1.0'))
-    spec = target / f'{SNAP}.spec'
-    spec.write_text(
-        spec.read_text().replace(
-            '%description', f'Source0: {ORIG_BASE}/{SNAP}-%{{version}}.tar.gz\n\n%description', 1
-        )
-    )
-    conf_path = project / 'build.conf'
-    conf = yaml.safe_load(conf_path.read_text())
-    conf['packages'][SNAP] = {
-        'channels': {
-            snapshot: {
-                'git': f'file://{project}/upstream/hello-lib.git',
-                'ref': 'main',
-                'verify': 'none',
-            }
-        }
-    }
-    conf_path.write_text(yaml.safe_dump(conf))
 
 
 def weekly(project: Path) -> None:

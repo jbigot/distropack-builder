@@ -50,6 +50,17 @@ project is mounted read-only. uscan writes the tarball as downloaded and
 tarball when `debian/copyright` excludes files. Another package with the same watch file and
 upstream version gets its own name for it from `mk-origtargz`, run in its directory.
 
+This download phase is its own module
+({source}`inputs.py <packages/distropack-builder/src/distropack_builder/inputs.py>`), which `run`
+and `fetch` both call, so that a workflow can download once for all its jobs. A snapshot channel
+first resolves each package's ref to a commit, checks it at the channel's trust level, and records
+it in the download directory's `snapshots.json`, which later runs read instead of resolving again
+({source}`snapshots.py <packages/distropack-builder/src/distropack_builder/snapshots.py>`). A
+commit's tarball, `git archive` of its tree under `<package>-<commit>/` with a deterministic gzip,
+is made once and shared by every channel and distribution: `mk-origtargz` names it as a deb orig,
+and an rpm builds its spec, `Version` and `%{commit}` rewritten, with it as first `Source`
+([Build snapshot channels](../how-to/snapshot-channels.md)).
+
 ## Builds
 
 The builds run in dependency order, `-j` of them at once. When one fails, every build that depends

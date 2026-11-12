@@ -13,6 +13,7 @@ One guide per task.
 - [Add or drop a distribution release](releases.md)
 - [Build for Enterprise Linux](enterprise-linux.md)
 - [Build for openSUSE](opensuse.md)
+- [Build snapshot channels](snapshot-channels.md)
 - [Use the GitHub Action](github-action.md)
 - [Build the images locally](build-images.md)
 - [Use distro-releases from Python](use-distro-releases.md)
@@ -28,6 +29,7 @@ extra-repositories
 releases
 enterprise-linux
 opensuse
+snapshot-channels
 github-action
 build-images
 use-distro-releases

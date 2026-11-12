@@ -26,7 +26,7 @@ import typer
 from rich.console import Console
 
 from distro_releases import Release, SelectorError, SourceError, UnknownDistribution
-from distropack_builder import bake, config, readme, targets
+from distropack_builder import bake, config, readme, snapshots, targets
 from distropack_builder.availability import AvailabilityError, image_available
 from distropack_builder.builders import run_builds, write_sources
 from distropack_builder.config import AVAILABLE, BuildConfig, ConfigError, Distrib
@@ -36,8 +36,9 @@ from distropack_builder.docker import run as run_container
 from distropack_builder.docker.endpoint import EngineNotFound, RemoteEndpoint
 from distropack_builder.downloads import new_client
 from distropack_builder.github import GithubOutputError, write_outputs
-from distropack_builder.inputs import builder_image
+from distropack_builder.inputs import builder_image, changed, fetch
 from distropack_builder.report import Reporter, github_mode
+from distropack_builder.rpmquery import SpecFailed
 from distropack_builder.selection import configured_releases, disabled_releases
 from distropack_builder.signing import Signer, SigningKeyError
 
@@ -269,6 +270,14 @@ def make_app(
             for dist_id, distrib in loaded.distribs.items()
             if selected[dist_id]
         }
+        # an rpm snapshot channel is a repository of its own, keyed <distribution id>.<channel>
+        output_dirs |= {
+            f'{dist_id}.{name}': str(loaded.root / loaded.channel_repository(dist_id, name).path)
+            for dist_id in output_dirs.copy()
+            if not targets.is_deb(targets.target(dist_id))
+            for name in loaded.snapshot_channels()
+            if loaded.channel_packages(name)
+        }
         if not output_dirs:
             typer.echo(f'{PROG}: nothing to build: {build_conf} selects no release', err=True)
             return False, output_dirs
@@ -456,6 +465,126 @@ def make_app(
                 os.environ, {'failed': str(failed).lower(), 'output-dirs': _compact(output_dirs)}
             )
         if failed:
+            raise typer.Exit(1)
+
+    @app.command('fetch')
+    def fetch_command(
+        download_dir: Annotated[
+            Path,
+            typer.Option(
+                '--download-dir',
+                metavar='DIR',
+                file_okay=False,
+                help='Where to write the downloads and snapshots.json, for run to use.',
+            ),
+        ],
+        build_conf: BuildConf = Path('build.conf'),
+        distributions: Patterns = None,
+        channel: Annotated[
+            str | None,
+            typer.Option(
+                '--channel',
+                metavar='NAME',
+                help="The channel to fetch for (default: build.conf's release channel).",
+            ),
+        ] = None,
+        snapshot: Annotated[
+            list[str] | None,
+            typer.Option(
+                '--snapshot',
+                metavar='PACKAGE=COMMIT',
+                help="Build this commit of the package, on its channel's ref, instead of the"
+                ' head; repeat it for several.',
+                show_default=False,
+            ),
+        ] = None,
+        state_dir: Annotated[
+            Path | None,
+            typer.Option(
+                '--state-dir',
+                metavar='DIR',
+                file_okay=False,
+                help='The states to compare with: print changed=true when a run would build'
+                ' anything they do not hold, changed=false otherwise.',
+            ),
+        ] = None,
+        docker_host: Annotated[
+            str | None,
+            typer.Option(
+                '--docker-host',
+                metavar='URL',
+                envvar='DISTROPACK_DOCKER_HOST',
+                help='The endpoint of the container engine.',
+            ),
+        ] = None,
+    ) -> None:
+        """Resolves a channel's snapshots and downloads its sources, once for many runs.
+
+        Every run given the same --download-dir builds the commits recorded in its
+        snapshots.json, even when their branches moved meanwhile.
+        """
+        on = date.today()
+        with _errors():
+            loaded, selected = _selection(build_conf, distributions or [], on)
+        name = channel or loaded.release_channel
+        if name not in loaded.channels:
+            _fail(2, ValueError(f'unknown channel {name}'))
+        given: dict[str, str] = {}
+        for value in snapshot or []:
+            package, separator, commit = value.partition('=')
+            if not separator or not package or not commit:
+                _fail(2, ValueError(f'--snapshot {value}: expected PACKAGE=COMMIT'))
+            given[package] = commit
+        try:
+            snapshots.check_given(loaded, name, given)
+        except ValueError as error:
+            _fail(2, error)
+        try:
+            engine = connect(docker_host)
+        except (EngineNotFound, docker.errors.DockerException) as error:
+            _fail(1, error)
+        has_local = engine.has_image if engine is not None else (lambda image: False)
+        with _errors():
+            unpublished = _unpublished(loaded, selected, on, has_local)
+        for release, reason in unpublished.items():
+            typer.echo(f'{PROG}: no builder image for {release}: {reason}', err=True)
+        selected = {
+            dist_id: frozenset(r for r in releases if r not in unpublished)
+            for dist_id, releases in selected.items()
+        }
+        disabled = disabled_releases(loaded, selected, on)
+        download_dir.mkdir(parents=True, exist_ok=True)
+        with TemporaryDirectory(prefix='distropack-build.') as workdir:
+            jobs = (os.cpu_count() or 1) + 1
+            context = BuildContext(engine, runner, Cancellation(), Path(workdir), jobs)
+            found = fetch(
+                context,
+                loaded,
+                name,
+                selected,
+                disabled,
+                download_dir.resolve(),
+                given,
+                resolve=True,
+            )
+        failures = [
+            *(str(f) for f in found.snapshots.values() if isinstance(f, Exception)),
+            *(f'{n}: {f}' for n, f in found.origs.items() if isinstance(f, Exception)),
+            *(
+                f'{n} on {uid}: {f.message}'
+                for (n, uid), f in found.specs.items()
+                if isinstance(f, SpecFailed)
+            ),
+            *(str(f) for f in found.files.values() if isinstance(f, Exception)),
+        ]
+        if state_dir is not None:
+            moved = changed(loaded, name, found, state_dir.resolve(), selected, disabled)
+            typer.echo(f'changed={str(moved).lower()}')
+            with _errors():
+                write_outputs(os.environ, {'changed': str(moved).lower()})
+        for failure in failures:
+            typer.echo(f'{PROG}: {failure}', err=True)
+        if failures:
             raise typer.Exit(1)
 
     @app.command('sources')

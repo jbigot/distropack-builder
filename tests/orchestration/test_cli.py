@@ -21,7 +21,14 @@ from distropack_builder import cli, config
 from distropack_builder.bake import PROTOCOL
 from distropack_builder.docker import RunResult
 from fake_runner import Call, FakeRunner, tools_respond
-from support import FIXTURE_PASSPHRASE, make_project
+from support import (
+    FIXTURE_PASSPHRASE,
+    SNAP,
+    add_snapshot_package,
+    add_upstream_commit,
+    make_project,
+    use_channels,
+)
 
 PASSPHRASE_ENV = 'DISTROPACK_GPG_PASSPHRASE'
 
@@ -467,3 +474,227 @@ def test_publish_only_ignores_missing_builder_images(
     assert result.exit_code == 0, result.output
     assert 'no builder image' not in result.output
     assert (project / 'repositories/debian/dists/bookworm/InRelease').is_file()
+
+
+# Channels (Phase 13).
+def test_run_unknown_channel(project: Path) -> None:
+    result = invoke('run', '--channel', 'nope', env={PASSPHRASE_ENV: FIXTURE_PASSPHRASE})
+    assert result.exit_code == 2
+    assert 'unknown channel nope' in result.output
+
+
+@pytest.fixture
+def snapshot_project(
+    recorded_http: respx.MockRouter,
+    unpublished: set[str],
+    frozen: date,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[Path]:
+    """hello-lib, and hello-snap in channel weekly, Debian trixie, as the current directory."""
+    project = make_project(
+        tmp_path / 'project', 'https://orig.test', {'debian': ['trixie']}, ['hello-lib']
+    )
+    use_channels(project)
+    add_snapshot_package(project)
+    monkeypatch.chdir(project)
+    yield project
+
+
+def upstream(project: Path) -> Path:
+    return project / 'upstream' / 'hello-lib.git'
+
+
+def built(call: Call) -> RunResult | None:
+    """The tools, and builders that report an environment and build a package."""
+    if call.is_deps:
+        (call.targets['/buildenv'].source / 'installed').write_text('base-files 13.8\n')
+    if call.is_build:
+        (call.targets['/src'].source / 'x.pkg').write_text('built')
+    return tools_respond(call)
+
+
+def run_channel(*args: str) -> Result:
+    return invoke('run', *args, runner=FakeRunner(built), env={PASSPHRASE_ENV: FIXTURE_PASSPHRASE})
+
+
+def snapshots_of(download: Path) -> dict[str, Any]:
+    return cast(dict[str, Any], json.loads((download / 'snapshots.json').read_text()))
+
+
+def test_fetch_writes_snapshots_and_run_uses_them(snapshot_project: Path, tmp_path: Path) -> None:
+    download, states = tmp_path / 'download', tmp_path / 'states'
+    fetched = add_upstream_commit(upstream(snapshot_project), 'one')
+    result = invoke(
+        'fetch', '--channel', 'weekly', '--download-dir', str(download), runner=FakeRunner(built)
+    )
+    assert result.exit_code == 0, result.output
+    assert snapshots_of(download)['weekly'][SNAP]['commit'] == fetched
+    add_upstream_commit(upstream(snapshot_project), 'two')  # the branch moved since
+    assert run_channel('--state-dir', str(states)).exit_code == 0
+    result = run_channel(
+        '--channel', 'weekly', '--state-dir', str(states), '--download-dir', str(download)
+    )
+    assert result.exit_code == 0, result.output
+    stored = json.loads((states / 'weekly' / 'debian-13-trixie' / 'manifest.json').read_text())
+    assert stored['packages'][SNAP]['snapshot_commit'] == fetched
+
+
+def test_fetch_snapshot_option(snapshot_project: Path, tmp_path: Path) -> None:
+    download = tmp_path / 'download'
+    first = add_upstream_commit(upstream(snapshot_project), 'one')
+    add_upstream_commit(upstream(snapshot_project), 'two')
+    result = invoke(
+        'fetch',
+        '--channel',
+        'weekly',
+        '--download-dir',
+        str(download),
+        '--snapshot',
+        f'{SNAP}={first}',
+        runner=FakeRunner(built),
+    )
+    assert result.exit_code == 0, result.output
+    assert snapshots_of(download)['weekly'][SNAP]['commit'] == first
+
+
+@pytest.mark.parametrize(
+    ('value', 'message'),
+    [
+        pytest.param('hello-lib=abc', 'hello-lib: ', id='undeclared'),
+        pytest.param('hello-snap', 'PACKAGE=COMMIT', id='malformed'),
+    ],
+)
+def test_fetch_snapshot_refused(
+    snapshot_project: Path, tmp_path: Path, value: str, message: str
+) -> None:
+    result = invoke(
+        'fetch',
+        '--channel',
+        'weekly',
+        '--download-dir',
+        str(tmp_path / 'download'),
+        '--snapshot',
+        value,
+        runner=FakeRunner(built),
+    )
+    assert result.exit_code == 2
+    assert message in result.output
+    assert not (tmp_path / 'download' / 'snapshots.json').exists()
+
+
+def fetch_changed(tmp_path: Path, env: dict[str, str] | None = None) -> Result:
+    return invoke(
+        'fetch',
+        '--channel',
+        'weekly',
+        '--download-dir',
+        str(tmp_path / 'download'),
+        '--state-dir',
+        str(tmp_path / 'states'),
+        runner=FakeRunner(built),
+        env=env,
+    )
+
+
+def built_weekly(project: Path, tmp_path: Path) -> None:
+    """The release channel, then the weekly channel, built into tmp_path/states."""
+    add_upstream_commit(upstream(project), 'one')
+    states = str(tmp_path / 'states')
+    assert run_channel('--state-dir', states).exit_code == 0
+    result = run_channel(
+        '--channel', 'weekly', '--state-dir', states, '--download-dir', str(tmp_path / 'download')
+    )
+    assert result.exit_code == 0, result.output
+
+
+def test_changed_false_when_nothing_moved(snapshot_project: Path, tmp_path: Path) -> None:
+    built_weekly(snapshot_project, tmp_path)
+    result = fetch_changed(tmp_path)
+    assert result.exit_code == 0, result.output
+    assert 'changed=false' in result.stdout
+
+
+def test_changed_true_after_a_commit(snapshot_project: Path, tmp_path: Path) -> None:
+    built_weekly(snapshot_project, tmp_path)
+    add_upstream_commit(upstream(snapshot_project), 'two')
+    result = fetch_changed(tmp_path)
+    assert result.exit_code == 0, result.output
+    assert 'changed=true' in result.stdout
+
+
+def test_changed_true_after_a_packaging_change(snapshot_project: Path, tmp_path: Path) -> None:
+    built_weekly(snapshot_project, tmp_path)
+    control = snapshot_project / SNAP / 'debian' / 'control'
+    control.write_text(control.read_text() + '\n')
+    result = fetch_changed(tmp_path)
+    assert result.exit_code == 0, result.output
+    assert 'changed=true' in result.stdout
+
+
+def test_changed_true_without_a_state(snapshot_project: Path, tmp_path: Path) -> None:
+    add_upstream_commit(upstream(snapshot_project), 'one')
+    result = fetch_changed(tmp_path)
+    assert result.exit_code == 0, result.output
+    assert 'changed=true' in result.stdout
+
+
+def test_changed_written_to_github_output(snapshot_project: Path, tmp_path: Path) -> None:
+    built_weekly(snapshot_project, tmp_path)
+    output = tmp_path / 'github-output'
+    output.touch()
+    result = fetch_changed(tmp_path, env={'GITHUB_OUTPUT': str(output)})
+    assert result.exit_code == 0, result.output
+    assert read_outputs(output) == {'changed': 'false'}
+
+
+def test_failed_snapshot_fails_fetch(snapshot_project: Path, tmp_path: Path) -> None:
+    conf_path = snapshot_project / 'build.conf'
+    conf = yaml.safe_load(conf_path.read_text())
+    conf['packages'][SNAP]['channels']['weekly']['git'] = 'file:///nonexistent.git'
+    conf_path.write_text(yaml.safe_dump(conf))
+    result = invoke(
+        'fetch',
+        '--channel',
+        'weekly',
+        '--download-dir',
+        str(tmp_path / 'download'),
+        runner=FakeRunner(built),
+    )
+    assert result.exit_code == 1
+    assert SNAP in result.output
+    assert 'error' in snapshots_of(tmp_path / 'download')['weekly'][SNAP]
+
+
+def test_output_dirs_list_channel_repositories(
+    recorded_http: respx.MockRouter,
+    unpublished: set[str],
+    frozen: date,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = make_project(
+        tmp_path / 'project',
+        'https://orig.test',
+        {'debian': ['trixie'], 'fedora': ['44']},
+        ['hello-lib'],
+    )
+    use_channels(project)
+    add_snapshot_package(project)
+    monkeypatch.chdir(project)
+    output = tmp_path / 'output'
+    output.touch()
+    env = {PASSPHRASE_ENV: FIXTURE_PASSPHRASE, 'GITHUB_OUTPUT': str(output)}
+    states = str(tmp_path / 'states')
+    result = invoke(
+        'run', '--publish-only', '--state-dir', states, runner=FakeRunner(built), env=env
+    )
+    assert result.exception is None or isinstance(result.exception, SystemExit), repr(
+        result.exception
+    )
+    dirs = json.loads(read_outputs(output)['output-dirs'])
+    assert dirs == {
+        'debian': str(project.resolve() / 'repositories/debian'),
+        'fedora': str(project.resolve() / 'repositories/fedora'),
+        'fedora.weekly': str(project.resolve() / 'repositories/weekly.fedora'),
+    }
