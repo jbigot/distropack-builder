@@ -1520,7 +1520,7 @@ def _outputs(
 
     A release without a state of the first channel is not published, and said so; without a state
     of another (a deb component), that one is published empty. An rpm snapshot channel's repository
-    holds its fallback's packages that do not build in it too.
+    holds the packages of its fallback's state that its own state lacks too.
     """
     outputs: list[Output] = []
     first = channels[0]
@@ -1536,12 +1536,13 @@ def _outputs(
                 for _, package in sorted(stored.packages().items())
             ]
         if first != config.release_channel and not targets.is_deb(targets.target(dist_id)):
-            declared = set(config.channel_packages(first))
+            # those its state lacks: undeclared, or without a spec in the channel's packaging
+            built = set(ReleaseState(states, first, release.uid).packages())
             fallback = ReleaseState(states, config.fallback(first), release.uid)
             outputs += [
                 Output(release, package.directory)
                 for name, package in sorted(fallback.packages().items())
-                if name not in declared
+                if name not in built
             ]
     return outputs
 

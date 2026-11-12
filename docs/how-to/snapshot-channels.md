@@ -19,7 +19,7 @@ channels:
   nightly:
     kind: snapshot
     epoch_bump: 1           # deb epoch added to the changelog's (default 0)
-    # version_label: main   # default: the ref's name, `/` and `_` made `.`
+    # version_label: main   # default: the ref's name, all but letters and digits made `.`
     # fallback: stable      # default: the release channel
 distribs:
   debian:
@@ -101,7 +101,11 @@ distropack-build run --channel nightly --download-dir downloads --state-dir stat
 ```
 
 Every `run` given that download directory builds the recorded commits, even when the branch moved
-meanwhile. `--snapshot <package>=<commit>` builds that commit instead of the ref's head, provided
-it is on the ref: what a push event names. With `--state-dir`, `fetch` prints `changed=true` when a
+meanwhile; only `fetch` records them, so that a channel advances at each `fetch`, and a `run`
+without one resolves the refs itself. `--snapshot <package>=<commit>` builds that commit instead of
+the ref's head, provided it is on the ref: what a push event names. Give it to `fetch`, which
+records it for every job; a `run` given it builds that package's commit and the others' recorded
+ones. A recorded commit is not checked again: share a download directory only where you would
+share the packages built from it. With `--state-dir`, `fetch` prints `changed=true` when a
 run would build anything the states do not hold (a release without a state, a new commit, a
 packaging change), `changed=false` otherwise, and writes `changed` as a GitHub Actions output.

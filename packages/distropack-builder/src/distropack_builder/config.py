@@ -491,6 +491,10 @@ def _check_channels(path: Path, root: Path, parsed: ConfigFile) -> None:
             raise ConfigError(
                 f'{path}: channels.{name}.fallback: unknown channel {declared.fallback}'
             )
+        if declared.fallback == name:
+            raise ConfigError(
+                f'{path}: channels.{name}.fallback: a channel cannot fall back on itself'
+            )
     used: set[str] = set()
     for name, package in parsed.packages.items():
         for channel, entry in package.channels.items():
@@ -533,6 +537,17 @@ def _check_channels(path: Path, root: Path, parsed: ConfigFile) -> None:
                 )
             if not deb and setting.path is not None:
                 _check_repository_path(f'{where}.path', root, setting.path)
+                taken = {(root / repository.path).resolve(): 'repository.path'} | {
+                    (root / other.path).resolve(): f'repository.channels.{name}.path'
+                    for name, other in repository.channels.items()
+                    if name != channel and other.path is not None
+                }
+                if (root / setting.path).resolve() in taken:
+                    raise ConfigError(
+                        f'{where}.path: {setting.path} is the directory of'
+                        f' {taken[(root / setting.path).resolve()]} already: a channel is a'
+                        ' repository of its own'
+                    )
         if deb:
             continue
         for channel in sorted(used):

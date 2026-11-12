@@ -138,7 +138,7 @@ def test_fetch_records_and_reuses_snapshots(
     conf = config.load(project / 'build.conf')
     selected, disabled = selection(conf, [])
     download = tmp_path / 'download'
-    fetched = inputs.fetch(context, conf, 'w', selected, disabled, download, {})
+    fetched = inputs.fetch(context, conf, 'w', selected, disabled, download, {}, resolve=True)
     assert fetched.snapshots == {'hello-lib': Record(first, '1.0', 1, 'main', 'not verified')}
     assert snapshots.read(download / 'snapshots.json', 'w') == fetched.snapshots
     add_upstream_commit(project / 'upstream' / 'hello-lib.git', 'two')  # the branch moved
@@ -154,15 +154,15 @@ def test_given_snapshot_overrides_the_file(
     conf = config.load(project / 'build.conf')
     selected, disabled = selection(conf, [])
     download = tmp_path / 'download'
-    inputs.fetch(context, conf, 'w', selected, disabled, download, {})
+    fetched = inputs.fetch(context, conf, 'w', selected, disabled, download, {}, resolve=True)
     second = add_upstream_commit(project / 'upstream' / 'hello-lib.git', 'two')
-    given = inputs.fetch(context, conf, 'w', selected, disabled, download, {'hello-lib': first})
+    given = inputs.fetch(context, conf, 'w', selected, disabled, download, {'hello-lib': second})
     record = given.snapshots['hello-lib']
-    assert isinstance(record, Record) and record.commit == first
-    later = inputs.fetch(context, conf, 'w', selected, disabled, download, {'hello-lib': second})
-    record = later.snapshots['hello-lib']
     assert isinstance(record, Record) and record.commit == second
-    assert snapshots.read(download / 'snapshots.json', 'w') == later.snapshots
+    # a run's commits are its own: the file keeps what fetch recorded
+    assert snapshots.read(download / 'snapshots.json', 'w') == fetched.snapshots
+    record = fetched.snapshots['hello-lib']
+    assert isinstance(record, Record) and record.commit == first
 
 
 def test_failed_snapshot_fails_its_package_only(
@@ -236,3 +236,85 @@ def test_release_channel_inputs_unchanged(
     assert fetched.built_specs == {'hello-lib': project / 'hello-lib' / 'hello-lib.spec'}
     assert list(fetched.files) == [f'{ORIG_BASE}/hello-lib-1.0.tar.gz']
     assert orig.call_count == 1
+
+
+def test_run_without_fetch_follows_the_branch(
+    context: BuildContext, tmp_path: Path, recorded_http: respx.MockRouter
+) -> None:
+    """Only fetch records the commits: a run alone resolves, and writes nothing."""
+    project = channel_project(tmp_path, {'debian': ['trixie']})
+    add_upstream_commit(project / 'upstream' / 'hello-lib.git', 'one')
+    conf = config.load(project / 'build.conf')
+    selected, disabled = selection(conf, [])
+    download = tmp_path / 'download'
+    inputs.fetch(context, conf, 'w', selected, disabled, download, {})
+    assert not (download / 'snapshots.json').exists()
+    second = add_upstream_commit(project / 'upstream' / 'hello-lib.git', 'two')
+    again = inputs.fetch(context, conf, 'w', selected, disabled, download, {})
+    record = again.snapshots['hello-lib']
+    assert isinstance(record, Record) and record.commit == second
+
+
+def test_given_snapshot_keeps_the_other_records(tmp_path: Path) -> None:
+    project = make_project(tmp_path / 'project', ORIG_BASE, {'debian': ['trixie']}, ['hello-lib'])
+    upstream = project / 'upstream' / 'hello-lib.git'
+    first = add_upstream_commit(upstream, 'one')
+    entry = {'git': f'file://{upstream}', 'ref': 'main', 'verify': 'none'}
+    conf = config.BuildConfig.model_validate(
+        {
+            'channels': {'s': {'kind': 'release'}, 'w': {'kind': 'snapshot'}},
+            'distribs': {},
+            'packages': {'a': {'channels': {'w': entry}}, 'b': {'channels': {'w': entry}}},
+            'root': project,
+        }
+    )
+    download = tmp_path / 'download'
+    inputs._snapshots(conf, 'w', download, {}, True)
+    second = add_upstream_commit(upstream, 'two')
+    records = inputs._snapshots(conf, 'w', download, {'a': second}, False)
+    a, b = records['a'], records['b']
+    assert isinstance(a, Record) and a.commit == second
+    assert isinstance(b, Record) and b.commit == first
+
+
+def test_silent_mk_origtargz_fails_the_package(
+    tmp_path: Path, recorded_http: respx.MockRouter, frozen: date
+) -> None:
+    workdir = tmp_path / 'work'
+    workdir.mkdir()
+    context = BuildContext(cast(Any, None), FakeRunner(), Cancellation(), workdir, 1)
+    project = channel_project(tmp_path, {'debian': ['trixie']})
+    add_upstream_commit(project / 'upstream' / 'hello-lib.git', 'one')
+    loaded = config.load(project / 'build.conf')
+    selected, disabled = selection(loaded, [release('debian', 'trixie', frozen)])
+    fetched = inputs.fetch(context, loaded, 'w', selected, disabled, tmp_path / 'download', {})
+    assert isinstance(fetched.origs['hello-lib'], DownloadFailed)
+
+
+def test_rpm_snapshot_tarball_failure_fails_its_specs(
+    context: BuildContext, tmp_path: Path, recorded_http: respx.MockRouter, frozen: date
+) -> None:
+    project = channel_project(tmp_path, {'fedora': ['44']})
+    add_upstream_commit(project / 'upstream' / 'hello-lib.git', 'one')
+    loaded = config.load(project / 'build.conf')
+    f44 = release('fedora', '44', frozen)
+    selected, disabled = selection(loaded, [f44])
+    download = tmp_path / 'download'
+    download.mkdir()
+    (download / 'snapshots').write_text('not a directory')
+    fetched = inputs.fetch(context, loaded, 'w', selected, disabled, download, {})
+    spec = fetched.specs[('hello-lib', f44.uid)]
+    assert isinstance(spec, SpecFailed)
+    assert 'snapshot' in spec.message
+
+
+def test_rpm_snapshot_tarball_made_by_fetch(
+    context: BuildContext, tmp_path: Path, recorded_http: respx.MockRouter, frozen: date
+) -> None:
+    project = channel_project(tmp_path, {'fedora': ['44']})
+    head = add_upstream_commit(project / 'upstream' / 'hello-lib.git', 'one')
+    loaded = config.load(project / 'build.conf')
+    selected, disabled = selection(loaded, [release('fedora', '44', frozen)])
+    download = tmp_path / 'download'
+    inputs.fetch(context, loaded, 'w', selected, disabled, download, {})
+    assert (download / 'snapshots' / f'hello-lib-{head}.tar.gz').is_file()

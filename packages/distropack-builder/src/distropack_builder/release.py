@@ -162,6 +162,23 @@ def _pending_channels(config: BuildConfig) -> dict[str, list[str]]:
     return found
 
 
+def _made(root: Path, directory: str) -> str | None:
+    """The commit that made directory as it is: the newest adding it where its parent had none.
+
+    A directory made, removed by a release, then made again for the next has several such
+    commits: the guard counts from the last one.
+    """
+    added = _git(root, 'log', '--diff-filter=A', '--format=%H', '--', f'{directory}/').split()
+    for commit in added:
+        parent = subprocess.run(
+            ['git', '-C', str(root), 'cat-file', '-e', f'{commit}^:{directory}'],
+            capture_output=True,
+        )
+        if parent.returncode != 0:
+            return commit
+    return added[-1] if added else None
+
+
 def release(
     config: BuildConfig, version: str, *, from_channel: str | None, ported: bool, now: datetime
 ) -> None:
@@ -200,12 +217,9 @@ def release(
         assert from_channel is not None
         unported = {}
         for name in moved:
-            added = _git(
-                root, 'log', '--diff-filter=A', '--format=%H', '--', f'{name}-{from_channel}/'
-            )
-            if not added.split():
+            since = _made(root, f'{name}-{from_channel}')
+            if since is None:
                 continue  # not committed yet: _check_clean refused it
-            since = added.split()[-1]
             logged = _git(root, 'log', '--oneline', f'{since}..HEAD', '--', f'{name}/').splitlines()
             if logged:
                 unported[name] = logged

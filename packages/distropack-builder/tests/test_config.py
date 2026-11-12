@@ -11,6 +11,7 @@ from typing import Any
 
 import pysequoia
 import pytest
+import yaml
 from syrupy.assertion import SnapshotAssertion
 from syrupy.extensions.json import JSONSnapshotExtension
 
@@ -608,3 +609,28 @@ def test_release_settings_default(tmp_path: Path) -> None:
     assert loaded.release.distribution == 'unstable'
     assert loaded.release.author is None
     assert loaded.release.packages is None
+
+
+def test_fallback_on_itself_refused(tmp_path: Path) -> None:
+    text = (
+        'channels: {s: {kind: release}, w: {kind: snapshot, fallback: w}}\n'
+        'distribs: {}\npackages: {}\n'
+    )
+    assert 'channels.w.fallback' in channel_error(tmp_path, text)
+
+
+@pytest.mark.parametrize('path', ['repositories', 'other'])
+def test_rpm_channel_path_shared_refused(tmp_path: Path, path: str) -> None:
+    entry = {'git': 'x', 'commit': SHA}
+    conf = {
+        'channels': {
+            's': {'kind': 'release'},
+            'w': {'kind': 'snapshot'},
+            'n': {'kind': 'snapshot'},
+        },
+        'distribs': {
+            'fedora': {'repository': {'channels': {'w': {'path': 'other'}, 'n': {'path': path}}}}
+        },
+        'packages': {'pdi': {'channels': {'w': entry, 'n': entry}}},
+    }
+    assert 'distribs.fedora.repository.channels' in channel_error(tmp_path, yaml.safe_dump(conf))

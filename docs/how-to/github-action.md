@@ -139,6 +139,6 @@ jobs:
 ```
 
 A run triggered by an upstream push builds the pushed commit rather than the branch's head, which
-may have moved since: pass it as `snapshots: <package>=<commit>`. Several jobs can share one fetch:
+may have moved since: pass it to the `mode: fetch` step as `snapshots: <package>=<commit>`. Several jobs can share one fetch:
 build with `mode: no-publish` per distribution, each restoring the same download directory, then
 publish once with `mode: publish-only`.

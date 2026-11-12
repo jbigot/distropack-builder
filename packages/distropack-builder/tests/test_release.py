@@ -290,3 +290,12 @@ def test_release_native_package_has_no_revision(repo: Path) -> None:
     release.release(load(repo), '1.2.0', from_channel=None, ported=False, now=LATER)
     native = Changelog((repo / 'hello-native' / 'debian' / 'changelog').read_text())
     assert str(native.version) == '1.2.0'
+
+
+def test_second_release_does_not_list_the_first(repo: Path) -> None:
+    pending_with_change(repo)
+    release.release(load(repo), '1.2.0', from_channel=None, ported=False, now=LATER)
+    commit_all(repo, 'release 1.2.0')
+    pending_with_change(repo)
+    release.release(load(repo), '1.3.0', from_channel=None, ported=False, now=LATER)
+    assert not (repo / 'hello-app-weekly').exists()

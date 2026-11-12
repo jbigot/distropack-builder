@@ -2358,7 +2358,15 @@ def test_unchanged_snapshot_reused(
 ) -> None:
     download = str(tmp_path / 'download')
     assert (
-        stable_then(run_main, tmp_path, FakeRunner(environment()), '--download-dir', download) == 0
+        stable_then(
+            run_main,
+            tmp_path,
+            FakeRunner(environment()),
+            '--download-dir',
+            download,
+            prepare=same_commit,  # upstream's tag commit, the same in every fresh project
+        )
+        == 0
     )
     fresh(tmp_path)
     capsys.readouterr()
@@ -2503,3 +2511,24 @@ def test_run_of_one_channel_republishes_all(
     assert repo_adds(runner, 'debian-13-trixie.weekly', tmp_path / 'project') == [snap.directory]
     channel = tmp_path / 'project' / 'repositories' / 'weekly.fedora' / '44' / 'noarch'
     assert 'hello-snap-1.0-1.fc44.noarch.rpm' in [p.name for p in channel.iterdir()]
+
+
+def test_rpm_channel_holds_fallback_packages_it_does_not_build(
+    run_main: Callable[..., int], tmp_path: Path
+) -> None:
+    """hello-lib declares weekly with a deb-only weekly directory: its stable rpm stays there."""
+
+    def prepare(project: Path) -> None:
+        weekly(project)
+        conf_path = project / 'build.conf'
+        conf = yaml.safe_load(conf_path.read_text())
+        conf['packages']['hello-lib'] = {
+            'channels': {'weekly': conf['packages'][SNAP]['channels']['weekly']}
+        }
+        conf_path.write_text(yaml.safe_dump(conf))
+        shutil.copytree(project / 'hello-lib', project / 'hello-lib-weekly')
+        (project / 'hello-lib-weekly' / 'hello-lib.spec').unlink()
+
+    assert stable_then(run_main, tmp_path, FakeRunner(environment()), prepare=prepare) == 0
+    channel = tmp_path / 'project' / 'repositories' / 'weekly.fedora' / '44' / 'noarch'
+    assert 'hello-lib-1.0-1.fc44.noarch.rpm' in [p.name for p in channel.iterdir()]

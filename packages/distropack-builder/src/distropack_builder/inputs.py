@@ -136,15 +136,25 @@ def _snapshots(
     given: Mapping[str, str],
     resolve: bool,
 ) -> Records:
-    """The records of a snapshot channel: those download_dir holds, else resolved and written."""
+    """The records of a snapshot channel.
+
+    `fetch` (resolve) resolves every package and records them in download_dir's snapshots.json.
+    A run reuses what `fetch` recorded there, so that all the jobs of a workflow build the same
+    commits, the packages given excepted; without a record, it resolves and records nothing, so
+    that a kept download directory does not stop the channel at its first commit.
+    """
     path = download_dir / SNAPSHOTS_FILE
-    wanted = set(config.channel_packages(channel))
-    if not given and not resolve:
-        recorded = snapshots.read(path, channel)
-        if recorded is not None and wanted <= set(recorded):
-            return {name: recorded[name] for name in config.channel_packages(channel)}
+    names = config.channel_packages(channel)
+    recorded = None if resolve else snapshots.read(path, channel)
+    if recorded is not None and not set(names) <= set(recorded):
+        recorded = None
+    if recorded is not None and not given:
+        return {name: recorded[name] for name in names}
     records = snapshots.resolve(config, channel, download_dir / 'git', given)
-    snapshots.write(path, channel, records)
+    if recorded is not None:  # the packages not given, as fetch recorded them
+        records = {name: records[name] if name in given else recorded[name] for name in names}
+    if resolve:
+        snapshots.write(path, channel, records)
     return records
 
 
@@ -207,6 +217,7 @@ def fetch(
         for name in packages
         if spec_file(packaging[name], name).is_file() and releases_of(name, deb=False)
     ]
+    unpacked: dict[str, str] = {}
     for name in rpm_names:
         spec = spec_file(packaging[name], name)
         if release_channel:
@@ -214,6 +225,11 @@ def fetch(
             continue
         record = records[name]
         if isinstance(record, SnapshotFailed):
+            continue
+        try:  # its first Source, made here, once for every job of the run
+            snapshots.tarball(download_dir, name, record)
+        except Exception as error:  # noqa: BLE001 -- git's or the archive's failure, the package's
+            unpacked[name] = f'the snapshot of {name} could not be archived: {error}'
             continue
         rewritten = context.workdir / 'specs' / spec.name
         rewritten.parent.mkdir(parents=True, exist_ok=True)
@@ -232,7 +248,12 @@ def fetch(
         }
         for name, failure in failed.items():
             specs[(name, uid)] = SpecFailed(str(failure))
-        to_query = {name: built_specs[name] for name in names if name not in failed}
+        for name in names:
+            if name in unpacked:
+                specs[(name, uid)] = SpecFailed(unpacked[name])
+        to_query = {
+            name: built_specs[name] for name in names if name not in failed and name not in unpacked
+        }
         # every spec of the release, read by the release's own rpm, in one container
         answers = rpmquery.query(context, REGISTRY + builder_image(release), to_query)
         for name, answer in answers.items():
@@ -331,3 +352,5 @@ def _snapshot_orig(
         )
     except ContainerFailed as error:
         return DownloadFailed(f'the snapshot of {name}', f'mk-origtargz failed: {error}')
+    except DownloadFailed as error:
+        return error
