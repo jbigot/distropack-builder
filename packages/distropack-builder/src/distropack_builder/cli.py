@@ -179,6 +179,19 @@ def _given(loaded: BuildConfig, channel: str, values: list[str]) -> dict[str, st
     return given
 
 
+@contextmanager
+def _interruptible() -> Iterator[None]:
+    """SIGTERM taken as Ctrl-C: either ends the command, its containers removed, status 130."""
+    previous = signal.signal(signal.SIGTERM, _interrupt)
+    try:
+        yield
+    except KeyboardInterrupt:
+        typer.echo(f'{PROG}: interrupted', err=True)
+        raise typer.Exit(INTERRUPTED) from None
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
 def _interrupt(signum: int, frame: FrameType | None) -> None:
     """Handle SIGTERM as Ctrl-C."""
     raise KeyboardInterrupt()
@@ -613,7 +626,11 @@ def make_app(
                 ),
             )
         compared: list[str] = []
-        with TemporaryDirectory(prefix='distropack-check.') as output, _errors():
+        with (
+            _interruptible(),
+            TemporaryDirectory(prefix='distropack-check.') as output,
+            _errors(),
+        ):
             failed, _ = build(
                 build_conf,
                 distributions or [],
@@ -701,7 +718,7 @@ def make_app(
             engine = connect(docker_host)
         except (EngineNotFound, docker.errors.DockerException) as error:
             _fail(1, error)
-        with TemporaryDirectory(prefix='distropack-check.') as workdir:
+        with _interruptible(), TemporaryDirectory(prefix='distropack-check.') as workdir:
             context = BuildContext(engine, runner, Cancellation(), Path(workdir), 1)
             results = install_check.check(
                 context,
@@ -802,41 +819,59 @@ def make_app(
         extras: dict[str, Path] = {}
         for value in extra or []:
             path, separator, directory = value.partition('=')
-            if not separator or not path or not Path(directory).is_dir():
+            source = Path(directory).resolve() if directory else None
+            if not separator or not path or source is None or not source.is_dir():
                 _fail(2, ValueError(f'--extra {value}: expected PATH=DIR, DIR a directory'))
-            extras[path] = Path(directory)
-        try:
-            limit = None if max_size is None else site.parse_size(max_size)
-            site.check_extra_paths(output, extras)
-        except ValueError as error:
-            _fail(2, error)
+            target = output.resolve()
+            if source.is_relative_to(target) or target.is_relative_to(source):
+                _fail(2, ValueError(f'--extra {value}: DIR and the site overlap'))
+            extras[path] = source
         with _errors():
             loaded = config.load(build_conf)
             project = readme.project_dir(loaded.root)
             readme.environment(project).get_template('index.html.j2')
-        output.mkdir(parents=True, exist_ok=True)
-        failed, _ = build(
-            build_conf,
-            distributions or [],
-            (os.cpu_count() or 1) + 1,
-            False,
-            read_passphrase(passphrase_file, os.environ),
-            docker_host,
-            None,
-            False,
-            state_dir,
-            True,
-            False,
-            None,
-            None,
-            not no_version_guard,
-            output.resolve(),
+        repositories = sorted(
+            {
+                loaded.channel_repository(dist_id, name).path.as_posix()
+                for dist_id in loaded.distribs
+                for name in loaded.channels
+            }
         )
+        try:
+            limit = None if max_size is None else site.parse_size(max_size)
+            site.check_extra_paths(output, extras, repositories)
+        except ValueError as error:
+            _fail(2, error)
+        if output.exists() and any(output.iterdir()):
+            # what an earlier run left would be listed, and deployed, beside the new site
+            _fail(2, ValueError(f'{output} is not empty: give a new directory'))
+        output.mkdir(parents=True, exist_ok=True)
+        with _interruptible(), _errors():
+            failed, _ = build(
+                build_conf,
+                distributions or [],
+                (os.cpu_count() or 1) + 1,
+                False,
+                read_passphrase(passphrase_file, os.environ),
+                docker_host,
+                None,
+                False,
+                state_dir,
+                True,
+                False,
+                None,
+                None,
+                not no_version_guard,
+                output.resolve(),
+            )
         if failed:
             raise typer.Exit(1)
-        site.copy_extras(output, extras)
-        site.write_index(output, project, site.index_of(loaded, output))
-        site.write_listings(output)
+        try:
+            site.copy_extras(output, extras)
+            site.write_index(output, project, site.index_of(loaded, output))
+            site.write_listings(output)
+        except OSError as error:
+            _fail(1, error)
         size = site.tree_size(output)
         if limit is not None and size > limit:
             typer.echo(

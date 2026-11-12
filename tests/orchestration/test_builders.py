@@ -22,6 +22,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
+import docker
 import httpx
 import pysequoia
 import pytest
@@ -2957,6 +2958,8 @@ def test_site_extra_outside_refused(
     run_main: Callable[..., int], cli: ModuleType, tmp_path: Path
 ) -> None:
     states = built_states(run_main, tmp_path)
+    legacy = tmp_path / 'legacy'
+    legacy.mkdir()
     status, out = make_site(
         cli,
         '--output',
@@ -2964,7 +2967,7 @@ def test_site_extra_outside_refused(
         '--state-dir',
         states,
         '--extra',
-        f'../x={tmp_path}',
+        f'../x={legacy}',
     )
     assert status == 2
     assert 'inside the site' in out
@@ -2984,10 +2987,14 @@ def fake_sidecar(*args: object, **kwargs: object) -> Iterator[None]:
 def check_install(
     cli: ModuleType, runner: FakeRunner, monkeypatch: pytest.MonkeyPatch, *args: str
 ) -> tuple[int, str]:
-    """check-install on the project, with check_install: the fake aptly indexes nothing."""
-    conf = yaml.safe_load(Path('build.conf').read_text())
-    conf['check_install'] = ['hello-lib']
-    Path('build.conf').write_text(yaml.safe_dump(conf))
+    """check-install on the project; the Debian index the fake aptly does not write, written."""
+    site_dir = Path(args[args.index('--site') + 1])
+    index = site_dir / 'repositories/debian/dists/trixie/main/binary-amd64'
+    if index.parent.parent.is_dir():
+        index.mkdir(parents=True, exist_ok=True)
+        (index / 'Packages').write_text(
+            f'Package: hello-lib\nArchitecture: all\nVersion: 1.0-1~bpo13\nSHA256: {"a" * 64}\n'
+        )
     monkeypatch.setattr('distropack_builder.install_check.private_network', fake_network)
     monkeypatch.setattr('distropack_builder.install_check.serve', fake_sidecar)
     app = cli.make_app(runner=runner, connect=lambda host: cast(Any, None))
@@ -3010,9 +3017,11 @@ def test_check_install_every_release(
     images = sorted(c.image for c in runner.calls)
     assert images == ['debian:trixie-slim', 'fedora:44'], images
     for call in runner.calls:
-        # the site on the private network, the distribution's own mirrors on the default one
-        assert call.network is True
+        # one network of its own, the sidecar's, with a route outside for the mirrors
+        assert call.network == 'distropack-test'
         assert call.args[-1].count('hello-lib')
+    (fedora,) = [c for c in runner.calls if 'fedora' in c.image]
+    assert fedora.args[-1].rstrip().endswith('= 1.0-1.fc44')  # the site's version, installed
     assert all('sudo ' not in call.args[-1] for call in runner.calls)
     assert 'install check passed: Debian GNU/Linux 13 (Trixie), channel stable' in out
 
@@ -3033,7 +3042,7 @@ def test_check_install_failure_exit_1(
     assert status == 1
     assert 'install check failed' in out and 'not signed' in out
     debian = [c for c in runner.calls if 'debian' in c.image]
-    assert debian and debian[0].network is True and debian[0].args[-1].count('https://old.test/d')
+    assert debian and debian[0].args[-1].count('https://old.test/d')
 
 
 def test_every_distribution_published_after_the_guard(
@@ -3044,3 +3053,122 @@ def test_every_distribution_published_after_the_guard(
     repositories = tmp_path / 'project' / 'repositories'
     assert (repositories / 'debian' / 'dists' / 'trixie' / 'Release').is_file()
     assert (repositories / 'fedora' / '44' / 'repodata' / 'repomd.xml').is_file()
+
+
+# The review's fixes (Phase 14, Part B).
+def built_site(run_main: Callable[..., int], cli: ModuleType, tmp_path: Path) -> Path:
+    states = built_states(run_main, tmp_path)
+    output = tmp_path / 'site'
+    assert make_site(cli, '--output', str(output), '--state-dir', states)[0] == 0
+    return output
+
+
+def test_check_install_only_what_the_site_holds(
+    run_main: Callable[..., int], cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """check_install names the packages, never which releases are checked."""
+    output = built_site(run_main, cli, tmp_path)
+    shutil.rmtree(output / 'repositories' / 'debian')
+    runner = FakeRunner()
+    status, out = check_install(cli, runner, monkeypatch, '--site', str(output))
+    assert status == 0, out
+    assert [c.image for c in runner.calls] == ['fedora:44']
+
+
+def test_check_install_error_fails_its_row_only(
+    run_main: Callable[..., int], cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = built_site(run_main, cli, tmp_path)
+
+    def respond(call: Call) -> RunResult | None:
+        if 'debian' in call.image:
+            raise docker.errors.APIError('cannot pull debian:trixie-slim')
+        return None
+
+    runner = FakeRunner(respond)
+    status, out = check_install(cli, runner, monkeypatch, '--site', str(output))
+    assert status == 1
+    assert 'install check failed: Debian GNU/Linux 13 (Trixie), channel stable' in out
+    assert 'cannot pull' in out and 'Traceback' not in out
+    assert 'install check passed: Fedora 44, channel stable' in out
+
+
+def test_check_install_sigterm_removes_everything(
+    run_main: Callable[..., int], cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = built_site(run_main, cli, tmp_path)
+    left: list[str] = []
+
+    @contextlib.contextmanager
+    def network(engine: object) -> Iterator[str]:
+        left.append('network')
+        try:
+            yield 'distropack-test'
+        finally:
+            left.remove('network')
+
+    @contextlib.contextmanager
+    def sidecar(*args: object, **kwargs: object) -> Iterator[None]:
+        left.append('sidecar')
+        try:
+            yield
+        finally:
+            left.remove('sidecar')
+
+    def respond(call: Call) -> RunResult | None:
+        signal.raise_signal(signal.SIGTERM)
+        return None
+
+    monkeypatch.setattr('distropack_builder.install_check.private_network', network)
+    monkeypatch.setattr('distropack_builder.install_check.serve', sidecar)
+    app = cli.make_app(runner=FakeRunner(respond), connect=lambda host: cast(Any, None))
+    result = CliRunner().invoke(app, ['check-install', '--site', str(output), 'build.conf'])
+    assert result.exit_code == 130, result.output
+    assert left == []
+
+
+def test_site_refuses_a_non_empty_output(
+    run_main: Callable[..., int], cli: ModuleType, tmp_path: Path
+) -> None:
+    states = built_states(run_main, tmp_path)
+    output = tmp_path / 'site'
+    output.mkdir()
+    (output / 'stale').write_text('x')
+    status, out = make_site(cli, '--output', str(output), '--state-dir', states)
+    assert status == 2
+    assert 'not empty' in out
+
+
+@pytest.mark.parametrize('extra', ['repositories/debian={dir}', 'legacy='])
+def test_site_refuses_a_bad_extra(
+    run_main: Callable[..., int], cli: ModuleType, tmp_path: Path, extra: str
+) -> None:
+    states = built_states(run_main, tmp_path)
+    legacy = tmp_path / 'legacy'
+    legacy.mkdir()
+    status, out = make_site(
+        cli,
+        '--output',
+        str(tmp_path / 'site'),
+        '--state-dir',
+        states,
+        '--extra',
+        extra.format(dir=legacy),
+    )
+    assert status == 2, out
+    assert not (tmp_path / 'site' / 'repositories').exists()
+
+
+def test_site_errors_are_one_line(
+    run_main: Callable[..., int], cli: ModuleType, tmp_path: Path
+) -> None:
+    states = built_states(run_main, tmp_path)
+    app = cli.make_app(runner=FakeRunner(environment()), connect=lambda host: cast(Any, None))
+    result = CliRunner().invoke(
+        app,
+        ['site', '--output', str(tmp_path / 'site'), '--state-dir', states, 'build.conf'],
+        env={'DISTROPACK_GPG_PASSPHRASE': 'not-the-passphrase'},
+    )
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert 'error:' in result.output

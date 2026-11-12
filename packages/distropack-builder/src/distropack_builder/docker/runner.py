@@ -302,11 +302,14 @@ def _network_options(network: bool | str) -> dict[str, Any]:
 
 @contextmanager
 def private_network(engine: Engine) -> Iterator[str]:
-    """A network of its own, without any route outside, removed once left; its name."""
-    name = f'distropack-{uuid.uuid4().hex[:12]}'
-    created = engine.client.networks.create(
-        name, internal=True, labels={LABEL.split('=')[0]: LABEL.split('=')[1]}
-    )
+    """A network of its own, removed once left; its name.
+
+    Its containers reach each other by alias, and the outside as the default network's do: a
+    container joins it alone, which every engine supports (rootless Podman cannot add a network
+    to a container created on its default one).
+    """
+    name = f'distropack-check-{uuid.uuid4().hex[:12]}'
+    created = engine.client.networks.create(name, labels={LABEL.split('=')[0]: LABEL.split('=')[1]})
     try:
         yield name
     finally:

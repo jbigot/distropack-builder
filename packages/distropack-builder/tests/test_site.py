@@ -55,12 +55,12 @@ def test_listing_links_are_relative(tmp_path: Path) -> None:
     site.write_listings(root)
     html = (root / 'repositories' / 'debian' / 'index.html').read_text()
     links = re.findall(r'href="([^"]*)"', html)
-    assert links == ['../', 'dists/', 'pool/']
+    assert links == ['../', './dists/', './pool/']
     pool = (root / 'repositories' / 'debian' / 'pool' / 'main' / 'index.html').read_text()
-    assert re.findall(r'href="([^"]*)"', pool) == ['../', 'a.deb']
+    assert re.findall(r'href="([^"]*)"', pool) == ['../', './a.deb']
     assert '2.0 KiB' in pool and '2026-12-23' in pool
     top = (root / 'index.html').read_text()
-    assert re.findall(r'href="([^"]*)"', top) == ['repositories/']
+    assert re.findall(r'href="([^"]*)"', top) == ['./repositories/']
 
 
 def test_listings_deterministic(tmp_path: Path, snapshot: SnapshotAssertion) -> None:
@@ -68,12 +68,6 @@ def test_listings_deterministic(tmp_path: Path, snapshot: SnapshotAssertion) -> 
     site.write_listings(root)
     html = (root / 'repositories' / 'debian' / 'pool' / 'main' / 'index.html').read_text()
     assert html == snapshot.use_extension(HTMLSnapshot)
-
-
-def test_tree_size_counts_hard_links_once(tmp_path: Path) -> None:
-    root = tree(tmp_path / 'site')
-    os.link(root / 'repositories/fedora/44/x.rpm', root / 'repositories/fedora/44/y.rpm')
-    assert site.tree_size(root) == 8 + 2048 + 3000 + 16
 
 
 def test_size_report(tmp_path: Path) -> None:
@@ -149,3 +143,35 @@ def test_index_page_override(tmp_path: Path) -> None:
     site.write_index(output, project, INDEX_SITE)
     html = (output / 'index.html').read_text()
     assert '<p>Ours</p>' in html and '<a href="debian/">' in html
+
+
+# The review's fixes.
+def test_tree_size_counts_what_a_host_serves(tmp_path: Path) -> None:
+    """A hard link and a symbolic link are each served as a whole file."""
+    root = tree(tmp_path / 'site')
+    os.link(root / 'repositories/fedora/44/x.rpm', root / 'repositories/fedora/44/y.rpm')
+    os.symlink('x.rpm', root / 'repositories/fedora/44/z.rpm')
+    assert site.tree_size(root) == 8 + 2048 + 3000 * 3 + 16
+
+
+def test_listing_hrefs_are_encoded(tmp_path: Path) -> None:
+    root = tmp_path / 'site'
+    root.mkdir()
+    (root / 'a#b 100%.deb').write_bytes(b'x')
+    (root / 'x:y.deb').write_bytes(b'y')
+    site.write_listings(root)
+    links = re.findall(r'href="([^"]*)"', (root / 'index.html').read_text())
+    assert links == ['./a%23b%20100%25.deb', './x%3Ay.deb']
+
+
+def test_extra_over_a_repository_refused(tmp_path: Path) -> None:
+    extra = tmp_path / 'legacy'
+    extra.mkdir()
+    output = tmp_path / 'site'
+    output.mkdir()
+    with pytest.raises(ValueError, match='repository'):
+        site.check_extra_paths(output, {'repositories/debian': extra}, ['repositories/debian'])
+    with pytest.raises(ValueError, match='repository'):
+        site.check_extra_paths(output, {'repositories/debian/pool': extra}, ['repositories/debian'])
+    with pytest.raises(ValueError, match='repository'):
+        site.check_extra_paths(output, {'repositories': extra}, ['repositories/debian'])

@@ -64,17 +64,20 @@ distropack-build site --output site --state-dir states --max-size 900M \
 publishes every channel's repositories from the states under `site/`, at their `repository.path`
 or channel `path`, the version guard included, then:
 
-- copies each `--extra PATH=DIR` tree as is to `PATH` (a directory inside the site);
+- copies each `--extra PATH=DIR` tree as is to `PATH`, a directory inside the site that neither
+  is, holds, nor lies inside a repository;
 - writes the site's index page, linking every repository: the project's
   `README.tpl/index.html.j2` when there is one, which may extend the default as
   `distropack/index.html.j2` and override its blocks `title`, `intro` and `repositories`;
 - writes a listing (directories first, sizes, UTC dates, relative links) into every directory
   without an `index.html`, so that the whole tree can be browsed;
-- measures the tree, hard links once: above `--max-size` (`<n>`, `<n>K`, `<n>M`, `<n>G`, powers of
+- measures the tree as a web host serves it, every hard or symbolic link a whole copy: above
+  `--max-size` (`<n>`, `<n>K`, `<n>M`, `<n>G`, powers of
   1024, as `du -h` counts), it exits 1, listing the size of every top-level and second-level
   directory. GitHub Pages serves at most 1 GB.
 
-It needs the signing key, as any publication.
+`--output` must be a new or empty directory: what an earlier run left would be listed and
+deployed beside the new site. It needs the signing key, as any publication.
 
 ## Check that the site installs
 
@@ -84,16 +87,17 @@ distropack-build check-install --site site --previous debian=https://repo.exampl
 ```
 
 For every release and channel the site holds, a clean container of the distribution's base image
-(not the builder's) installs from the site, served over HTTP by a sidecar container on a private
-network without any route outside; the installing container also has the default network, for
-the dependencies its distribution's mirrors provide:
+(not the builder's) installs from the site, served over HTTP by a sidecar container on a network
+of the check's own, which also reaches the distribution's mirrors for the dependencies the site
+does not hold:
 
 - it adds the repository as the page tells its users, with its keyring: apt without
   `trusted=yes`, dnf and zypper with `gpgcheck=1` and `repo_gpgcheck=1`, so that a signature that
   does not verify fails the check; a snapshot channel adds its component beside the release
   channel's (deb), or its own repository (rpm);
 - it installs `build.conf`'s `check_install` packages, by default every binary package of the
-  release and channel;
+  release and channel (which the site's index, not `check_install`, decides it holds), and checks
+  that each package the site holds is installed at the site's version;
 - with `--previous DIST=URL`, it first installs from that published URL, then switches to the site and upgrades: `apt-get --no-remove dist-upgrade`, `dnf
   upgrade` without `--allowerasing`, `zypper update`, and fails when a package would be removed
   or is left behind.

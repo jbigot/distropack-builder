@@ -5,9 +5,12 @@
 """The install check's scripts: as the page says, signatures checked, upgrades never removing."""
 
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from distro_releases import Release, distribution
-from distropack_builder import install_check
+from distropack_builder import install_check, published
 from distropack_builder.install_check import Target
 
 TRIXIE = Release(
@@ -102,3 +105,35 @@ def test_config_manager_installed_first() -> None:
     assert script.index("dnf install -y 'dnf-command(config-manager)'") < script.index(
         'dnf config-manager --set-enabled crb'
     )
+
+
+# The review's fixes.
+def test_apt_update_fails_on_an_unreachable_source() -> None:
+    assert 'apt-get -o APT::Update::Error-Mode=any update' in deb()
+    assert 'apt-get update\n' not in deb()
+
+
+def test_installed_versions_are_the_site_s() -> None:
+    target = Target('apt', 'hello', SITE, TRIXIE, ('main',), 'https://old.test/debian')
+    script = install_check.script(target, ['hello-app'], expected={'hello-app': '1:2.0-1'})
+    assert script.rstrip().endswith('test "$(dpkg-query -W -f \'${Version}\' hello-app)" = 1:2.0-1')
+    rpm = Target('dnf', 'hello', 'http://site:8080/f', F44, ('main',), None)
+    script = install_check.script(rpm, ['hello-app'], expected={'hello-app': '2.0-1.fc44'})
+    assert '%|EPOCH?{%{EPOCH}:}:{}|%{VERSION}-%{RELEASE}' in script
+    assert script.rstrip().endswith('= 2.0-1.fc44')
+
+
+def test_rpm_default_packages_leave_the_sources_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An rpm source package indexed (`src`) is no package to install."""
+    original = published.versions
+
+    def with_a_source(*args: Any, **kwargs: Any) -> published.Versions:
+        found = dict(original(*args, **kwargs))
+        found[('libonly', 'src')] = (published.Version('1.0-1', 'a' * 64),)
+        found[('hello-lib', 'noarch')] = (published.Version('1.0-1', 'b' * 64),)
+        return found
+
+    monkeypatch.setattr(published, 'versions', with_a_source)
+    assert install_check.binary_packages(tmp_path, 'rpm', F44, 'main') == ['hello-lib']

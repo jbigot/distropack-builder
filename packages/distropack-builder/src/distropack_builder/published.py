@@ -173,7 +173,8 @@ def _versions(
     return found
 
 
-def _compare(family: str, a: str, b: str) -> int:
+def compare(family: str, a: str, b: str) -> int:
+    """-1, 0 or 1 as version a sorts before, as or after b, in family's order."""
     if family == 'rpm':
         return rpm_evr_compare(a, b)
     first, second = DebVersion(a), DebVersion(b)
@@ -195,13 +196,13 @@ def offences(
         if not published:
             continue
         highest = functools.reduce(
-            lambda a, b: a if _compare(family, a.version, b.version) >= 0 else b, published
+            lambda a, b: a if compare(family, a.version, b.version) >= 0 else b, published
         )
         for candidate in candidates:
-            if _compare(family, candidate.version, highest.version) < 0:
+            if compare(family, candidate.version, highest.version) < 0:
                 found.append(Offence(key[0], key[1], candidate.version, highest.version))
                 continue
-            same = [p for p in published if _compare(family, candidate.version, p.version) == 0]
+            same = [p for p in published if compare(family, candidate.version, p.version) == 0]
             if any(p.sha256 != candidate.sha256 for p in same):
                 found.append(Offence(key[0], key[1], candidate.version, same[0].version))
     return found

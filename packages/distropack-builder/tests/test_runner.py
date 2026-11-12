@@ -214,16 +214,11 @@ def test_sidecar_reachable_by_alias(engine: Engine, tmp_path: Path) -> None:
     assert our_networks(engine) == []
 
 
-def test_private_network_has_no_outside(engine: Engine) -> None:
+def test_private_network_is_ours_and_removed(engine: Engine) -> None:
     with private_network(engine) as network:
-        result = run(
-            engine,
-            ALPINE,
-            ['wget', '-q', '-T', '3', '-O-', 'http://example.org/'],
-            network=network,
-            check=False,
-        )
-    assert result.status != 0
+        assert network.startswith('distropack-check-')
+        assert our_networks(engine) == [network]
+    assert our_networks(engine) == []
 
 
 def test_also_on_the_default_network(engine: Engine, tmp_path: Path) -> None:

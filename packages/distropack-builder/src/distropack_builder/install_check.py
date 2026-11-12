@@ -4,9 +4,9 @@
 
 """The install check: every repository of a site, installed in a clean container of its release.
 
-For each release and channel, the site is served over HTTP by a sidecar on a private network
-without any route outside, and a container of the distribution's base image (not the builder's),
-on that network and on the default one (for the distribution's own mirrors), adds the repository
+For each release and channel, the site is served over HTTP by a sidecar on a network of the check's
+own, and a container of the distribution's base image (not the builder's),
+on that network, which also routes to the distribution's own mirrors, adds the repository
 as the page tells its users, signatures checked, and installs the packages. With a previous URL,
 it installs from the published site first, then switches to the new one and upgrades: no package
 may be held back nor removed. The containers and the network are removed however the check ends.
@@ -78,7 +78,8 @@ def _deb_sources(target: Target, url: str) -> str:
             f'Signed-By: /usr/share/keyrings/{target.name}-archive-keyring.gpg\\n'
         )
         lines.append(f"printf '{body}' > /etc/apt/sources.list.d/{file}")
-    return '\n'.join(lines) + '\napt-get update\n'
+    # a source that cannot be fetched is an error, not a warning: the site must be read
+    return '\n'.join(lines) + '\napt-get -o APT::Update::Error-Mode=any update\n'
 
 
 def _repo_file(target: Target, url: str, path: str) -> str:
@@ -89,10 +90,16 @@ def _repo_file(target: Target, url: str, path: str) -> str:
     return f"printf '{body}' > {path}\n"
 
 
-def script(target: Target, packages: Sequence[str], prerequisites: str = '') -> str:
+def script(
+    target: Target,
+    packages: Sequence[str],
+    prerequisites: str = '',
+    expected: Mapping[str, str] | None = None,
+) -> str:
     """The shell script installing packages from target, then upgrading from the site to it.
 
-    Signatures are always checked; an upgrade that would remove a package, or keep one back, fails.
+    Signatures are always checked; an upgrade that would remove a package, or keep one back, fails;
+    each package of expected must end installed at its version there (the site's).
     """
     names = ' '.join(shlex.quote(p) for p in packages)
     # the page's commands, for a user; the container runs them as root, without sudo
@@ -134,6 +141,13 @@ def script(target: Target, packages: Sequence[str], prerequisites: str = '') -> 
             lines.append('zypper --non-interactive update')
             lines.append('test -z "$(zypper --quiet list-updates | grep \'^v \')"')
             lines.append(f'rpm -q {names}')
+    for name, version in sorted((expected or {}).items()):
+        if target.manager == 'apt':
+            installed = f"dpkg-query -W -f '${{Version}}' {shlex.quote(name)}"
+        else:
+            evr = '%|EPOCH?{%{EPOCH}:}:{}|%{VERSION}-%{RELEASE}'
+            installed = f"rpm -q --qf '{evr}' {shlex.quote(name)}"
+        lines.append(f'test "$({installed})" = {shlex.quote(version)}')
     return '\n'.join(lines) + '\n'
 
 
@@ -143,7 +157,24 @@ def binary_packages(
     """The binary packages a repository directory publishes for release (and component)."""
     with httpx.Client() as client:
         found = published.versions(repository, family, release, component, client)
-    return sorted({name for name, arch in found if arch != 'source'})
+    return sorted({name for name, arch in found if arch not in ('source', 'src', 'nosrc')})
+
+
+def _held(
+    directory: Path, family: Literal['deb', 'rpm'], release: Release, component: str
+) -> dict[str, str]:
+    """The binary packages a repository directory publishes, at their highest version."""
+    with httpx.Client() as client:
+        found = published.versions(directory, family, release, component, client)
+    held: dict[str, str] = {}
+    for (name, arch), versions in found.items():
+        if arch in ('source', 'src', 'nosrc'):
+            continue
+        for version in versions:
+            current = held.get(name)
+            if current is None or published.compare(family, version.version, current) > 0:
+                held[name] = version.version
+    return held
 
 
 def _release_tag(release: Release) -> str:
@@ -212,11 +243,11 @@ def check(
             for item in _checks(config, dist_id, channels):
                 directory = site / item.repository.path
                 component = item.components[-1]
-                packages = list(config.check_install or ()) or binary_packages(
-                    directory, family, release, component
-                )
-                if not packages:
-                    continue  # the site holds nothing of this release and channel
+                # what the site holds decides what is checked; check_install, what is installed
+                held = _held(directory, family, release, component)
+                if not held:
+                    continue
+                packages = list(config.check_install or ()) or sorted(held)
                 if item.repository.url is None:
                     results[(release, item.channel)] = CheckResult(
                         False, f'{directory} has no url: its users have no keyring to install with'
@@ -237,29 +268,32 @@ def check(
                 )
                 prerequisites = target.prerequisites(release.version or '')
                 commands = prerequisites[0][1] if prerequisites else ''
-                with (
-                    network(context.engine) as net,
-                    sidecar(
-                        context.engine,
-                        SIDECAR,
-                        ['httpd', '-f', '-p', str(PORT), '-h', '/site'],
-                        mounts=[Mount('/site', site, read_only=True)],
-                        network=net,
-                        alias='site',
-                    ),
-                ):
-                    result = context.run(
-                        context.engine,
-                        target.base_image(_release_tag(release)),
-                        ['sh', '-c', script(checked, packages, commands)],
-                        mounts=[Mount('/keyring', directory, read_only=True)],
-                        as_root=True,
-                        check=False,
-                        cancellation=context.cancellation,
-                        # the distribution's own mirrors, for the dependencies the site does not
-                        # hold, on the default network; the site on the private one
-                        network=True,
-                        networks=[net],
-                    )
+                expected = {name: held[name] for name in packages if name in held}
+                try:
+                    with (
+                        network(context.engine) as net,
+                        sidecar(
+                            context.engine,
+                            SIDECAR,
+                            ['httpd', '-f', '-p', str(PORT), '-h', '/site'],
+                            mounts=[Mount('/site', site, read_only=True)],
+                            network=net,
+                            alias='site',
+                        ),
+                    ):
+                        result = context.run(
+                            context.engine,
+                            target.base_image(_release_tag(release)),
+                            ['sh', '-c', script(checked, packages, commands, expected)],
+                            mounts=[Mount('/keyring', directory, read_only=True)],
+                            as_root=True,
+                            check=False,
+                            cancellation=context.cancellation,
+                            network=net,
+                        )
+                except Exception as error:  # noqa: BLE001 -- the engine's failure fails this row only
+                    reason = ' '.join(str(error).split()) or type(error).__name__
+                    results[(release, item.channel)] = CheckResult(False, reason)
+                    continue
                 results[(release, item.channel)] = CheckResult(result.status == 0, result.output)
     return results
