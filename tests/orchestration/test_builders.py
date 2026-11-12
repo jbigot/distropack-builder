@@ -1708,3 +1708,166 @@ def test_rpm_reused_not_signed(
     assert under.build(frozenset(), {}) == Reused()
     assert rpm_signs(runner) == [] and not [c for c in runner.calls if c.is_build]
     assert under.outdir == under.stored.directory and under.version == APP_RPM_BASE
+
+
+# A release keeps its last complete build (Phase 12): runs of hello-lib and hello-app.
+BOTH = {'debian': ['trixie'], 'fedora': ['44']}
+APPS = ['hello-lib', 'hello-app']
+
+
+def environment(
+    installed: str = INSTALLED, *, fail: tuple[str, str] | None = None, outputs: bool = True
+) -> Callable[[Call], RunResult | None]:
+    """The tools, deps reporting installed (unchanged when known), builds writing a package.
+
+    fail, a (package, image name) pair, fails that build.
+    """
+
+    def respond(call: Call) -> RunResult | None:
+        if call.is_deps:
+            buildenv = call.targets['/buildenv'].source
+            (buildenv / 'installed').write_text(installed)
+            known = hashlib.sha256(installed.encode()).hexdigest()
+            if call.env.get('DISTROPACK_KNOWN_ENV') == known:
+                (buildenv / 'unchanged').touch()
+            return None
+        if call.is_build:
+            package = call.targets['/src'].source.parent.name.split('.')[0]
+            if fail is not None and package == fail[0] and fail[1] in call.image:
+                raise ContainerFailed(1, 'build failed')
+            out = call.targets.get('/output', call.targets['/src']).source
+            if outputs:
+                (out / f'{package}-{len(installed)}.pkg').write_text(installed)
+        return tools_respond(call)
+
+    return respond
+
+
+def kept_state(state_dir: Path, uid: str) -> dict[str, bytes]:
+    """Every file of a release's state, by path: what must not change."""
+    directory = state_dir / state.RELEASE_CHANNEL / uid
+    return {
+        str(p.relative_to(directory)): p.read_bytes() for p in directory.rglob('*') if p.is_file()
+    }
+
+
+def stored_version(state_dir: Path, uid: str, package: str) -> str | None:
+    found = state.ReleaseState(state_dir, state.RELEASE_CHANNEL, uid).package(package)
+    return None if found is None else found.version
+
+
+def fresh(tmp_path: Path) -> None:
+    shutil.rmtree(tmp_path / 'project', ignore_errors=True)
+
+
+def test_second_run_reuses(
+    run_main: Callable[..., int], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    states = str(tmp_path / 'states')
+    assert run_main(FakeRunner(environment()), BOTH, APPS, '--state-dir', states) == 0
+    capsys.readouterr()
+    fresh(tmp_path)
+    runner = FakeRunner(environment())
+    status = run_main(runner, BOTH, APPS, '--state-dir', states)
+    out = capsys.readouterr().out
+    assert status == 0, (out, capsys.readouterr().err)
+    assert out.count('reused ') == 4 and 'built ' not in out
+    assert not [c for c in runner.calls if c.is_build]
+
+
+def test_new_environment_increments_the_rebuild(
+    run_main: Callable[..., int], tmp_path: Path
+) -> None:
+    states = tmp_path / 'states'
+    versions = []
+    for installed in (INSTALLED, INSTALLED + 'libfoo 2\n', INSTALLED + 'libfoo 3\n'):
+        fresh(tmp_path)
+        assert (
+            run_main(FakeRunner(environment(installed)), BOTH, APPS, '--state-dir', str(states))
+            == 0
+        )
+        versions.append(
+            (
+                stored_version(states, 'debian-13-trixie', 'hello-app'),
+                stored_version(states, 'debian-13-trixie', 'hello-lib'),
+                stored_version(states, 'fedora-44', 'hello-app'),
+            )
+        )
+    assert versions == [
+        ('1.0~bpo13', '1.0-1~bpo13', '1.0-1%{?dist}'),
+        ('1.0~bpo13+b1', '1.0-1~bpo13', '1.0-1%{?dist}.1'),  # hello-lib: Architecture: all
+        ('1.0~bpo13+b2', '1.0-1~bpo13', '1.0-1%{?dist}.2'),
+    ]
+
+
+def test_failed_release_keeps_its_state(
+    run_main: Callable[..., int], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    states = tmp_path / 'states'
+    assert run_main(FakeRunner(environment()), BOTH, APPS, '--state-dir', str(states)) == 0
+    before = kept_state(states, 'debian-13-trixie')
+    capsys.readouterr()
+    fresh(tmp_path)
+    failing = environment(INSTALLED + 'libfoo 2\n', fail=('hello-app', 'debian_builder'))
+    assert run_main(FakeRunner(failing), BOTH, APPS, '--state-dir', str(states)) == 1
+    assert kept_state(states, 'debian-13-trixie') == before
+    assert stored_version(states, 'fedora-44', 'hello-app') == '1.0-1%{?dist}.1'
+    out = capsys.readouterr().out
+    assert 'kept the previous state of Debian GNU/Linux 13 (Trixie)' in out
+    assert 'Fedora' not in ''.join(line for line in out.splitlines() if 'kept the' in line)
+
+
+def test_removed_package_not_carried_over(run_main: Callable[..., int], tmp_path: Path) -> None:
+    states = tmp_path / 'states'
+    assert run_main(FakeRunner(environment()), BOTH, APPS, '--state-dir', str(states)) == 0
+    fresh(tmp_path)
+    assert run_main(FakeRunner(environment()), BOTH, ['hello-lib'], '--state-dir', str(states)) == 0
+    for uid in ('debian-13-trixie', 'fedora-44'):
+        stored = state.ReleaseState(states, state.RELEASE_CHANNEL, uid).packages()
+        assert sorted(stored) == ['hello-lib']
+
+
+def test_reused_dependency_feeds_its_dependent(
+    run_main: Callable[..., int], tmp_path: Path
+) -> None:
+    """hello-lib reused (Architecture: all), hello-app rebuilt against the stored hello-lib."""
+    states = tmp_path / 'states'
+    assert run_main(FakeRunner(environment()), BOTH, APPS, '--state-dir', str(states)) == 0
+    lib = state.ReleaseState(states, state.RELEASE_CHANNEL, 'debian-13-trixie').package('hello-lib')
+    assert lib is not None
+    files = sorted(lib.directory.iterdir())
+    assert files
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in files}
+    fresh(tmp_path)
+    runner = FakeRunner(environment(INSTALLED + 'libfoo 2\n'))
+    assert run_main(runner, BOTH, APPS, '--state-dir', str(states)) == 0
+    added = [
+        c.targets['/data'].source
+        for c in runner.calls
+        if c.args[2:4] == ('repo', 'add') and '/localrepo' not in c.targets
+    ]
+    assert lib.directory in added  # the local repository of hello-app's binNMU, and publication
+    assert {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in files} == before
+
+
+def test_interrupt_commits_nothing_more(
+    run_main: Callable[..., int], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    states = tmp_path / 'states'
+    assert run_main(FakeRunner(environment()), BOTH, APPS, '--state-dir', str(states)) == 0
+    before = {uid: kept_state(states, uid) for uid in ('debian-13-trixie', 'fedora-44')}
+    fresh(tmp_path)
+    changed = environment(INSTALLED + 'libfoo 2\n')
+
+    def respond(call: Call) -> RunResult | None:
+        if call.is_build and 'fedora_builder' in call.image:
+            signal.raise_signal(signal.SIGTERM)
+            raise Cancelled()
+        return changed(call)
+
+    assert run_main(FakeRunner(respond), BOTH, APPS, '--state-dir', str(states), '-j', '1') == 130
+    assert {uid: kept_state(states, uid) for uid in before} == before
+    assert sorted(p.name for p in (states / state.RELEASE_CHANNEL).iterdir()) == [
+        'debian-13-trixie',
+        'fedora-44',
+    ]

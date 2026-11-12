@@ -169,3 +169,16 @@ def test_packaging_key_ignores_sources_and_channel(tmp_path: Path) -> None:
     assert state.packaging_key(pack) == state.static_key(pack, {}, '')
     assert state.packaging_key(pack) != state.static_key(pack, {'pdi-1.0.tar.gz': source}, '')
     assert state.RELEASE_CHANNEL == 'stable'
+
+
+def test_commit_interrupted_between_renames_keeps_the_previous_state(
+    root: Path, tmp_path: Path
+) -> None:
+    """Interrupted once the old state is set aside, before the new one takes its place."""
+    first = state.ReleaseStateWriter(root, 'release', 'debian-13-trixie')
+    add(first, tmp_path, 'pdi', rebuild=1)
+    first.commit()
+    directory = root / 'release' / 'debian-13-trixie'
+    directory.rename(directory.with_name(directory.name + '.old'))
+    stored = state.ReleaseState(root, 'release', 'debian-13-trixie').package('pdi')
+    assert stored is not None and stored.rebuild == 1

@@ -40,7 +40,14 @@ from distropack_builder.report import Reporter, Unreproducible, build_logger
 from distropack_builder.rpmquery import SpecFailed, SpecInfo
 from distropack_builder.scheduler import Reused, Succeeded, schedule
 from distropack_builder.signing import Signer
-from distropack_builder.state import RELEASE_CHANNEL, StoredPackage, packaging_key, static_key
+from distropack_builder.state import (
+    RELEASE_CHANNEL,
+    ReleaseState,
+    ReleaseStateWriter,
+    StoredPackage,
+    packaging_key,
+    static_key,
+)
 from distropack_builder.uscan import OrigFiles, fetch_origs
 from distropack_builder.versions import (
     binnmu_entry,
@@ -1156,13 +1163,19 @@ def run_builds(
     signer_for: Callable[[Distrib], Signer],
     unbuilt: Set[Release] = frozenset(),
     download_dir: Path | None = None,
+    state_dir: Path | None = None,
 ) -> bool:
     """Download, build and publish; whether any build or publication did not succeed.
 
     unbuilt are releases failed before any build (their builder image is missing): their
     repositories are left as they were, and stay listed, as those of the releases whose builds fail.
     download_dir, if given, keeps the downloads from run to run; a temporary one otherwise.
+    state_dir holds the releases' states (a temporary one by default: nothing to reuse): each build
+    starts from what its release's state stores of its package, and once every build is settled,
+    a release all of whose builds were built or reused has its state replaced by them; the others
+    keep theirs.
     """
+    states = state_dir if state_dir is not None else context.workdir / 'state'
     builders: list[PackageBuilder] = []
     repo_builders: list[tuple[str, DebRepoBuilder | RpmRepoBuilder, list[PackageBuilder]]] = []
     root = config.root
@@ -1212,6 +1225,8 @@ def run_builds(
         )
         for builder in dist_builders:
             builder.extras = distrib.extra_repositories
+            stored = ReleaseState(states, RELEASE_CHANNEL, builder.dist_release.uid)
+            builder.stored = stored.package(builder.name)
         repo_builders.append((dist_id, repo_builder, dist_builders))
         builders += dist_builders
 
@@ -1244,7 +1259,10 @@ def run_builds(
     reporter.summarize({(b.name, b.dist_release): outcome for b, outcome in outcomes.items()})
 
     releases = published(outcomes)
-    failed = any(not isinstance(outcome, Succeeded) for outcome in outcomes.values())
+    _commit_states(states, [b for b in builders if b.dist_release in releases])
+    for release in sorted({b.dist_release for b in builders} - releases | unbuilt, key=str):
+        reporter.state_kept(release)
+    failed = any(not isinstance(outcome, Succeeded | Reused) for outcome in outcomes.values())
     for dist_id, repo_builder, dist_builders in repo_builders:
         kept = {b.dist_release for b in dist_builders} - releases
         kept |= {r for r in unbuilt if r.distribution.id == dist_id}
@@ -1261,6 +1279,28 @@ def run_builds(
             reporter.publication_failed(what, failure)
             failed = True
     return failed
+
+
+def _commit_states(states: Path, builders: Sequence[PackageBuilder]) -> None:
+    """Make the builds of each of their releases its state, the packages of no build dropped."""
+    for release in sorted({b.dist_release for b in builders}, key=str):
+        writer = ReleaseStateWriter(states, RELEASE_CHANNEL, release.uid)
+        for builder in (b for b in builders if b.dist_release == release):
+            assert builder.outdir is not None and builder.env_key is not None  # built or reused
+            writer.add(
+                builder.name,
+                static_key=builder.static_key,
+                env_key=builder.env_key,
+                base_version=builder.base_version,
+                rebuild=builder.rebuild,
+                version=builder.version,
+                snapshot_commit=None,
+                packaging_hash=builder.packaging_hash,
+                outdir=builder.outdir,
+                source_files=builder.source_files,
+                arch_all_files=builder.arch_all_files,
+            )
+        writer.commit()
 
 
 def write_sources(

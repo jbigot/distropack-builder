@@ -6,8 +6,10 @@
 
 `<root>/<channel>/<release uid>/` holds `manifest.json` and one directory per package with the
 files of its last build. A release's state is replaced whole, through `<dir>.new`, so that a run
-interrupted half-way leaves the previous one. A manifest that cannot be read, of another schema,
-or naming a file missing, is no state for what it covers: never a crash, never a reuse.
+interrupted half-way leaves the previous one: the old state is set aside as `<dir>.old` while the
+new one takes its place, and read from there if the run stopped in between. A manifest that
+cannot be read, of another schema, or naming a file missing, is no state for what it covers:
+never a crash, never a reuse.
 """
 
 import hashlib
@@ -133,6 +135,9 @@ class ReleaseState:
     def __init__(self, root: Path, channel: str, release_uid: str) -> None:
         """The state of release_uid on channel, under root."""
         self._directory = root / channel / release_uid
+        if not self._directory.exists():
+            # a commit interrupted between its two renames: the previous state is set aside
+            self._directory = self._directory.with_name(release_uid + '.old')
         self._manifest = _Manifest.read(self._directory / MANIFEST)
 
     def exists(self) -> bool:

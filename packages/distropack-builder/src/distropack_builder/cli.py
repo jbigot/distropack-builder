@@ -229,6 +229,7 @@ def make_app(
         docker_host: str | None,
         download_dir: Path | None = None,
         check_reproducible: bool = False,
+        state_dir: Path | None = None,
     ) -> tuple[bool, dict[str, str]]:
         """Build and publish; whether anything failed, and the repositories by distribution id."""
         # One date for the whole run, so that a run crossing midnight sees one list of releases.
@@ -292,6 +293,7 @@ def make_app(
                 signer_for,
                 set(unpublished),
                 download_dir.resolve() if download_dir else None,
+                state_dir.resolve() if state_dir else None,
             )
         return failed or bool(unpublished), output_dirs
 
@@ -353,6 +355,17 @@ def make_app(
                 ' temporary directory: a source already there is not downloaded again.',
             ),
         ] = None,
+        state_dir: Annotated[
+            Path | None,
+            typer.Option(
+                '--state-dir',
+                metavar='DIR',
+                file_okay=False,
+                help='Where each release keeps the packages of its last complete build, to reuse'
+                ' them, or rebuild them binary-only, when nothing but their build environment'
+                ' changed (default: a temporary directory, so that everything is built).',
+            ),
+        ] = None,
     ) -> None:
         """Builds the packages of build.conf, and publishes their signed repositories."""
         # SIGTERM (kill, timeout, a CI job cancelled) takes the path of Ctrl-C: the builds are
@@ -371,6 +384,7 @@ def make_app(
                     docker_host,
                     download_dir,
                     check_reproducible,
+                    state_dir,
                 )
         except typer.Exit:
             _write_outputs_once_stopped(stopped)
