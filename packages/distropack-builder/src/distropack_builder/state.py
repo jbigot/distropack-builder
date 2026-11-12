@@ -22,7 +22,9 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-# Bumped when what static_key hashes changes, so that every stored key stops matching.
+# Bumped when what static_key hashes changes, so that every stored key stops matching. Every
+# package whose base version did not change is then refused (a source change without a new
+# version) until its version is bumped: the bump needs its own migration of the stored keys.
 KEY_VERSION = 1
 SCHEMA = 1
 # The channel of the releases until there are others (Phase 13): the state's first path component.

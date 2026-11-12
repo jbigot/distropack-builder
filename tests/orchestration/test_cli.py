@@ -453,3 +453,17 @@ def test_image_the_engine_has_is_not_missing(
     )
     assert result.exit_code == 0, result.output
     assert 'no builder image' not in result.output
+
+
+def test_publish_only_ignores_missing_builder_images(
+    project: Path, unpublished: set[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Publishing from the states builds nothing: no builder image is needed, nor asked for."""
+    states = str(tmp_path / 'states')
+    result, _ = run_with_bookworm(project, monkeypatch, '--state-dir', states, '--no-publish')
+    assert result.exit_code == 0, result.output
+    unpublished.add(f'bookworm-p{PROTOCOL}')
+    result, _ = run_with_bookworm(project, monkeypatch, '--state-dir', states, '--publish-only')
+    assert result.exit_code == 0, result.output
+    assert 'no builder image' not in result.output
+    assert (project / 'repositories/debian/dists/bookworm/InRelease').is_file()

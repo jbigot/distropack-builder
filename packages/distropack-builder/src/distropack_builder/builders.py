@@ -26,6 +26,7 @@ from urllib.parse import urlparse
 import jinja2
 from debian.changelog import Changelog
 from debian.deb822 import Deb822, Dsc, _PkgRelationMixin
+from debian.debian_support import Version
 
 from distro_releases import Release
 from distropack_builder import readme, repodata, rpmquery, signing, sources, targets
@@ -54,6 +55,7 @@ from distropack_builder.versions import (
     deb_base_version,
     deb_version,
     rpm_changelog_entry,
+    rpm_compare,
     rpm_release,
 )
 
@@ -213,6 +215,14 @@ class UnversionedChange(Exception):
         )
 
 
+class LowerVersion(Exception):
+    """A package whose version is below the one its release's state stores: never published."""
+
+    def __init__(self, package: str, version: str, stored: str) -> None:
+        """The failure of package, at version below stored."""
+        super().__init__(f'{package}: version {version} is below the stored {stored}')
+
+
 class PackageBuilder:
     """The build of one package for one release, the base of the builders of each family.
 
@@ -299,6 +309,8 @@ class PackageBuilder:
         self.static_key = static_key(packaging, self._source_files(files), RELEASE_CHANNEL)
         self.packaging_hash = packaging_key(packaging)
         stored = self.stored
+        if stored is not None and self._below(self.base_version, stored.base_version):
+            raise LowerVersion(self.name, self.base_version, stored.base_version)
         if stored is None or stored.base_version != self.base_version:
             self.rebuild = 0
         elif stored.static_key != self.static_key:
@@ -352,6 +364,10 @@ class PackageBuilder:
     def _rebuilds_binaries(self) -> bool:
         """Whether a rebuild of the same source makes any package."""
         return True
+
+    def _below(self, version: str, other: str) -> bool:
+        """Whether the base version version sorts before other, in the family's order."""
+        raise NotImplementedError
 
     def _check_own_downloads(self, expected: Mapping[str, str]) -> None:
         """Raise DownloadFailed for a file the builder downloaded itself that is not expected."""
@@ -648,6 +664,10 @@ class DebPackageBuilder(PackageBuilder):
         """Whether there are Architecture: any packages, the only ones a binNMU rebuilds."""
         return self._arch_any
 
+    def _below(self, version: str, other: str) -> bool:
+        """Debian's order."""
+        return Version(version) < Version(other)
+
     def _source_tree(self, pkg_dir: Path) -> None:
         """Lay out the source in pkg_dir: its tree, and the upstream tarball of a quilt one."""
         # a fresh copy of the changelog, to which the release may add its own entry
@@ -753,10 +773,13 @@ class DebPackageBuilder(PackageBuilder):
             self.arch_all_files = list(stored.arch_all_files)
 
 
-# A spec's main Release line, its %changelog line, and the date of a changelog entry.
-_RELEASE = re.compile(r'^Release\s*:\s*(?P<value>\S.*?)\s*$', re.IGNORECASE | re.MULTILINE)
+# A spec's Release lines, its %changelog line, and the date of a changelog entry, in the short
+# (`Thu Nov 05 2026`) or the long form (`Thu Nov 05 12:00:00 UTC 2026`).
+_RELEASE = re.compile(r'^(?P<tag>Release\s*:\s*)\S.*?[ \t]*$', re.IGNORECASE | re.MULTILINE)
 _CHANGELOG = re.compile(r'^%changelog[ \t]*\n', re.MULTILINE)
-_ENTRY_DATE = re.compile(r'^\*\s+(?P<date>\w{3}\s+\w{3}\s+\d{1,2}\s+\d{4})\s', re.MULTILINE)
+_ENTRY_DATE = re.compile(
+    r'\*\s+(?P<date>\w{3}\s+\w{3}\s+\d{1,2}(?:\s+\d\d:\d\d:\d\d(?:\s+\S+)?)?\s+\d{4})\s'
+)
 
 
 class RpmPackageBuilder(PackageBuilder):
@@ -824,6 +847,10 @@ class RpmPackageBuilder(PackageBuilder):
         """The spec's Version-Release, expanded by the release's rpm."""
         return f'{self._info().version}-{self._info().release}'
 
+    def _below(self, version: str, other: str) -> bool:
+        """Rpm's order."""
+        return rpm_compare(version, other) < 0
+
     def _version(self, rebuild: int) -> str:
         """The spec's Version, and its Release with `.<rebuild>` after it."""
         return f'{self._info().version}-{rpm_release(self._info().release, rebuild)}'
@@ -864,31 +891,24 @@ class RpmPackageBuilder(PackageBuilder):
     def _rebuilt(self, spec: str) -> str:
         """The spec of the rebuild-th rebuild: its Release `.<n>` after, and why, in %changelog.
 
-        The changelog entry is dated as the spec's top one, so that the same inputs give the same
-        packages: rpm takes the build time from that date. A spec without %changelog gets none,
-        nothing in it dating one.
+        Every Release line becomes the release the base version was read from, as the release's
+        rpm expanded it, `.<n>` after: a macro (`%autorelease`, which takes what follows it as its
+        arguments) or a conditional choosing between lines cannot drop the suffix. The changelog
+        entry is dated as the spec's top one, so that the same inputs give the same packages: rpm
+        takes the build time from that date. A spec without %changelog, or whose first entry has
+        no date (`%autochangelog`), gets none: nothing in it dates one.
         """
-        found = _RELEASE.search(spec)
-        if found is None:
+        release = rpm_release(self._info().release, self.rebuild)
+        spec, count = _RELEASE.subn(lambda line: line['tag'] + release, spec)
+        if count == 0:
             raise ValueError(f'{self._spec.name} has no Release line')
-        raw = found['value']
-        spec = (
-            spec[: found.start('value')]
-            + rpm_release(raw, self.rebuild)
-            + spec[found.end('value') :]
-        )
         changelog = _CHANGELOG.search(spec)
         if changelog is None:
             return spec
-        top = _ENTRY_DATE.search(spec, changelog.end())
+        top = _ENTRY_DATE.match(spec[changelog.end() :].lstrip())
         if top is None:
             return spec
-        entry = rpm_changelog_entry(
-            self._info().version,
-            rpm_release(raw.replace('%{?dist}', ''), self.rebuild),
-            self._gpg.uid,
-            top['date'],
-        )
+        entry = rpm_changelog_entry(self._info().version, release, self._gpg.uid, top['date'])
         return spec[: changelog.end()] + entry + spec[changelog.end() :]
 
 

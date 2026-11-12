@@ -36,6 +36,7 @@ the binary packages, the `.buildinfo`. For each package, the manifest records:
 | the same base version and static key, the same environment | none: the stored package is **reused** |
 | the same base version and static key, another environment | a **rebuild**, number `n + 1` |
 | the same base version, another static key | **refused**: a new version is needed |
+| a higher base version | **refused**: users have the higher one already |
 
 The environment is known only once the build dependencies are installed: the dependency container
 always runs, and when what it installed is what the state records, the build container does not.
@@ -59,9 +60,10 @@ is unpacked with an entry `<base>+b<n>` (`binary-only=yes`) on top of its change
 source package and `Architecture: all` packages beside the new binaries, whose `Source:` field
 names the unchanged source version: a binNMU never alters what the repository publishes as source.
 
-An **rpm** has no binary-only build: the whole package is built again with `Release: <spec
-release>.<n>`, and a `%changelog` entry `- Rebuilt against updated build dependencies` dated as the
-spec's top one, as Fedora's mass rebuilds do. A spec without `%changelog` gets the `Release`
+An **rpm** has no binary-only build: the whole package is built again with every `Release` line set
+to the release the spec gave, as the release's rpm expands it, `.<n>` after (`1.fc44.1`), and a
+`%changelog` entry `- Rebuilt against updated build dependencies` dated as the spec's top one, as
+Fedora's mass rebuilds do. A spec without `%changelog` gets the `Release`
 alone: nothing in it would date an entry.
 
 A new base version starts again at 0, without suffix.

@@ -4,6 +4,7 @@
 
 """The versions of rebuilds, snapshots and binNMUs, and the orders they must keep."""
 
+import pytest
 from debian.changelog import Changelog
 from debian.debian_support import Version
 from hypothesis import given
@@ -16,8 +17,10 @@ from distropack_builder.versions import (
     deb_version,
     next_rebuild,
     rpm_changelog_entry,
+    rpm_compare,
     rpm_release,
     rpm_version,
+    rpmvercmp,
 )
 
 SNAP = Snapshot('abcdef0123456789abcdef0123456789abcdef01', '1.12.0', 37)
@@ -127,3 +130,34 @@ def test_rpm_changelog_entry() -> None:
         '- Rebuilt against updated build dependencies\n'
         '\n'
     )
+
+
+@pytest.mark.parametrize(
+    ('a', 'b', 'expected'),
+    [
+        ('1.0', '1.0', 0),
+        ('1.0', '2.0', -1),
+        ('2.0.1', '2.0', 1),
+        ('1.0', '1.0.0', -1),
+        ('1.0a', '1.0', 1),
+        ('1.0~rc1', '1.0', -1),
+        ('1.0~rc1', '1.0~rc2', -1),
+        ('1.0^git1', '1.0', 1),
+        ('1.0^git1', '1.0.1', -1),
+        ('10', '9', 1),
+        ('010', '10', 0),
+        ('a', '1', -1),
+        ('1.fc44', '1.fc44.1', -1),
+        ('1%{?dist}', '1%{?dist}.1', -1),
+    ],
+)
+def test_rpmvercmp(a: str, b: str, expected: int) -> None:
+    """rpm's own order (rpmvercmp), as rpm's test suite pins it."""
+    assert rpmvercmp(a, b) == expected
+    assert rpmvercmp(b, a) == -expected
+
+
+def test_rpm_compare_version_then_release() -> None:
+    assert rpm_compare('1.0-2.fc44', '1.0-10.fc44') == -1
+    assert rpm_compare('1.1-1.fc44', '1.0-10.fc44') == 1
+    assert rpm_compare('1.0-1.fc44', '1.0-1.fc44') == 0

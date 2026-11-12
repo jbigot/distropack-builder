@@ -4,8 +4,10 @@
 
 """What the builders ask of the engine: images, mounts, users; no container runs."""
 
+import dataclasses
 import hashlib
 import importlib
+import re
 import shutil
 import signal
 import sys
@@ -1657,11 +1659,11 @@ def test_rpm_rebuild_rewrites_release(
     under.stored = stored_rpm(tmp_path)
     assert under.build(frozenset(), {}) is None
     assert builder_call(runner).env['DISTROPACK_KNOWN_ENV'] == 'stored-environment'
-    assert 'Release:        1%{?dist}.1\n' in seen['spec']
+    assert 'Release:        1.fc44.1\n' in seen['spec']
     uid = fixture_signer().uid
     assert (
         '%changelog\n'
-        f'* Thu Nov 05 2026 {uid} - 1.0-1.1\n'
+        f'* Thu Nov 05 2026 {uid} - 1.0-1.fc44.1\n'
         '- Rebuilt against updated build dependencies\n'
         '\n'
         '* Thu Nov 05 2026 distropack test <test@example.invalid> - 1.0-1\n'
@@ -1686,7 +1688,7 @@ def test_rpm_without_changelog_bumps_release_only(
     )
     under.stored = stored_rpm(tmp_path, spec)
     under.build(frozenset(), {})
-    assert seen['spec'] == spec.read_text().replace('1%{?dist}\n', '1%{?dist}.1\n')
+    assert seen['spec'] == spec.read_text().replace('1%{?dist}\n', '1.fc44.1\n')
 
 
 def test_rpm_changed_spec_refused(
@@ -2009,3 +2011,103 @@ def test_temporary_state_keeps_failed_release_repository(
     assert forky.read_text() == 'previous run\n'
     readme = (tmp_path / 'project' / 'repositories' / 'debian' / 'index.html').read_text()
     assert 'codename forky' in readme and 'codename trixie' in readme
+
+
+def rebuilt_spec(
+    builders: ModuleType,
+    context: BuildContext,
+    runner: FakeRunner,
+    frozen: date,
+    tmp_path: Path,
+    text: str,
+) -> str:
+    """The spec a rebuild of hello-app hands its build, its packaging being text."""
+    project = tmp_path / 'project'
+    (project / 'hello-app').mkdir(parents=True)
+    spec = project / 'hello-app' / 'hello-app.spec'
+    spec.write_text(text)
+    seen: dict[str, str] = {}
+    runner.respond = rpm_build('1.fc44.1', seen=seen)
+    info = SpecInfo(frozenset(), frozenset({'hello-app'}), (), '1.0', '1.fc44')
+    under = builders.RpmPackageBuilder(
+        context, release('fedora', '44', frozen), project, fixture_signer(), 'hello-app', spec=info
+    )
+    under.stored = stored_rpm(tmp_path, spec)
+    under.build(frozenset(), {})
+    return seen['spec']
+
+
+@pytest.mark.parametrize(
+    'release_lines',
+    [
+        'Release: %autorelease\n',
+        '%if 0%{?rhel}\nRelease: 3%{?dist}\n%else\nRelease: 1%{?dist}\n%endif\n',
+    ],
+)
+def test_rpm_rebuild_writes_the_expanded_release(
+    builders: ModuleType,
+    context: BuildContext,
+    runner: FakeRunner,
+    frozen: date,
+    tmp_path: Path,
+    release_lines: str,
+) -> None:
+    """Every Release line becomes the release the base was read from, `.<n>` after it."""
+    text = f'Name: hello-app\nVersion: 1.0\n{release_lines}Summary: s\n'
+    rebuilt = rebuilt_spec(builders, context, runner, frozen, tmp_path, text)
+    releases = re.findall(r'(?m)^Release:\s*(.*)$', rebuilt)
+    assert releases and set(releases) == {'1.fc44.1'}
+
+
+def test_rpm_rebuild_dates_its_entry_as_the_top_one(
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date, tmp_path: Path
+) -> None:
+    """A top entry in the long date form: its date, not an older entry's in the short form."""
+    text = (
+        'Name: hello-app\nVersion: 1.0\nRelease: 1%{?dist}\n%changelog\n'
+        '* Fri Nov 06 12:00:00 UTC 2026 a <a@b.c> - 1.0-1\n- New.\n\n'
+        '* Thu Nov 05 2026 a <a@b.c> - 0.9-1\n- Old.\n'
+    )
+    rebuilt = rebuilt_spec(builders, context, runner, frozen, tmp_path, text)
+    entry = f'%changelog\n* Fri Nov 06 12:00:00 UTC 2026 {fixture_signer().uid} - 1.0-1.fc44.1\n'
+    assert entry in rebuilt
+
+
+def test_lower_version_refused(
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date, tmp_path: Path
+) -> None:
+    """A base version below the stored one: users have the higher one already."""
+    stored = stored_app(tmp_path, base='1.1~bpo13', key='other')
+    under = app_builder(builders, context, release('debian', 'trixie', frozen), stored)
+    with pytest.raises(builders.LowerVersion) as raised:
+        under.build(frozenset(), {})
+    assert str(raised.value) == 'hello-app: version 1.0~bpo13 is below the stored 1.1~bpo13'
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize('option', ['--state-dir', '--download-dir'])
+def test_kept_directory_inside_a_repository_refused(
+    run_main: Callable[..., int], capsys: pytest.CaptureFixture[str], option: str
+) -> None:
+    """The repositories are removed before they are written again: never what a run keeps."""
+    runner = FakeRunner(environment())
+    assert (
+        run_main(runner, BOTH, APPS, '--state-dir', 'elsewhere', option, 'repositories/debian/kept')
+        == 2
+    )
+    assert (
+        'repositories/debian/kept must not be inside a repository directory'
+        in capsys.readouterr().err
+    )
+    assert runner.calls == []
+
+
+def test_rpm_lower_release_refused(
+    builders: ModuleType, context: BuildContext, runner: FakeRunner, frozen: date, tmp_path: Path
+) -> None:
+    """rpm's order: 1.0-1.fc44 is below a stored 1.0-2^1.fc44, which Debian's rejects."""
+    under = builder(builders, context, release('fedora', '44', frozen))
+    stored = stored_rpm(tmp_path, key='other')
+    under.stored = dataclasses.replace(stored, base_version='1.0-2^1.fc44')
+    with pytest.raises(builders.LowerVersion, match='below the stored 1.0-2\\^1.fc44'):
+        under.build(frozenset(), {})

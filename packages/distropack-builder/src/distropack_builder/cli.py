@@ -248,6 +248,13 @@ def make_app(
             _selection(build_conf, [], on)[1] if patterns and publish and state_dir else None
         )
         readme.check(readme.project_dir(loaded.root))
+        # the repositories are removed before they are written again: never what a run keeps
+        for kept in (state_dir, download_dir):
+            if kept is not None and any(
+                kept.resolve().is_relative_to((loaded.root / d.repository.path).resolve())
+                for d in loaded.distribs.values()
+            ):
+                _fail(2, ValueError(f'{kept} must not be inside a repository directory'))
         # The repositories this run publishes, for the step running it under GitHub Actions.
         output_dirs = {
             dist_id: str(loaded.root / distrib.repository.path)
@@ -263,7 +270,8 @@ def make_app(
             _fail(1, error)
         # a release whose builder image is missing fails once, here, and builds nothing
         has_local = engine.has_image if engine is not None else (lambda image: False)
-        unpublished = _unpublished(loaded, selected, on, has_local)
+        # publishing alone needs no builder image
+        unpublished = _unpublished(loaded, selected, on, has_local) if build_packages else {}
         selected = {
             dist_id: frozenset(r for r in releases if r not in unpublished)
             for dist_id, releases in selected.items()
