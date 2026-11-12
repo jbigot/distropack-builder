@@ -98,6 +98,8 @@ def recorded_http(recordings: dict[str, str], unpublished: set[str]) -> Iterator
         router.head(url__regex=r'^https://ghcr\.io/v2/.*/manifests/', name='registry').mock(
             side_effect=manifest
         )
+        # the fixture's repositories are never published: the version guard finds none
+        router.get(url__startswith='http://repo.example.invalid/', name='unpublished').respond(404)
         yield router
     catalog._fetch.cache_clear()
 

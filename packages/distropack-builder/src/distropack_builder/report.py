@@ -227,6 +227,10 @@ class Reporter:
         """The release has no state yet (of a snapshot channel): nothing of it is published."""
         self._warn(f'no {channel} state for {release}' if channel else f'no state for {release}')
 
+    def version_guard_off(self, repository: str) -> None:
+        """The repository is published without comparing its versions with its URL's."""
+        self._warn(f'version guard off: {repository} is not compared with what its URL publishes')
+
     def _warn(self, message: str) -> None:
         """Tell message, a warning, and list it in the summary."""
         with self._lock:

@@ -32,6 +32,8 @@ else:
             return_value=httpx.Response(200, content=(_RECORDINGS / _name).read_bytes())
         )
     _router.route(host='127.0.0.1').pass_through()
+    # the fixture's repositories are never published: the version guard finds none
+    _router.get(url__startswith='http://repo.example.invalid/').respond(404)
     # the builder images the tests run are baked into the engine beforehand: published
     _router.head(url__regex=r'^https://ghcr\.io/v2/.*/manifests/').respond(200)
     _router.start()

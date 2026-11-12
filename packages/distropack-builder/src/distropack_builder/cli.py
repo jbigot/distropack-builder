@@ -278,6 +278,9 @@ def make_app(
         build_packages: bool = True,
         channel: str | None = None,
         snapshot: list[str] | None = None,
+        version_guard: bool = True,
+        output_root: Path | None = None,
+        urls: Mapping[str, str] | None = None,
     ) -> tuple[bool, dict[str, str]]:
         """Build and publish; whether anything failed, and the repositories by distribution id."""
         if not build_packages and not publish:
@@ -378,6 +381,9 @@ def make_app(
                 all_releases=all_releases,
                 channel=channel or loaded.release_channel,
                 snapshots=given,
+                version_guard=version_guard,
+                output_root=output_root,
+                urls=urls,
             )
         return failed or bool(unpublished), output_dirs
 
@@ -483,6 +489,14 @@ def make_app(
                 show_default=False,
             ),
         ] = None,
+        no_version_guard: Annotated[
+            bool,
+            typer.Option(
+                '--no-version-guard',
+                help='Publish without comparing the versions with those the repositories'
+                ' URLs publish: for a first publication to a new URL, or a deliberate rollback.',
+            ),
+        ] = False,
     ) -> None:
         """Builds the packages of build.conf, and publishes their signed repositories."""
         # SIGTERM (kill, timeout, a CI job cancelled) takes the path of Ctrl-C: the builds are
@@ -506,6 +520,7 @@ def make_app(
                     not publish_only,
                     channel,
                     snapshot,
+                    not no_version_guard,
                 )
         except typer.Exit:
             _write_outputs_once_stopped(stopped)
@@ -519,6 +534,81 @@ def make_app(
         with _errors():
             write_outputs(
                 os.environ, {'failed': str(failed).lower(), 'output-dirs': _compact(output_dirs)}
+            )
+        if failed:
+            raise typer.Exit(1)
+
+    @app.command('check-versions')
+    def check_versions(
+        state_dir: Annotated[
+            Path,
+            typer.Option(
+                '--state-dir', metavar='DIR', file_okay=False, help='The states to check.'
+            ),
+        ],
+        build_conf: BuildConf = Path('build.conf'),
+        distributions: Patterns = None,
+        url: Annotated[
+            list[str] | None,
+            typer.Option(
+                '--url',
+                metavar='DIST=URL',
+                help="Compare a distribution with this URL instead of its repository's; repeat it.",
+                show_default=False,
+            ),
+        ] = None,
+        passphrase_file: Annotated[
+            Path | None,
+            typer.Option(
+                '--passphrase-file',
+                metavar='FILE',
+                exists=True,
+                dir_okay=False,
+                help='The file holding the passphrase of the signing key (default:'
+                f' ${PASSPHRASE_ENV}).',
+            ),
+        ] = None,
+        docker_host: Annotated[
+            str | None,
+            typer.Option(
+                '--docker-host',
+                metavar='URL',
+                envvar='DISTROPACK_DOCKER_HOST',
+                help='The endpoint of the container engine.',
+            ),
+        ] = None,
+    ) -> None:
+        """Compares the versions of the states with those the repositories' URLs publish.
+
+        Every channel is checked, as every publication from the states publishes them all. Nothing
+        is published: the repositories are written into a temporary directory, as a
+        publication would write them, and their indexes compared. Every package must be above its
+        published version, or be it with the same bytes.
+        """
+        urls: dict[str, str] = {}
+        for value in url or []:
+            dist_id, separator, target = value.partition('=')
+            if not separator or not dist_id or not target:
+                _fail(2, ValueError(f'--url {value}: expected DIST=URL'))
+            urls[dist_id] = target
+        with TemporaryDirectory(prefix='distropack-check.') as output, _errors():
+            failed, _ = build(
+                build_conf,
+                distributions or [],
+                (os.cpu_count() or 1) + 1,
+                False,
+                read_passphrase(passphrase_file, os.environ),
+                docker_host,
+                None,
+                False,
+                state_dir,
+                True,
+                False,
+                None,
+                None,
+                True,
+                Path(output),
+                urls,
             )
         if failed:
             raise typer.Exit(1)

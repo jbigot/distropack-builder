@@ -2532,3 +2532,187 @@ def test_rpm_channel_holds_fallback_packages_it_does_not_build(
     assert stable_then(run_main, tmp_path, FakeRunner(environment()), prepare=prepare) == 0
     channel = tmp_path / 'project' / 'repositories' / 'weekly.fedora' / '44' / 'noarch'
     assert 'hello-lib-1.0-1.fc44.noarch.rpm' in [p.name for p in channel.iterdir()]
+
+
+# The version guard (Phase 14).
+PUBLISHED = 'https://published.test/fedora'
+
+
+def serve_published(router: respx.MockRouter, version: str, release: str, sha: str) -> None:
+    """A published Fedora 44 repository holding hello-lib at version-release, its sha256 sha."""
+    primary = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<metadata xmlns="http://linux.duke.edu/metadata/common"'
+        ' xmlns:rpm="http://linux.duke.edu/metadata/rpm" packages="1">\n'
+        '<package type="rpm"><name>hello-lib</name><arch>noarch</arch>'
+        f'<version epoch="0" ver="{version}" rel="{release}"/>'
+        f'<checksum type="sha256" pkgid="YES">{sha}</checksum>'
+        '<summary>s</summary><description>d</description><packager/><url/>'
+        '<time file="1" build="1"/><size package="1" installed="1" archive="1"/>'
+        f'<location href="noarch/hello-lib-{version}-{release}.noarch.rpm"/>'
+        '<format><rpm:license>MIT</rpm:license></format></package>\n</metadata>\n'
+    )
+    repomd = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<repomd xmlns="http://linux.duke.edu/metadata/repo">'
+        '<data type="primary"><location href="repodata/primary.xml"/></data></repomd>\n'
+    )
+    router.get(f'{PUBLISHED}/44/repodata/repomd.xml').respond(200, text=repomd)
+    router.get(f'{PUBLISHED}/44/repodata/primary.xml').respond(200, text=primary)
+
+
+def published_at(url: str) -> Callable[[Path], None]:
+    def prepare(project: Path) -> None:
+        conf_path = project / 'build.conf'
+        conf = yaml.safe_load(conf_path.read_text())
+        conf['distribs']['fedora']['repository']['url'] = url
+        conf_path.write_text(yaml.safe_dump(conf))
+
+    return prepare
+
+
+FEDORA = {'fedora': ['44']}
+
+
+def test_guard_refuses_equal_version_with_other_bytes(
+    run_main: Callable[..., int],
+    recorded_http: respx.MockRouter,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    serve_published(recorded_http, '1.0', '1.fc44', 'b' * 64)
+    states = str(tmp_path / 'states')
+    status = run_main(
+        FakeRunner(environment()),
+        FEDORA,
+        ['hello-lib'],
+        '--state-dir',
+        states,
+        prepare=published_at(PUBLISHED),
+    )
+    out = capsys.readouterr().out
+    assert status == 1
+    assert 'hello-lib 1.0-1.fc44 on Fedora 44/stable: 1.0-1.fc44 is already published' in out
+    assert not (tmp_path / 'project' / 'repositories' / 'fedora').exists()
+
+
+def test_guard_refuses_a_lower_version_in_publish_only(
+    run_main: Callable[..., int],
+    recorded_http: respx.MockRouter,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    states = str(tmp_path / 'states')
+    assert run_main(FakeRunner(environment()), FEDORA, ['hello-lib'], '--state-dir', states) == 0
+    fresh(tmp_path)
+    serve_published(recorded_http, '2.0', '1.fc44', 'b' * 64)
+    capsys.readouterr()
+    status = run_main(
+        FakeRunner(environment()),
+        FEDORA,
+        ['hello-lib'],
+        '--state-dir',
+        states,
+        '--publish-only',
+        prepare=published_at(PUBLISHED),
+    )
+    assert status == 1
+    assert '2.0-1.fc44 is already published' in capsys.readouterr().out
+    assert not (tmp_path / 'project' / 'repositories' / 'fedora').exists()
+
+
+def test_no_version_guard_warns_and_publishes(
+    run_main: Callable[..., int],
+    recorded_http: respx.MockRouter,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    serve_published(recorded_http, '2.0', '1.fc44', 'b' * 64)
+    status = run_main(
+        FakeRunner(environment()),
+        FEDORA,
+        ['hello-lib'],
+        '--no-version-guard',
+        prepare=published_at(PUBLISHED),
+    )
+    out = capsys.readouterr().out
+    assert status == 0, out
+    assert 'version guard off' in out
+    assert (tmp_path / 'project' / 'repositories' / 'fedora' / '44').is_dir()
+
+
+def test_first_publication_passes(
+    run_main: Callable[..., int], recorded_http: respx.MockRouter, tmp_path: Path
+) -> None:
+    recorded_http.get(url__startswith=PUBLISHED).respond(404)
+    status = run_main(
+        FakeRunner(environment()), FEDORA, ['hello-lib'], prepare=published_at(PUBLISHED)
+    )
+    assert status == 0
+    assert (tmp_path / 'project' / 'repositories' / 'fedora' / '44').is_dir()
+
+
+def test_unreadable_published_index_fails(
+    run_main: Callable[..., int], recorded_http: respx.MockRouter, tmp_path: Path
+) -> None:
+    recorded_http.get(url__startswith=PUBLISHED).respond(500)
+    status = run_main(
+        FakeRunner(environment()), FEDORA, ['hello-lib'], prepare=published_at(PUBLISHED)
+    )
+    assert status == 1
+    assert not (tmp_path / 'project' / 'repositories' / 'fedora').exists()
+
+
+def check_versions(cli: ModuleType, project: Path, *args: str) -> tuple[int, str]:
+    app = cli.make_app(runner=FakeRunner(environment()), connect=lambda host: cast(Any, None))
+    result = CliRunner().invoke(
+        app,
+        ['check-versions', *args, 'build.conf'],
+        env={'DISTROPACK_GPG_PASSPHRASE': FIXTURE_PASSPHRASE},
+        catch_exceptions=False,
+    )
+    return result.exit_code, result.stdout + result.stderr
+
+
+def test_check_versions_writes_nothing(
+    run_main: Callable[..., int],
+    cli: ModuleType,
+    recorded_http: respx.MockRouter,
+    tmp_path: Path,
+) -> None:
+    states = str(tmp_path / 'states')
+    assert (
+        run_main(
+            FakeRunner(environment()), FEDORA, ['hello-lib'], '--state-dir', states, '--no-publish'
+        )
+        == 0
+    )
+    project = tmp_path / 'project'
+    serve_published(recorded_http, '2.0', '1.fc44', 'b' * 64)
+    status, out = check_versions(
+        cli, project, '--state-dir', states, '--url', f'fedora={PUBLISHED}'
+    )
+    assert status == 1
+    assert '2.0-1.fc44 is already published' in out
+    assert not (project / 'repositories').exists()
+
+
+def test_check_versions_passes(
+    run_main: Callable[..., int],
+    cli: ModuleType,
+    recorded_http: respx.MockRouter,
+    tmp_path: Path,
+) -> None:
+    states = str(tmp_path / 'states')
+    assert (
+        run_main(
+            FakeRunner(environment()), FEDORA, ['hello-lib'], '--state-dir', states, '--no-publish'
+        )
+        == 0
+    )
+    serve_published(recorded_http, '0.9', '1.fc44', 'b' * 64)
+    status, out = check_versions(
+        cli, tmp_path / 'project', '--state-dir', states, '--url', f'fedora={PUBLISHED}'
+    )
+    assert status == 0, out
+    assert not (tmp_path / 'project' / 'repositories').exists()

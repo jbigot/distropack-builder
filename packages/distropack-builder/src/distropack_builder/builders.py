@@ -28,12 +28,13 @@ from debian.deb822 import Deb822, Dsc, _PkgRelationMixin
 from debian.debian_support import Version
 
 from distro_releases import Release
+from distropack_builder import published as indexes
 from distropack_builder import readme, repodata, rpmquery, signing, sources, targets
 from distropack_builder.bake import DEB_TOOLS, REGISTRY, tool_image
 from distropack_builder.config import BuildConfig, Distrib, ExtraRepository, Repository, expand
 from distropack_builder.context import BuildContext
 from distropack_builder.docker import ContainerFailed, Mount, RunResult
-from distropack_builder.downloads import DownloadFailed, fetch_all, source_name
+from distropack_builder.downloads import DownloadFailed, fetch_all, new_client, source_name
 from distropack_builder.graph import closure, dependencies
 from distropack_builder.inputs import (
     CHANGELOG_LINE,
@@ -1288,6 +1289,9 @@ def run_builds(
     all_releases: Mapping[str, Set[Release]] | None = None,
     channel: str,
     snapshots: Mapping[str, str] | None = None,
+    version_guard: bool = True,
+    output_root: Path | None = None,
+    urls: Mapping[str, str] | None = None,
 ) -> bool:
     """Download, build and publish; whether any build or publication did not succeed.
 
@@ -1451,9 +1455,10 @@ def run_builds(
             for published in channels
             if published == config.release_channel or config.channel_packages(published)
         ]
+    out = output_root or root
     if from_states:
         for _, _, repository in groups:
-            rmtree(root / repository.path, ignore_errors=True)
+            rmtree(out / repository.path, ignore_errors=True)
     for dist_id, group, repository in groups:
         deb = targets.is_deb(targets.target(dist_id))
         dist_builders = [b for b in builders if b.dist_release.distribution.id == dist_id]
@@ -1476,7 +1481,7 @@ def run_builds(
         if deb:
             repo_builder = DebRepoBuilder(
                 context,
-                root / repository.path,
+                out / repository.path,
                 gpgs[dist_id],
                 repository.url,
                 repository.name,
@@ -1488,7 +1493,7 @@ def run_builds(
         else:
             repo_builder = RpmRepoBuilder(
                 context,
-                root / repository.path,
+                out / repository.path,
                 gpgs[dist_id],
                 repository.url,
                 repository.name,
@@ -1505,7 +1510,63 @@ def run_builds(
         for what, failure in failures.items():
             reporter.publication_failed(what, failure)
             failed = True
+        url = repository.url
+        if repository is config.distribs[dist_id].repository and urls and dist_id in urls:
+            url = urls[dist_id]
+        if url is None or failures:
+            continue
+        if not version_guard:
+            reporter.version_guard_off(str(out / repository.path))
+            continue
+        written = out / repository.path
+        try:
+            refused = _guard(config, dist_id, group, written, url, {o.release for o in outputs})
+        except indexes.PublishedError as error:
+            refused = [f'the versions published at {url} cannot be read: {error}']
+        if refused:
+            rmtree(written, ignore_errors=True)
+            reporter.publication_failed(str(written), VersionRefused(refused))
+            failed = True
     return failed
+
+
+class VersionRefused(Exception):
+    """Versions a repository's URL already publishes: what users have would not be replaced."""
+
+    def __init__(self, lines: Sequence[str]) -> None:
+        """The refusal of the versions lines name."""
+        super().__init__('the version guard refused it')
+        self.output = '\n'.join(lines)
+
+
+def _guard(
+    config: BuildConfig,
+    dist_id: str,
+    channels: Sequence[str],
+    written: Path,
+    url: str,
+    releases: Set[Release],
+) -> list[str]:
+    """What the repository written publishes that url publishes higher, or equal with other bytes.
+
+    Raises:
+        PublishedError: what url publishes cannot be read.
+    """
+    family: Literal['deb', 'rpm'] = 'deb' if targets.is_deb(targets.target(dist_id)) else 'rpm'
+    refused = []
+    with new_client() as client:
+        for release in sorted(releases, key=str):
+            for name in channels:
+                component = config.component(dist_id, name)
+                new = indexes.versions(written, family, release, component, client)
+                if not new:
+                    continue
+                old = indexes.versions(url, family, release, component, client)
+                refused += [
+                    f'{o.name} {o.version} on {release}/{name}: {o.published} is already published'
+                    for o in indexes.offences(new, old, family)
+                ]
+    return refused
 
 
 def _outputs(

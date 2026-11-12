@@ -17,6 +17,7 @@ One guide per task.
 - [Record pending changes, and cut a release](cut-a-release.md)
 - [Use the GitHub Action](github-action.md)
 - [Keep the states in a registry](state-registry.md)
+- [Guard what gets published](publication-guards.md)
 - [Build the images locally](build-images.md)
 - [Use distro-releases from Python](use-distro-releases.md)
 - [Run with rootless Docker or Podman](rootless.md)
@@ -35,6 +36,7 @@ snapshot-channels
 cut-a-release
 github-action
 state-registry
+publication-guards
 build-images
 use-distro-releases
 rootless
