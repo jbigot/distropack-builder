@@ -34,7 +34,7 @@ jobs:
     - name: the matrix lists the four releases
       env: { MATRIX: "${{ steps.plan.outputs.matrix }}" }
       run: |
-        expected='[{"distrib":"debian","release":"trixie"},{"distrib":"el","release":"10"},{"distrib":"fedora","release":"44"},{"distrib":"ubuntu","release":"noble"}]'
+        expected='[{"distrib":"debian","release":"trixie","uid":"debian-13-trixie"},{"distrib":"el","release":"10","uid":"el-10"},{"distrib":"fedora","release":"44","uid":"fedora-44"},{"distrib":"ubuntu","release":"noble","uid":"ubuntu-24.04-noble"}]'
         [ "$(jq -cS . <<< "$MATRIX")" = "$(jq -cS . <<< "$expected")" ]
   build:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository

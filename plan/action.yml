@@ -22,7 +22,8 @@ inputs:
 outputs:
   matrix:
     description: >-
-      The JSON list of `{distrib, release}` objects, one per release: give it to
+      The JSON list of `{distrib, release, uid}` objects, one per release (`uid` names its
+      state, `debian-13-trixie`): give it to
       `strategy.matrix.include` with `fromJSON`.
     value: ${{ steps.plan.outputs.releases }}
 runs:

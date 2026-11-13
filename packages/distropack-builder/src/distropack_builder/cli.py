@@ -281,6 +281,8 @@ def make_app(
     app.add_typer(images, name='images')
     app.add_typer(config_app, name='config')
     app.add_typer(releases, name='releases')
+    channels_app = typer.Typer(help='Works with the channels of build.conf.', no_args_is_help=True)
+    app.add_typer(channels_app, name='channels')
     state_app = typer.Typer(
         help='Keeps the states of releases in an OCI registry.', no_args_is_help=True
     )
@@ -1232,7 +1234,8 @@ def make_app(
         build_conf: BuildConf = Path('build.conf'),
         distributions: Patterns = None,
         as_json: Annotated[
-            bool, typer.Option('--json', help='Print a JSON list of {distrib, release} objects.')
+            bool,
+            typer.Option('--json', help='Print a JSON list of {distrib, release, uid} objects.'),
         ] = False,
     ) -> None:
         """Prints the releases run would build for.
@@ -1242,18 +1245,57 @@ def make_app(
         with _errors():
             loaded, selected = _selection(build_conf, distributions or [], date.today())
         found = [
-            (dist_id, _release_name(release))
+            (dist_id, _release_name(release), release.uid)
             for dist_id in loaded.distribs
             for release in sorted(selected[dist_id])
         ]
-        listed = [{'distrib': d, 'release': r} for d, r in found]
+        listed = [{'distrib': d, 'release': r, 'uid': u} for d, r, u in found]
         with _errors():
             write_outputs(os.environ, {'releases': _compact(listed)})
         if as_json:
             typer.echo(json.dumps(listed, indent=2))
         else:
-            for dist_id, release in found:
+            for dist_id, release, _uid in found:
                 typer.echo(f'{dist_id}:{release}')
+
+    @channels_app.command('list')
+    def channels_list(
+        build_conf: BuildConf = Path('build.conf'),
+        as_json: Annotated[
+            bool,
+            typer.Option(
+                '--json', help='Print a JSON list of {name, kind, fallback, packages} objects.'
+            ),
+        ] = False,
+    ) -> None:
+        """Prints the channels of build.conf, the release channel first.
+
+        One `name kind [fallback]` line per channel; with --json, the packages built on each too.
+        """
+        with _errors():
+            loaded = config.load(build_conf)
+        release = loaded.release_channel
+        listed = []
+        for name in [release, *sorted(loaded.snapshot_channels())]:
+            snapshot = name != release
+            listed.append(
+                {
+                    'name': name,
+                    'kind': loaded.channels[name].kind,
+                    'fallback': loaded.fallback(name) if snapshot else None,
+                    'packages': sorted(
+                        package
+                        for package, declared in loaded.packages.items()
+                        if not snapshot or name in declared.channels
+                    ),
+                }
+            )
+        if as_json:
+            typer.echo(json.dumps(listed, indent=2))
+        else:
+            for channel in listed:
+                fallback = f' {channel["fallback"]}' if channel['fallback'] else ''
+                typer.echo(f'{channel["name"]} {channel["kind"]}{fallback}')
 
     return app
 

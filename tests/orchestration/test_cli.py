@@ -186,11 +186,55 @@ def test_releases_list(
     both = invoke('releases', 'list', 'build.conf', '-D', 'debian:trixie', '-D', 'fedora', '--json')
     assert both.exit_code == 0, both.output
     assert json.loads(both.stdout) == [
-        {'distrib': 'debian', 'release': 'trixie'},
-        {'distrib': 'fedora', 'release': '43'},
-        {'distrib': 'fedora', 'release': '44'},
-        {'distrib': 'fedora', 'release': '45'},
+        {'distrib': 'debian', 'release': 'trixie', 'uid': 'debian-13-trixie'},
+        {'distrib': 'fedora', 'release': '43', 'uid': 'fedora-43'},
+        {'distrib': 'fedora', 'release': '44', 'uid': 'fedora-44'},
+        {'distrib': 'fedora', 'release': '45', 'uid': 'fedora-45'},
     ]
+
+
+CHANNELS_CONF = (
+    'distribs: {debian: {versions: [trixie]}}\n'
+    'channels: {weekly: {kind: snapshot, epoch_bump: 1}, stable: {kind: release},'
+    ' daily: {kind: snapshot, fallback: weekly}}\n'
+    'packages:\n'
+    '  b: {}\n'
+    '  a: {channels: {weekly: {git: "https://example.invalid/a.git", ref: main, verify: none}}}\n'
+)
+
+
+def write_channels_project(directory: Path) -> None:
+    write_conf(directory, CHANNELS_CONF)
+    for name in ('a', 'b'):
+        (directory / name / 'debian').mkdir(parents=True)
+
+
+def test_channels_list_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_channels_project(tmp_path)
+    result = invoke('channels', 'list', '--json')
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == [
+        {'name': 'stable', 'kind': 'release', 'fallback': None, 'packages': ['a', 'b']},
+        {'name': 'daily', 'kind': 'snapshot', 'fallback': 'weekly', 'packages': []},
+        {'name': 'weekly', 'kind': 'snapshot', 'fallback': 'stable', 'packages': ['a']},
+    ]
+
+
+def test_channels_list_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_channels_project(tmp_path)
+    result = invoke('channels', 'list', 'build.conf')
+    assert result.exit_code == 0, result.output
+    assert result.stdout == 'stable release\ndaily snapshot weekly\nweekly snapshot stable\n'
+
+
+def test_channels_list_bad_conf(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    write_conf(tmp_path, 'distribs: {}\n')
+    result = invoke('channels', 'list')
+    assert result.exit_code == 2
+    assert 'build.conf' in result.output
 
 
 @pytest.mark.parametrize(
