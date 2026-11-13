@@ -42,6 +42,24 @@ the package's page of GitHub, or with `oras manifest fetch`) and tag it:
 distropack-build state tag --registry ghcr.io/example/pkgs/state sha256:<digest> stable.debian-13-trixie
 ```
 
+## Keep a whole tree
+
+A site can also carry trees no build makes, copied as they are (`distropack-build site --extra`):
+repositories frozen when they moved, say. The registry keeps them too, one artifact per tree, under
+a tag of your choice:
+
+```sh
+distropack-build state push-tree --registry ghcr.io/example/pkgs/state legacy-main frozen/
+distropack-build state pull-tree --registry ghcr.io/example/pkgs/state legacy-main frozen/
+distropack-build site --state-dir states --output site \
+    --extra main.debian=frozen/main.debian --extra main.ubuntu=frozen/main.ubuntu build.conf
+```
+
+`pull-tree` replaces the directory whole, and fails when the registry has no such tag: unlike a
+state, a tree is pulled because something needs it. Neither command accepts the other kind of
+artifact, so a tree can never be taken for a state. The tree loses its group and other write bits,
+as a served site does not need them.
+
 ## Prune the untagged versions
 
 ```sh

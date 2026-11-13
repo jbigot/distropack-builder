@@ -219,6 +219,31 @@ Token = Annotated[
     ),
 ]
 Insecure = Annotated[bool, typer.Option('--insecure', help='Plain HTTP, for a local registry.')]
+TreeTag = Annotated[
+    str, typer.Argument(metavar='TAG', help='The tag of the tree (legacy-pdi-main).')
+]
+Annotation = Annotated[
+    list[str] | None,
+    typer.Option(
+        '--annotation',
+        metavar='KEY=VALUE',
+        help='An annotation of the artifact, beside those of GitHub Actions; repeat it.',
+        show_default=False,
+    ),
+]
+
+
+def _annotations(values: list[str] | None) -> dict[str, str]:
+    """The annotations of a push: GitHub Actions', then each KEY=VALUE of values."""
+    notes = registry.annotations(os.environ)
+    for value in values or []:
+        key, separator, text = value.partition('=')
+        if not separator or not key:
+            _fail(2, ValueError(f'--annotation {value}: expected KEY=VALUE'))
+        notes[key] = text
+    return notes
+
+
 BuildConf = Annotated[
     Path, typer.Argument(metavar='BUILD_CONF', help='The build configuration.', show_default=True)
 ]
@@ -1142,28 +1167,58 @@ def make_app(
             typer.Option('--release', metavar='UID', help='The release uid (debian-13-trixie).'),
         ],
         state_dir: StateDir,
-        annotation: Annotated[
-            list[str] | None,
-            typer.Option(
-                '--annotation',
-                metavar='KEY=VALUE',
-                help='An annotation of the artifact, beside those of GitHub Actions; repeat it.',
-                show_default=False,
-            ),
-        ] = None,
+        annotation: Annotation = None,
         token: Token = None,
         insecure: Insecure = False,
     ) -> None:
         """Pushes a release's state under its tag, which moves once the push is complete."""
-        notes = registry.annotations(os.environ)
-        for value in annotation or []:
-            key, separator, text = value.partition('=')
-            if not separator or not key:
-                _fail(2, ValueError(f'--annotation {value}: expected KEY=VALUE'))
-            notes[key] = text
+        notes = _annotations(annotation)
         try:
             digest = registry.Registry(registry_ref, token, insecure).push(
                 channel, release, state_dir.resolve(), notes
+            )
+        except registry.RegistryError as error:
+            _fail(1, error)
+        typer.echo(digest)
+
+    @state_app.command('pull-tree')
+    def state_pull_tree(
+        registry_ref: RegistryRef,
+        tag: TreeTag,
+        directory: Annotated[
+            Path, typer.Argument(metavar='DIR', help='Where to write the tree; replaced whole.')
+        ],
+        token: Token = None,
+        insecure: Insecure = False,
+    ) -> None:
+        """Makes DIR the tree the registry keeps under TAG, or leaves it as it was.
+
+        A tag the registry does not have is an error: a tree is pulled because something needs it.
+        """
+        try:
+            registry.Registry(registry_ref, token, insecure).pull_tree(tag, directory.resolve())
+        except registry.RegistryError as error:
+            _fail(1, error)
+
+    @state_app.command('push-tree')
+    def state_push_tree(
+        registry_ref: RegistryRef,
+        tag: TreeTag,
+        directory: Annotated[
+            Path, typer.Argument(metavar='DIR', help="The tree to keep (a site's directory).")
+        ],
+        annotation: Annotation = None,
+        token: Token = None,
+        insecure: Insecure = False,
+    ) -> None:
+        """Pushes a whole tree under TAG, which moves once the push is complete.
+
+        For trees a site copies as they are (its --extra), such as frozen repositories.
+        """
+        notes = _annotations(annotation)
+        try:
+            digest = registry.Registry(registry_ref, token, insecure).push_tree(
+                tag, directory.resolve(), notes
             )
         except registry.RegistryError as error:
             _fail(1, error)

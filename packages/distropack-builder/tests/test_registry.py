@@ -333,3 +333,87 @@ def test_prune_refuses_a_version_without_its_tags(respx_mock: respx.MockRouter) 
     with httpx.Client() as client, pytest.raises(registry.RegistryError):
         registry.prune('ghcr.io/pdidev/state', 'tok', 0, client)
     assert not deleted.called
+
+
+def write_tree(root: Path) -> None:
+    (root / 'pdi-main.debian' / 'dists').mkdir(parents=True)
+    (root / 'pdi-main.debian' / 'dists' / 'Release').write_text('release')
+    (root / 'pdi-main.debian' / 'dists' / 'Release').chmod(0o644)
+    script = root / 'pdi-main.debian' / 'run.sh'
+    script.write_text('#!/bin/sh\n')
+    script.chmod(0o755)
+    (root / 'pdi-main.ubuntu').mkdir()
+    (root / 'pdi-main.ubuntu' / 'link').symlink_to('../pdi-main.debian/run.sh')
+
+
+def tree_of(root: Path) -> dict[str, tuple[int, bytes | str]]:
+    found: dict[str, tuple[int, bytes | str]] = {}
+    for path in sorted(root.rglob('*')):
+        name = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            found[name] = (0, str(path.readlink()))
+        elif path.is_file():
+            found[name] = (path.stat().st_mode & 0o777, path.read_bytes())
+        else:
+            found[name] = (0, b'')
+    return found
+
+
+@pytest.mark.docker
+def test_tree_round_trip(local_registry: str, tmp_path: Path) -> None:
+    tree = tmp_path / 'tree'
+    write_tree(tree)
+    reg = registry.Registry(f'{local_registry}/pkgs/state', insecure=True)
+    assert reg.push_tree('legacy', tree, {'a': 'b'}).startswith('sha256:')
+    other = tmp_path / 'other'
+    reg.pull_tree('legacy', other)
+    assert tree_of(other) == tree_of(tree)
+
+
+@pytest.mark.docker
+def test_pull_tree_missing_tag_fails(local_registry: str, tmp_path: Path) -> None:
+    reg = registry.Registry(f'{local_registry}/pkgs/state', insecure=True)
+    with pytest.raises(registry.RegistryError, match='legacy'):
+        reg.pull_tree('legacy', tmp_path / 'other')
+    assert not (tmp_path / 'other').exists()
+
+
+@pytest.mark.docker
+def test_pull_tree_refuses_state(local_registry: str, tmp_path: Path) -> None:
+    states = tmp_path / 'states'
+    write_state(states, '1.0')
+    reg = registry.Registry(f'{local_registry}/pkgs/state', insecure=True)
+    reg.push('stable', UID, states, {})
+    with pytest.raises(registry.RegistryError, match='not a tree'):
+        reg.pull_tree(f'stable.{UID}', tmp_path / 'other')
+
+
+@pytest.mark.docker
+def test_pull_refuses_tree(local_registry: str, tmp_path: Path) -> None:
+    tree = tmp_path / 'tree'
+    write_tree(tree)
+    reg = registry.Registry(f'{local_registry}/pkgs/state', insecure=True)
+    reg.push_tree(f'stable.{UID}', tree, {})
+    with pytest.raises(registry.RegistryError, match='not a state'):
+        reg.pull('stable', [UID], tmp_path / 'states')
+
+
+@pytest.mark.docker
+def test_pull_tree_keeps_previous_on_bad_layer(
+    local_registry: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tree = tmp_path / 'tree'
+    write_tree(tree)
+    reg = registry.Registry(f'{local_registry}/pkgs/state', insecure=True)
+    reg.push_tree('legacy', tree, {})
+    dst = tmp_path / 'dst'
+    (dst / 'previous').mkdir(parents=True)
+
+    def corrupt(container: object, digest: str, path: str) -> str:
+        Path(path).write_bytes(b'not the layer')
+        return path
+
+    monkeypatch.setattr(reg.client, 'download_blob', corrupt)
+    with pytest.raises(registry.RegistryError, match='is not'):
+        reg.pull_tree('legacy', dst)
+    assert (dst / 'previous').is_dir()

@@ -311,3 +311,48 @@ def unpack(src: Path, states: Path, channel: str, uid: str) -> None:
         shutil.rmtree(new, ignore_errors=True)
         raise
     _replace(directory, new)
+
+
+def _reset_tree(info: tarfile.TarInfo) -> tarfile.TarInfo:
+    info = _reset(info)
+    if info.isdir():  # what a directory holds is its content, not when it last changed
+        info.mtime = 0
+    return info
+
+
+def pack_tree(src: Path, dst: Path) -> None:
+    """The tree at src as one tar at dst, by pack's rules: the same tree gives the same bytes.
+
+    The directories' times are left out; the files' are kept.
+
+    Raises:
+        StateArchiveError: src is not a directory: nothing is written.
+    """
+    if not src.is_dir():
+        raise StateArchiveError(f'{src} is not a directory')
+    with tarfile.open(dst, 'w', format=tarfile.PAX_FORMAT) as tar:
+        for path in sorted(src.rglob('*')):
+            tar.add(path, path.relative_to(src).as_posix(), recursive=False, filter=_reset_tree)
+
+
+def unpack_tree(src: Path, dst: Path) -> None:
+    """Make the tar at src the tree at dst, whole, or leave the previous one.
+
+    The `data` filter extracts it: no member outside dst, and no group or other write bit.
+
+    Raises:
+        StateArchiveError: src is not a tar, or has a member outside the tree.
+    """
+    new = dst.with_name(dst.name + '.new')
+    shutil.rmtree(new, ignore_errors=True)
+    new.mkdir(parents=True)
+    try:
+        try:
+            with tarfile.open(src) as tar:
+                tar.extractall(new, filter='data')
+        except (tarfile.TarError, OSError, EOFError) as error:
+            raise StateArchiveError(f'{src} is not a tree archive: {error}') from error
+    except BaseException:
+        shutil.rmtree(new, ignore_errors=True)
+        raise
+    _replace(dst, new)

@@ -29,6 +29,7 @@ import requests
 from distropack_builder import state
 
 ARTIFACT_TYPE = 'application/vnd.distropack.state.v1'
+TREE_TYPE = 'application/vnd.distropack.tree.v1'
 LAYER_TYPE = 'application/vnd.oci.image.layer.v1.tar'
 MANIFEST_TYPE = 'application/vnd.oci.image.manifest.v1+json'
 # The registries' error codes of a repository or tag that does not exist.
@@ -86,34 +87,71 @@ class Registry:
         manifest: dict[str, Any] = response.json()
         return manifest
 
+    def _download(self, tag: str, artifact_type: str, kind: str, layer: Path) -> bool:
+        """Write the one layer of the artifact tag to layer, checked; False when there is no tag.
+
+        Raises:
+            RegistryError: the registry could not answer, or the artifact is not a kind.
+        """
+        manifest = self._manifest(f':{tag}')
+        if manifest is None:
+            return False
+        layers = manifest.get('layers') or []
+        found_type = (manifest.get('config') or {}).get('mediaType')
+        if found_type != artifact_type or len(layers) != 1:
+            raise RegistryError(f'{self.reference}:{tag} is not a {kind}')
+        digest = layers[0]['digest']
+        container = self.client.get_container(f'{self.reference}:{tag}')
+        try:
+            self.client.download_blob(container, digest, str(layer))
+        except Exception as error:
+            raise RegistryError(f'{self.reference}:{tag}: {_reason(error)}') from error
+        with layer.open('rb') as data:
+            found = 'sha256:' + hashlib.file_digest(data, 'sha256').hexdigest()
+        if found != digest:
+            raise RegistryError(f'{self.reference}:{tag}: the layer is not {digest}')
+        return True
+
+    def _upload(
+        self, tag: str, layer: Path, artifact_type: str, annotations: Mapping[str, str]
+    ) -> str:
+        """Push layer as the one layer of an artifact_type artifact under tag; its digest.
+
+        Raises:
+            RegistryError: the push did not complete; the tag still names the previous artifact.
+        """
+        config = layer.with_name('config.json')
+        config.write_text('{}')
+        try:
+            response = self.client.push(
+                target=f'{self.reference}:{tag}',
+                files=[f'{layer}:{LAYER_TYPE}'],
+                manifest_config=f'{config}:{artifact_type}',
+                manifest_annotations=dict(annotations),
+                disable_path_validation=True,
+                quiet=True,
+            )
+        except Exception as error:
+            raise RegistryError(f'{self.reference}:{tag}: {_reason(error)}') from error
+        digest = response.headers.get('Docker-Content-Digest')
+        if not digest:
+            raise RegistryError(f'{self.reference}:{tag}: the registry named no digest')
+        return str(digest)
+
     def pull(self, channel: str, uids: Sequence[str], states: Path) -> list[str]:
         """Make each release's state the one the registry has; the tags it has not.
 
         Raises:
-            RegistryError: the registry could not answer, or the layer is not a state.
+            RegistryError: the registry could not answer, or the artifact is not a state.
         """
         missing: list[str] = []
         for uid in uids:
             tag = tag_of(channel, uid)
-            manifest = self._manifest(f':{tag}')
-            if manifest is None:
-                missing.append(tag)
-                continue
-            layers = manifest.get('layers') or []
-            if len(layers) != 1:
-                raise RegistryError(f'{self.reference}:{tag} is not a state: {len(layers)} layers')
-            digest = layers[0]['digest']
             with tempfile.TemporaryDirectory(prefix='distropack-state.') as scratch:
                 layer = Path(scratch) / 'layer.tar'
-                container = self.client.get_container(f'{self.reference}:{tag}')
-                try:
-                    self.client.download_blob(container, digest, str(layer))
-                except Exception as error:
-                    raise RegistryError(f'{self.reference}:{tag}: {_reason(error)}') from error
-                with layer.open('rb') as data:
-                    found = 'sha256:' + hashlib.file_digest(data, 'sha256').hexdigest()
-                if found != digest:
-                    raise RegistryError(f'{self.reference}:{tag}: the layer is not {digest}')
+                if not self._download(tag, ARTIFACT_TYPE, 'state', layer):
+                    missing.append(tag)
+                    continue
                 try:
                     state.unpack(layer, states, channel, uid)
                 except state.StateArchiveError as error:
@@ -133,23 +171,38 @@ class Registry:
                 state.pack(states, channel, uid, layer)
             except state.StateArchiveError as error:
                 raise RegistryError(f'no state for {tag}: {error}') from error
-            config = Path(scratch) / 'config.json'
-            config.write_text('{}')
+            return self._upload(tag, layer, ARTIFACT_TYPE, annotations)
+
+    def pull_tree(self, tag: str, dst: Path) -> None:
+        """Make the tree the artifact tag holds the tree at dst, or leave dst as it was.
+
+        Raises:
+            RegistryError: the registry has no such tag, could not answer, or the artifact is
+                not a tree.
+        """
+        with tempfile.TemporaryDirectory(prefix='distropack-tree.') as scratch:
+            layer = Path(scratch) / 'layer.tar'
+            if not self._download(tag, TREE_TYPE, 'tree', layer):
+                raise RegistryError(f'{self.reference}:{tag}: no such tag')
             try:
-                response = self.client.push(
-                    target=f'{self.reference}:{tag}',
-                    files=[f'{layer}:{LAYER_TYPE}'],
-                    manifest_config=f'{config}:{ARTIFACT_TYPE}',
-                    manifest_annotations=dict(annotations),
-                    disable_path_validation=True,
-                    quiet=True,
-                )
-            except Exception as error:
-                raise RegistryError(f'{self.reference}:{tag}: {_reason(error)}') from error
-        digest = response.headers.get('Docker-Content-Digest')
-        if not digest:
-            raise RegistryError(f'{self.reference}:{tag}: the registry named no digest')
-        return str(digest)
+                state.unpack_tree(layer, dst)
+            except state.StateArchiveError as error:
+                raise RegistryError(f'{self.reference}:{tag}: {error}') from error
+
+    def push_tree(self, tag: str, tree: Path, annotations: Mapping[str, str]) -> str:
+        """Push the tree at tree under tag, as one layer; the manifest's digest.
+
+        Raises:
+            RegistryError: tree is not a directory, or the push did not complete; the tag still
+                names the previous artifact.
+        """
+        with tempfile.TemporaryDirectory(prefix='distropack-tree.') as scratch:
+            layer = Path(scratch) / f'{tag}.tar'
+            try:
+                state.pack_tree(tree, layer)
+            except state.StateArchiveError as error:
+                raise RegistryError(f'no tree for {tag}: {error}') from error
+            return self._upload(tag, layer, TREE_TYPE, annotations)
 
     def tag(self, digest: str, tag: str) -> None:
         """Make tag name the artifact digest, an older version of a state: a rollback.

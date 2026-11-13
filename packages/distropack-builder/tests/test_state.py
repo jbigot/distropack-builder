@@ -273,3 +273,84 @@ def test_corrupt_layer_keeps_the_previous_state(scratch: Path, kind: str) -> Non
     assert stored_files(root) == before
     assert not (scratch / 'escaped').exists()
     assert not (root / 'stable' / f'{UID}.new').exists()
+
+
+def write_tree(root: Path) -> None:
+    (root / 'pdi-main.debian' / 'dists').mkdir(parents=True)
+    (root / 'pdi-main.debian' / 'dists' / 'Release').write_text('release')
+    (root / 'pdi-main.debian' / 'dists' / 'Release').chmod(0o644)
+    script = root / 'pdi-main.debian' / 'run.sh'
+    script.write_text('#!/bin/sh\n')
+    script.chmod(0o755)
+    (root / 'pdi-main.debian' / 'data').write_text('data')
+    (root / 'pdi-main.debian' / 'data').chmod(0o644)
+    (root / 'pdi-main.ubuntu').mkdir()
+    (root / 'pdi-main.ubuntu' / 'link').symlink_to('../pdi-main.debian/data')
+
+
+def tree_of(root: Path) -> dict[str, tuple[int, bytes | str]]:
+    found: dict[str, tuple[int, bytes | str]] = {}
+    for path in sorted(root.rglob('*')):
+        name = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            found[name] = (0, str(path.readlink()))
+        elif path.is_file():
+            found[name] = (path.stat().st_mode & 0o777, path.read_bytes())
+        else:
+            found[name] = (0, b'')
+    return found
+
+
+def test_pack_tree_deterministic(tmp_path: Path) -> None:
+    root = tmp_path / 'tree'
+    write_tree(root)
+    one, two = tmp_path / 'one.tar', tmp_path / 'two.tar'
+    state.pack_tree(root, one)
+    os.utime(root / 'pdi-main.debian', (1, 1))
+    state.pack_tree(root, two)
+    assert one.read_bytes() == two.read_bytes()
+    with tarfile.open(one) as tar:
+        members = tar.getmembers()
+    assert [m.name for m in members] == sorted(m.name for m in members)
+    assert {(m.uid, m.gid, m.uname, m.gname) for m in members} == {(0, 0, '', '')}
+
+
+def test_pack_tree_round_trip(tmp_path: Path) -> None:
+    root = tmp_path / 'tree'
+    write_tree(root)
+    layer = tmp_path / 'layer.tar'
+    state.pack_tree(root, layer)
+    other = tmp_path / 'other'
+    state.unpack_tree(layer, other)
+    assert tree_of(other) == tree_of(root)
+    assert not other.with_name('other.new').exists()
+
+
+def test_unpack_tree_replaces_the_previous_one(tmp_path: Path) -> None:
+    root = tmp_path / 'tree'
+    write_tree(root)
+    layer = tmp_path / 'layer.tar'
+    state.pack_tree(root, layer)
+    other = tmp_path / 'other'
+    (other / 'stale').mkdir(parents=True)
+    state.unpack_tree(layer, other)
+    assert not (other / 'stale').exists()
+
+
+def test_unpack_tree_refuses_a_member_outside(tmp_path: Path) -> None:
+    layer = tmp_path / 'layer.tar'
+    with tarfile.open(layer, 'w') as tar:
+        info = tarfile.TarInfo('../escape')
+        tar.addfile(info, io.BytesIO(b''))
+    other = tmp_path / 'other'
+    (other / 'kept').mkdir(parents=True)
+    with pytest.raises(state.StateArchiveError):
+        state.unpack_tree(layer, other)
+    assert (other / 'kept').is_dir()
+    assert not (tmp_path / 'escape').exists()
+    assert not other.with_name('other.new').exists()
+
+
+def test_pack_tree_of_no_directory(tmp_path: Path) -> None:
+    with pytest.raises(state.StateArchiveError):
+        state.pack_tree(tmp_path / 'absent', tmp_path / 'layer.tar')

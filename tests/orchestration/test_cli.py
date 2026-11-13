@@ -915,6 +915,53 @@ def test_state_push_annotations(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     }
 
 
+def test_state_push_tree(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+
+    def push_tree(self: object, tag: str, tree: Path, annotations: dict[str, str]) -> str:
+        seen.update(tag=tag, tree=tree, annotations=annotations)
+        return 'sha256:def'
+
+    monkeypatch.setattr('distropack_builder.registry.Registry.push_tree', push_tree)
+    result = invoke(
+        'state',
+        'push-tree',
+        '--registry',
+        'ghcr.io/pdidev/pkgs/state',
+        '--annotation',
+        'k=v',
+        'legacy-pdi-main',
+        str(tmp_path),
+        env={'GITHUB_RUN_ID': '7'},
+    )
+    assert result.exit_code == 0, result.output
+    assert result.stdout == 'sha256:def\n'
+    assert seen == {
+        'tag': 'legacy-pdi-main',
+        'tree': tmp_path.resolve(),
+        'annotations': {'dev.distropack.run-id': '7', 'k': 'v'},
+    }
+
+
+def test_state_pull_tree_missing_tag_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from distropack_builder import registry
+
+    def missing(self: object, tag: str, dst: Path) -> None:
+        raise registry.RegistryError(f'ghcr.io/pdidev/pkgs/state:{tag}: no such tag')
+
+    monkeypatch.setattr('distropack_builder.registry.Registry.pull_tree', missing)
+    result = invoke(
+        'state',
+        'pull-tree',
+        '--registry',
+        'ghcr.io/pdidev/pkgs/state',
+        'legacy-pdi-main',
+        str(tmp_path / 'tree'),
+    )
+    assert result.exit_code == 1
+    assert 'legacy-pdi-main: no such tag' in result.output
+
+
 def test_state_prune_needs_ghcr(tmp_path: Path) -> None:
     result = invoke('state', 'prune', '--registry', 'registry.example.org/state', '--token', 'x')
     assert result.exit_code == 2
