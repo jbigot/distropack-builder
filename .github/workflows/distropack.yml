@@ -1,0 +1,441 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
+# The reusable workflow: plans the releases of a project's build.conf, builds each one in a job of
+# its own on the states kept in a registry, then assembles, checks and uploads the site, ready for
+# the caller's `actions/deploy-pages`. Every decision is a distropack-build command's; this file
+# only moves states, sources and the site between jobs.
+#
+# The jobs run the builder of this workflow's own commit, checked out into .distropack-builder:
+# `uses:` takes no expression, and a caller pinning `@vX` must run `vX`'s builder.
+name: distropack
+on:
+  workflow_call:
+    inputs:
+      channel:
+        description: >-
+          The channel to build, as build.conf names it; its release channel when empty. Runs
+          of one channel wait for each other, keyed on this input as given: name the release
+          channel the same way in every caller.
+        type: string
+        default: ''
+      config:
+        description: The build configuration, relative to `working-directory`.
+        type: string
+        default: build.conf
+      working-directory:
+        description: The directory the builder runs from, relative to the workspace.
+        type: string
+        default: .
+      distributions:
+        description: >-
+          Only the releases these patterns name, separated by spaces or line breaks: a
+          distribution (`debian`) or one of its releases (`debian:trixie`); all those of
+          `config` when empty.
+        type: string
+        default: ''
+      snapshots:
+        description: >-
+          The commits to build instead of the heads of the channel's refs, `<package>=<commit>`
+          separated by spaces or line breaks.
+        type: string
+        default: ''
+      build-if:
+        description: >-
+          `always` to build, or `changed` to build only when a package's commit or packaging
+          changed since the states (it skips rebuilds for a changed build environment: pair it
+          with an occasional `always` run).
+        type: string
+        default: always
+      state-registry:
+        description: >-
+          The registry repository keeping the states between runs (`ghcr.io/<owner>/<repo>/state`);
+          none kept when empty, so that every run builds from scratch.
+        type: string
+        default: ''
+      keep-untagged:
+        description: How many untagged versions of the states to keep in the registry.
+        type: number
+        default: 50
+      max-site-size:
+        description: Fail when the site is larger (`900M`; powers of 1024); no limit when empty.
+        type: string
+        default: ''
+      site-extra:
+        description: >-
+          Trees copied as they are into the site, one `<path>=<tag>` per line: `<path>` of the
+          tree the registry keeps under `<tag>` (`distropack-build state push-tree`).
+        type: string
+        default: ''
+      check-install:
+        description: >-
+          `upgrade` to install the site in clean containers after the version published at
+          each repository's URL (fresh where it publishes nothing yet), `fresh` to install it
+          fresh only, `false` not to check.
+        type: string
+        default: upgrade
+      version-guard:
+        description: >-
+          `false` to publish versions lower than, or equal with other files to, those the
+          repositories' URLs publish.
+        type: boolean
+        default: true
+      publish:
+        description: >-
+          `false` to build only, with no site (on pull requests); the states are never pushed
+          on a pull request.
+        type: boolean
+        default: true
+      project-artifact:
+        description: >-
+          An artifact of this run holding the project, extracted into `working-directory`
+          instead of checking out the repository.
+        type: string
+        default: ''
+      download-dir:
+        description: >-
+          Where the sources are downloaded, relative to `working-directory`; a file already
+          there is not downloaded again. A temporary directory when empty.
+        type: string
+        default: ''
+      bake-images:
+        description: >-
+          For distropack-builder's own tests: bake the images from this workflow's checkout
+          instead of pulling them.
+        type: boolean
+        default: false
+    secrets:
+      passphrase:
+        description: The passphrase of the signing key.
+        required: true
+    outputs:
+      site-artifact:
+        description: >-
+          The name of the uploaded Pages artifact, for `actions/deploy-pages`' `artifact_name`;
+          empty when nothing was published.
+        value: ${{ jobs.publish.outputs.site-artifact }}
+      changed:
+        description: >-
+          With `build-if: changed`, `true` when the builds ran and `false` when nothing had
+          changed; empty otherwise.
+        value: ${{ jobs.plan.outputs.changed }}
+permissions: {}
+concurrency:
+  group: distropack-channel-${{ inputs.state-registry }}-${{ inputs.channel }}
+  cancel-in-progress: false
+env:
+  UV_LOCKED: 1
+  DISTROPACK_REGISTRY_TOKEN: ${{ github.token }}
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    permissions: { contents: read, packages: read }
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      channel: ${{ steps.channels.outputs.channel }}
+      fallback: ${{ steps.channels.outputs.fallback }}
+      channels: ${{ steps.channels.outputs.channels }}
+      changed: ${{ steps.fetch.outputs.changed }}
+    steps:
+    - if: inputs.project-artifact == ''
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with: { persist-credentials: false }
+    - if: inputs.project-artifact != ''
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with: { name: "${{ inputs.project-artifact }}", path: "${{ inputs.working-directory }}" }
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: ${{ job.workflow_repository }}
+        ref: ${{ job.workflow_sha }}
+        path: .distropack-builder
+        persist-credentials: false
+    # No cache: this workflow publishes.
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with: { enable-cache: false, version-file: .distropack-builder/.tool-versions }
+    - id: plan
+      uses: ./.distropack-builder/plan
+      with:
+        config: ${{ inputs.config }}
+        working-directory: ${{ inputs.working-directory }}
+        distributions: ${{ inputs.distributions }}
+    - id: channels
+      name: the channel, its fallback and every channel
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CONFIG: ${{ inputs.config }}
+        CHANNEL: ${{ inputs.channel }}
+      run: |
+        listed=$("$GITHUB_WORKSPACE/.distropack-builder/action/run-cli" channels list --json "$CONFIG")
+        channel=$(jq -r --arg c "$CHANNEL" 'if $c == "" then .[0].name else $c end' <<< "$listed")
+        if ! jq -e --arg c "$channel" 'any(.name == $c)' <<< "$listed" > /dev/null; then
+          echo "::error::channel: $channel is not a channel of $CONFIG"
+          exit 1
+        fi
+        {
+          echo "channel=$channel"
+          echo "fallback=$(jq -r --arg c "$channel" '.[] | select(.name == $c) | .fallback // ""' <<< "$listed")"
+          echo "channels=$(jq -c 'map(.name)' <<< "$listed")"
+        } >> "$GITHUB_OUTPUT"
+    - name: pull the channel's states, to tell what changed
+      if: inputs.build-if == 'changed' && inputs.state-registry != ''
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        REGISTRY: ${{ inputs.state-registry }}
+        CHANNEL: ${{ steps.channels.outputs.channel }}
+        MATRIX: ${{ steps.plan.outputs.matrix }}
+      run: |
+        releases=()
+        while read -r uid; do releases+=(--release "$uid"); done < <(jq -r '.[].uid' <<< "$MATRIX")
+        if [ "${#releases[@]}" -gt 0 ]; then
+          "$GITHUB_WORKSPACE/.distropack-builder/action/run-cli" state pull --registry "$REGISTRY" \
+            --channel "$CHANNEL" "${releases[@]}" --state-dir "$RUNNER_TEMP/states"
+        fi
+    - name: the download directory
+      id: downloads
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        DOWNLOAD_DIR: ${{ inputs.download-dir }}
+        BUILD_IF: ${{ inputs.build-if }}
+      run: |
+        if [ -n "$DOWNLOAD_DIR" ]; then dir=$(realpath -m "$DOWNLOAD_DIR"); else dir=$RUNNER_TEMP/downloads; fi
+        mkdir -p "$dir"
+        echo "dir=$dir" >> "$GITHUB_OUTPUT"
+        if [ "$BUILD_IF" = changed ]; then
+          echo "state-dir=$RUNNER_TEMP/states" >> "$GITHUB_OUTPUT"
+        elif [ "$BUILD_IF" != always ]; then
+          echo "::error::the input build-if is always or changed, not $BUILD_IF"
+          exit 1
+        fi
+    - id: fetch
+      uses: ./.distropack-builder
+      with:
+        config: ${{ inputs.config }}
+        working-directory: ${{ inputs.working-directory }}
+        distributions: ${{ inputs.distributions }}
+        channel: ${{ steps.channels.outputs.channel }}
+        snapshots: ${{ inputs.snapshots }}
+        mode: fetch
+        download-dir: ${{ steps.downloads.outputs.dir }}
+        state-dir: ${{ steps.downloads.outputs.state-dir }}
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: distropack-sources-${{ github.run_id }}-${{ github.run_attempt }}-${{ steps.channels.outputs.channel }}
+        path: ${{ steps.downloads.outputs.dir }}
+        retention-days: 1
+        include-hidden-files: true
+        if-no-files-found: error
+  build:
+    needs: plan
+    if: needs.plan.outputs.changed != 'false'
+    runs-on: ubuntu-24.04
+    permissions: { contents: read, packages: write }
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+    - if: inputs.project-artifact == ''
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with: { persist-credentials: false }
+    - if: inputs.project-artifact != ''
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with: { name: "${{ inputs.project-artifact }}", path: "${{ inputs.working-directory }}" }
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: ${{ job.workflow_repository }}
+        ref: ${{ job.workflow_sha }}
+        path: .distropack-builder
+        persist-credentials: false
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with: { enable-cache: false, version-file: .distropack-builder/.tool-versions }
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: distropack-sources-${{ github.run_id }}-${{ github.run_attempt }}-${{ needs.plan.outputs.channel }}
+        path: ${{ runner.temp }}/downloads
+    - name: bake the images
+      if: inputs.bake-images
+      env: { RELEASE: "${{ matrix.distrib }}:${{ matrix.release }}" }
+      run: uv run --project .distropack-builder python .distropack-builder/tests/bake_fixture_images.py --releases "$RELEASE"
+    - name: pull the states
+      if: inputs.state-registry != ''
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        REGISTRY: ${{ inputs.state-registry }}
+        CHANNEL: ${{ needs.plan.outputs.channel }}
+        FALLBACK: ${{ needs.plan.outputs.fallback }}
+        RELEASE_UID: ${{ matrix.uid }}
+      run: |
+        for channel in "$CHANNEL" ${FALLBACK:+"$FALLBACK"}; do
+          "$GITHUB_WORKSPACE/.distropack-builder/action/run-cli" state pull --registry "$REGISTRY" \
+            --channel "$channel" --release "$RELEASE_UID" --state-dir "$RUNNER_TEMP/states"
+        done
+    - uses: ./.distropack-builder
+      with:
+        config: ${{ inputs.config }}
+        working-directory: ${{ inputs.working-directory }}
+        distributions: ${{ matrix.distrib }}:${{ matrix.release }}
+        channel: ${{ needs.plan.outputs.channel }}
+        mode: no-publish
+        state-dir: ${{ runner.temp }}/states
+        download-dir: ${{ runner.temp }}/downloads
+        passphrase: ${{ secrets.passphrase }}
+    - name: push the state
+      if: success() && inputs.state-registry != '' && github.event_name != 'pull_request'
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        REGISTRY: ${{ inputs.state-registry }}
+        CHANNEL: ${{ needs.plan.outputs.channel }}
+        RELEASE_UID: ${{ matrix.uid }}
+      run: |
+        "$GITHUB_WORKSPACE/.distropack-builder/action/run-cli" state push --registry "$REGISTRY" \
+          --channel "$CHANNEL" --release "$RELEASE_UID" --state-dir "$RUNNER_TEMP/states"
+    # A failed build keeps the state it pulled: the site publishes it again (C5).
+    - name: keep the state for the publication
+      if: success() || failure()
+      env:
+        CHANNEL: ${{ needs.plan.outputs.channel }}
+        RELEASE_UID: ${{ matrix.uid }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/kept"
+        if [ -d "$RUNNER_TEMP/states/$CHANNEL/$RELEASE_UID" ]; then
+          tar -C "$RUNNER_TEMP/states/$CHANNEL" -cf "$RUNNER_TEMP/kept/$RELEASE_UID.tar" "$RELEASE_UID"
+        fi
+    - if: success() || failure()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: distropack-state-${{ github.run_id }}-${{ github.run_attempt }}-${{ needs.plan.outputs.channel }}-${{ matrix.uid }}
+        path: ${{ runner.temp }}/kept
+        retention-days: 1
+        if-no-files-found: ignore
+  publish:
+    needs: [plan, build]
+    if: always() && needs.plan.result == 'success' && inputs.publish
+    runs-on: ubuntu-24.04
+    permissions: { contents: read, packages: read }
+    concurrency:
+      group: distropack-publish-${{ inputs.state-registry }}
+      cancel-in-progress: false
+    outputs:
+      site-artifact: ${{ steps.upload.outcome == 'success' && 'github-pages' || '' }}
+    steps:
+    - if: inputs.project-artifact == ''
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with: { persist-credentials: false }
+    - if: inputs.project-artifact != ''
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with: { name: "${{ inputs.project-artifact }}", path: "${{ inputs.working-directory }}" }
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: ${{ job.workflow_repository }}
+        ref: ${{ job.workflow_sha }}
+        path: .distropack-builder
+        persist-credentials: false
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with: { enable-cache: false, version-file: .distropack-builder/.tool-versions }
+    - name: bake the images
+      if: inputs.bake-images
+      run: uv run --project .distropack-builder python .distropack-builder/tests/bake_fixture_images.py --releases
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        pattern: distropack-state-${{ github.run_id }}-${{ github.run_attempt }}-${{ needs.plan.outputs.channel }}-*
+        path: ${{ runner.temp }}/kept
+        merge-multiple: true
+    - name: the states, this run's and the registry's
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        REGISTRY: ${{ inputs.state-registry }}
+        CHANNEL: ${{ needs.plan.outputs.channel }}
+        CHANNELS: ${{ needs.plan.outputs.channels }}
+        MATRIX: ${{ needs.plan.outputs.matrix }}
+      run: |
+        states=$RUNNER_TEMP/states
+        mkdir -p "$states/$CHANNEL"
+        for kept in "$RUNNER_TEMP"/kept/*.tar; do
+          [ -e "$kept" ] && tar -C "$states/$CHANNEL" -xf "$kept"
+        done
+        if [ -z "$REGISTRY" ]; then exit 0; fi
+        while read -r channel; do
+          releases=()
+          while read -r uid; do
+            [ -d "$states/$channel/$uid" ] || releases+=(--release "$uid")
+          done < <(jq -r '.[].uid' <<< "$MATRIX")
+          if [ "${#releases[@]}" -gt 0 ]; then
+            "$GITHUB_WORKSPACE/.distropack-builder/action/run-cli" state pull --registry "$REGISTRY" \
+              --channel "$channel" "${releases[@]}" --state-dir "$states"
+          fi
+        done < <(jq -r '.[]' <<< "$CHANNELS")
+    - name: the extra trees
+      if: inputs.site-extra != ''
+      env:
+        REGISTRY: ${{ inputs.state-registry }}
+        SITE_EXTRA: ${{ inputs.site-extra }}
+      run: |
+        if [ -z "$REGISTRY" ]; then
+          echo "::error::site-extra needs state-registry, where its trees are kept"
+          exit 1
+        fi
+        . .distropack-builder/action/patterns.sh
+        extra_options "$SITE_EXTRA" "$RUNNER_TEMP/extras"
+        for tag in "${extra_tags[@]}"; do
+          .distropack-builder/action/run-cli state pull-tree --registry "$REGISTRY" "$tag" "$RUNNER_TEMP/extras/$tag"
+        done
+    - name: the site
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CONFIG: ${{ inputs.config }}
+        DISTRIBUTIONS: ${{ inputs.distributions }}
+        SITE_EXTRA: ${{ inputs.site-extra }}
+        MAX_SITE_SIZE: ${{ inputs.max-site-size }}
+        VERSION_GUARD: ${{ inputs.version-guard }}
+        DISTROPACK_GPG_PASSPHRASE: ${{ secrets.passphrase }}
+      run: |
+        . "$GITHUB_WORKSPACE/.distropack-builder/action/patterns.sh"
+        extra_options "$SITE_EXTRA" "$RUNNER_TEMP/extras"
+        arguments=("${options[@]}")
+        distribution_options "$DISTRIBUTIONS"
+        arguments+=("${options[@]}")
+        if [ -n "$MAX_SITE_SIZE" ]; then arguments+=(--max-size "$MAX_SITE_SIZE"); fi
+        if [ "$VERSION_GUARD" != true ]; then arguments+=(--no-version-guard); fi
+        "$GITHUB_WORKSPACE/.distropack-builder/action/run-cli" site --output "$RUNNER_TEMP/site" \
+          --state-dir "$RUNNER_TEMP/states" "${arguments[@]}" "$CONFIG"
+    - name: the install check
+      if: inputs.check-install != 'false'
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CONFIG: ${{ inputs.config }}
+        DISTRIBUTIONS: ${{ inputs.distributions }}
+        CHECK_INSTALL: ${{ inputs.check-install }}
+      run: |
+        . "$GITHUB_WORKSPACE/.distropack-builder/action/patterns.sh"
+        distribution_options "$DISTRIBUTIONS"
+        case "$CHECK_INSTALL" in
+          upgrade) options+=(--upgrade-from-published) ;;
+          fresh) ;;
+          *) echo "::error::the input check-install is upgrade, fresh or false, not $CHECK_INSTALL"; exit 1 ;;
+        esac
+        "$GITHUB_WORKSPACE/.distropack-builder/action/run-cli" check-install --site "$RUNNER_TEMP/site" \
+          "${options[@]}" "$CONFIG"
+    - id: upload
+      uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+      with: { path: "${{ runner.temp }}/site" }
+  prune:
+    needs: [plan, publish]
+    if: >-
+      always() && needs.plan.result == 'success' && inputs.state-registry != ''
+      && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions: { contents: read, packages: write }
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: ${{ job.workflow_repository }}
+        ref: ${{ job.workflow_sha }}
+        path: .distropack-builder
+        persist-credentials: false
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with: { enable-cache: false, version-file: .distropack-builder/.tool-versions }
+    - env:
+        REGISTRY: ${{ inputs.state-registry }}
+        KEEP: ${{ inputs.keep-untagged }}
+      run: .distropack-builder/action/run-cli state prune --registry "$REGISTRY" --keep-untagged "$KEEP"

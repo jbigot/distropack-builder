@@ -95,6 +95,11 @@ def test_uv_is_pinned_once() -> None:
     expected = {
         ACTIONS[0]: '${{ github.action_path }}/.tool-versions',
         ACTIONS[1]: '${{ github.action_path }}/../.tool-versions',
+        # the reusable workflow's, from its own checkout
+        REPO_ROOT
+        / '.github'
+        / 'workflows'
+        / 'distropack.yml': '.distropack-builder/.tool-versions',
     }
     paths = [*ACTIONS, *(REPO_ROOT / '.github' / 'workflows').glob('*.yml')]
     for path in paths:

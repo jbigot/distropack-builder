@@ -57,3 +57,19 @@ def test_input_without_default(tmp_path: Path) -> None:
     page = generator().action_reference(path)
     assert '| `a` | — | The input. |' in page
     assert '| `b` | The output. |' in page
+
+
+def test_every_workflow_input_secret_and_output_is_documented() -> None:
+    path = REPO_ROOT / '.github' / 'workflows' / 'distropack.yml'
+    call = yaml.safe_load(path.read_text())[True]['workflow_call']
+    page = generator().workflow_reference(path)
+    for section in ('inputs', 'secrets', 'outputs'):
+        for name, spec in call[section].items():
+            row = next(line for line in page.splitlines() if line.startswith(f'| `{name}` |'))
+            assert one_line(spec['description']) in row, name
+    row = next(line for line in page.splitlines() if line.startswith('| `keep-untagged` |'))
+    assert '| number | `50` |' in row
+    row = next(line for line in page.splitlines() if line.startswith('| `publish` |'))
+    assert '| boolean | `true` |' in row
+    row = next(line for line in page.splitlines() if line.startswith('| `passphrase` |'))
+    assert '| required |' in row

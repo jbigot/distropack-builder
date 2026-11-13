@@ -45,3 +45,36 @@ mode_command() {
             ;;
     esac
 }
+
+# extra_options SPEC BASE
+# Reads SPEC, `<path>=<tag>` per line (blanks around them ignored), the trees a site copies as they
+# are: sets the array extra_tags to each tag once, in the order first named, and the array options
+# to one `--extra <path>=BASE/<tag>/<path>` per line, where BASE/<tag> is where the tag is pulled;
+# fails on a line without `=`, or whose tag is not one (letters, digits, `_`, `.`, `-`).
+# shellcheck disable=SC2034  # extra_tags is read by the step sourcing this file
+extra_options() {
+    extra_tags=()
+    options=()
+    local line path tag known existing
+    while IFS= read -r line || [ -n "$line" ]; do
+        line=${line#"${line%%[![:space:]]*}"}
+        line=${line%"${line##*[![:space:]]}"}
+        [ -n "$line" ] || continue
+        path=${line%%=*}
+        tag=${line#*=}
+        if [ "$path" = "$line" ] || [ -z "$path" ]; then
+            echo "::error::site-extra: expected <path>=<tag>, not $line"
+            return 1
+        fi
+        if ! [[ $tag =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]]; then
+            echo "::error::site-extra: $tag is not a tag, in $line"
+            return 1
+        fi
+        known=false
+        for existing in "${extra_tags[@]}"; do
+            if [ "$existing" = "$tag" ]; then known=true; fi
+        done
+        if [ "$known" = false ]; then extra_tags+=("$tag"); fi
+        options+=(--extra "$path=$2/$tag/$path")
+    done <<< "$1"
+}

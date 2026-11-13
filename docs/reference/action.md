@@ -6,9 +6,19 @@ SPDX-License-Identifier: MIT
 
 # The GitHub Actions
 
-Both actions run exactly the code of the commit or tag they are pinned to, with the third-party
+The reusable workflow and both actions run exactly the code of the commit or tag they are pinned to, with the third-party
 dependencies its `uv.lock` pins; nothing is built nor installed besides those dependencies.
 [Use the GitHub Action](../how-to/github-action.md) shows them in a workflow.
+
+## `jbigot/distropack-builder/.github/workflows/distropack.yml`
+
+The reusable workflow: plans the releases, builds each one in a job of its own on the states a
+registry keeps, then assembles the site, guards its versions, checks that it installs, and uploads
+it as a Pages artifact for the caller to deploy. Its jobs run the builder of the workflow's own
+commit, whatever the caller checks out.
+
+```{include} _generated/workflow.md
+```
 
 ## `jbigot/distropack-builder`
 

@@ -19,11 +19,14 @@ _GENERATED.mkdir(exist_ok=True)
 
 # The reference of the two actions, from their action.yml.
 sys.path.insert(0, str(Path(__file__).parent))
-from action_reference import action_reference  # noqa: E402
+from action_reference import action_reference, workflow_reference  # noqa: E402
 
 _REPO = Path(__file__).parent.parent
 (_GENERATED / 'action.md').write_text(action_reference(_REPO / 'action.yml'))
 (_GENERATED / 'plan-action.md').write_text(action_reference(_REPO / 'plan' / 'action.yml'))
+(_GENERATED / 'workflow.md').write_text(
+    workflow_reference(_REPO / '.github' / 'workflows' / 'distropack.yml')
+)
 
 # Under sphinx-polyversion, the versions of the site and the git ref this one's links name (its
 # tag, or main's commit); a plain sphinx-build builds main's working tree.

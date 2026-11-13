@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
+paths:
+  # actionlint 1.7.12 does not know the job context's documented workflow_* properties, which
+  # name the reusable workflow's own repository and commit (rhysd/actionlint#705, fixed by the
+  # pull request #707, not merged yet): drop this once a release has them.
+  .github/workflows/distropack.yml:
+    ignore:
+    - 'property "workflow_(repository|sha)" is not defined in object type'
