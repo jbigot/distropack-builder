@@ -1,0 +1,56 @@
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
+name: distropack-builder notify
+description: >-
+  Asks a packaging repository to build a channel from the commit being pushed, with a
+  `repository_dispatch` its distropack-builder reusable workflow reads.
+branding: { icon: send, color: blue }
+inputs:
+  repository:
+    description: The packaging repository to build in (`pdidev/pkgs`).
+    required: true
+  channel:
+    description: The channel to build there, which follows this repository's pushed branch.
+    required: true
+  token:
+    description: >-
+      A token allowed to dispatch on `repository`: a fine-grained token with Contents
+      read and write on it, or a GitHub App installation token; pass it from a secret.
+    required: true
+  packages:
+    description: >-
+      The packages to build from this commit, separated by spaces or line breaks; every
+      package of the channel when empty.
+    default: ''
+  dry-run:
+    description: '`true` to print the request instead of sending it.'
+    default: 'false'
+outputs:
+  body:
+    description: The JSON body of the request, sent or, with `dry-run`, not.
+    value: ${{ steps.notify.outputs.body }}
+runs:
+  using: composite
+  steps:
+  - id: notify
+    shell: bash
+    env:
+      REPOSITORY: ${{ inputs.repository }}
+      CHANNEL: ${{ inputs.channel }}
+      TOKEN: ${{ inputs.token }}
+      PACKAGES: ${{ inputs.packages }}
+      DRY_RUN: ${{ inputs.dry-run }}
+    run: |
+      . "$GITHUB_ACTION_PATH/../action/notify.sh"
+      body=$(dispatch_body "$CHANNEL" "$GITHUB_REF_NAME" "$GITHUB_SHA" "$PACKAGES")
+      url="$GITHUB_API_URL/repos/$REPOSITORY/dispatches"
+      echo "body=$body" >> "$GITHUB_OUTPUT"
+      if [ "$DRY_RUN" = true ]; then
+        echo "POST $url"
+        jq . <<< "$body"
+      else
+        curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H 'Accept: application/vnd.github+json' \
+          -H 'X-GitHub-Api-Version: 2022-11-28' --data "$body" "$url"
+      fi

@@ -21,6 +21,7 @@ INPUTS = {
     'working-directory': '.',
     'distributions': '',
     'snapshots': '',
+    'dispatch-payload': '',
     'build-if': 'always',
     'state-registry': '',
     'keep-untagged': 50,
@@ -72,6 +73,7 @@ def test_every_input_is_used() -> None:
         WORKFLOW,
         REPO_ROOT / 'action.yml',
         REPO_ROOT / 'plan' / 'action.yml',
+        REPO_ROOT / 'notify' / 'action.yml',
     ],
     ids=lambda p: p.relative_to(REPO_ROOT).as_posix(),
 )

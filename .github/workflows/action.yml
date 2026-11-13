@@ -155,6 +155,30 @@ jobs:
       run: |
         [ "$OUTCOME" = failure ]
         [ "$FAILED" = true ]
+  notify:
+    # dry-run: the request it would send, never sent
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with: { persist-credentials: false }
+    - id: notify
+      uses: ./notify
+      with:
+        repository: pdidev/pkgs
+        channel: nightly
+        token: not-a-token
+        packages: pdi pdiplugin-mpi
+        dry-run: true
+    - name: the request is the dispatch of this commit
+      env:
+        BODY: ${{ steps.notify.outputs.body }}
+        REF: ${{ github.ref_name }}
+        SHA: ${{ github.sha }}
+      run: |
+        expected=$(jq -cn --arg ref "$REF" --arg sha "$SHA" '{event_type: "distropack-build",
+          client_payload: {channel: "nightly", ref: $ref, commit: $sha, packages: ["pdi", "pdiplugin-mpi"]}}')
+        [ "$(jq -cS . <<< "$BODY")" = "$(jq -cS . <<< "$expected")" ]
   masked:
     needs: build
     runs-on: ubuntu-24.04

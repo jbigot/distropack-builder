@@ -41,6 +41,13 @@ on:
           separated by spaces or line breaks.
         type: string
         default: ''
+      dispatch-payload:
+        description: >-
+          The `client_payload` of a `repository_dispatch` the `notify` action sent, as JSON
+          (`toJSON(github.event.client_payload)`): its commit is built, for the packages it
+          names or every package of the channel, beside `snapshots`.
+        type: string
+        default: ''
       build-if:
         description: >-
           `always` to build, or `changed` to build only when a package's commit or packaging
@@ -177,6 +184,25 @@ jobs:
           echo "fallback=$(jq -r --arg c "$channel" '.[] | select(.name == $c) | .fallback // ""' <<< "$listed")"
           echo "channels=$(jq -c 'map(.name)' <<< "$listed")"
         } >> "$GITHUB_OUTPUT"
+    - id: snapshots
+      name: the snapshots, the dispatch's among them
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CONFIG: ${{ inputs.config }}
+        CHANNEL: ${{ steps.channels.outputs.channel }}
+        SNAPSHOTS: ${{ inputs.snapshots }}
+        PAYLOAD: ${{ inputs.dispatch-payload }}
+      run: |
+        snapshots=$SNAPSHOTS
+        if [ -n "$PAYLOAD" ]; then
+          . "$GITHUB_WORKSPACE/.distropack-builder/action/notify.sh"
+          listed=$("$GITHUB_WORKSPACE/.distropack-builder/action/run-cli" channels list --json "$CONFIG")
+          dispatched=$(payload_snapshots "$PAYLOAD" "$listed" "$CHANNEL")
+          snapshots+=$'\n'$dispatched
+        fi
+        # one line of words: no value can end the output early
+        read -r -d '' -a words <<< "$snapshots" || true
+        echo "snapshots=${words[*]}" >> "$GITHUB_OUTPUT"
     - name: pull the channel's states, to tell what changed
       if: inputs.build-if == 'changed' && inputs.state-registry != ''
       working-directory: ${{ inputs.working-directory }}
@@ -214,7 +240,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
         distributions: ${{ inputs.distributions }}
         channel: ${{ steps.channels.outputs.channel }}
-        snapshots: ${{ inputs.snapshots }}
+        snapshots: ${{ steps.snapshots.outputs.snapshots }}
         mode: fetch
         download-dir: ${{ steps.downloads.outputs.dir }}
         state-dir: ${{ steps.downloads.outputs.state-dir }}

@@ -23,9 +23,10 @@ def action_reference(path: Path) -> str:
         default = spec.get('default', '')
         shown = f'`{_cell(str(default))}`' if default != '' else '—'
         lines.append(f'| `{name}` | {shown} | {_cell(spec["description"])} |')
-    lines += ['', '### Outputs', '', '| Output | Description |', '|---|---|']
-    for name, spec in action.get('outputs', {}).items():
-        lines.append(f'| `{name}` | {_cell(spec["description"])} |')
+    if action.get('outputs'):
+        lines += ['', '### Outputs', '', '| Output | Description |', '|---|---|']
+        for name, spec in action['outputs'].items():
+            lines.append(f'| `{name}` | {_cell(spec["description"])} |')
     return '\n'.join(lines) + '\n'
 
 

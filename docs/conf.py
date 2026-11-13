@@ -24,6 +24,7 @@ from action_reference import action_reference, workflow_reference  # noqa: E402
 _REPO = Path(__file__).parent.parent
 (_GENERATED / 'action.md').write_text(action_reference(_REPO / 'action.yml'))
 (_GENERATED / 'plan-action.md').write_text(action_reference(_REPO / 'plan' / 'action.yml'))
+(_GENERATED / 'notify-action.md').write_text(action_reference(_REPO / 'notify' / 'action.yml'))
 (_GENERATED / 'workflow.md').write_text(
     workflow_reference(_REPO / '.github' / 'workflows' / 'distropack.yml')
 )

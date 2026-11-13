@@ -13,7 +13,11 @@ import yaml
 
 from support import REPO_ROOT
 
-ACTIONS = [REPO_ROOT / 'action.yml', REPO_ROOT / 'plan' / 'action.yml']
+ACTIONS = [
+    REPO_ROOT / 'action.yml',
+    REPO_ROOT / 'plan' / 'action.yml',
+    REPO_ROOT / 'notify' / 'action.yml',
+]
 
 
 def generator() -> ModuleType:
@@ -31,7 +35,7 @@ def one_line(text: str) -> str:
     return ' '.join(text.split())
 
 
-@pytest.mark.parametrize('path', ACTIONS, ids=['build', 'plan'])
+@pytest.mark.parametrize('path', ACTIONS, ids=['build', 'plan', 'notify'])
 def test_every_input_and_output_is_documented(path: Path) -> None:
     action = yaml.safe_load(path.read_text())
     page = generator().action_reference(path)
@@ -39,9 +43,9 @@ def test_every_input_and_output_is_documented(path: Path) -> None:
     for name, spec in action['inputs'].items():
         row = next(line for line in page.splitlines() if line.startswith(f'| `{name}` |'))
         assert one_line(spec['description']) in row
-        if spec['default']:
+        if spec.get('default'):
             assert f'`{spec["default"]}`' in row
-    for name, spec in action['outputs'].items():
+    for name, spec in action.get('outputs', {}).items():
         row = next(line for line in page.splitlines() if line.startswith(f'| `{name}` |'))
         assert one_line(spec['description']) in row
 
