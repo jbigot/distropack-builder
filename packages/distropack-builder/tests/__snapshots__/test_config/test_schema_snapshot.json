@@ -191,7 +191,7 @@
       "properties": {
         "file": {
           "default": "key.gpg",
-          "description": "The file holding the secret key, relative to build.conf's directory.",
+          "description": "The file holding the secret key, relative to build.conf's directory; `$DISTROPACK_GPG_KEY`,\nwhen set, holds the key instead (the reusable workflow's `signing-key` secret).",
           "format": "path",
           "title": "File",
           "type": "string"

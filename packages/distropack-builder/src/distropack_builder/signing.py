@@ -67,6 +67,23 @@ class Signer:
             data = keyfile.read_bytes()
         except OSError as error:
             raise SigningKeyError(f'cannot read the signing key: {error}') from error
+        return cls.from_data(data, str(keyfile), passphrase, keyid=keyid, uid=uid)
+
+    @classmethod
+    def from_data(
+        cls,
+        data: bytes,
+        keyfile: str,
+        passphrase: str | None,
+        *,
+        keyid: str | None = None,
+        uid: str | None = None,
+    ) -> Self:
+        """The key of data, unlocked with passphrase, as load reads it; keyfile names data.
+
+        Raises:
+            SigningKeyError: as load.
+        """
         try:
             keys = pysequoia.Tsk.split_bytes(data)
         except (ValueError, RuntimeError) as error:

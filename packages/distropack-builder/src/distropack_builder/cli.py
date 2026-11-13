@@ -55,6 +55,8 @@ from distropack_builder.signing import Signer, SigningKeyError
 PROG = 'distropack-build'
 # The environment variable the passphrase of the signing key comes from, without a file.
 PASSPHRASE_ENV = 'DISTROPACK_GPG_PASSPHRASE'
+KEY_ENV = 'DISTROPACK_GPG_KEY'
+"""The secret key, armored, instead of every distribution's gpg.file: a CI secret's value."""
 # The status of a run interrupted by Ctrl-C or SIGTERM, as a shell reports SIGINT.
 INTERRUPTED = 130
 
@@ -393,6 +395,14 @@ def make_app(
         disabled = disabled_releases(loaded, selected, on)
 
         def signer_for(distrib: Distrib) -> Signer:
+            if os.environ.get(KEY_ENV):
+                return Signer.from_data(
+                    os.environ[KEY_ENV].encode(),
+                    f'${KEY_ENV}',
+                    passphrase,
+                    keyid=distrib.gpg.id,
+                    uid=distrib.gpg.uid,
+                )
             return Signer.load(
                 loaded.root / distrib.gpg.file,
                 passphrase,

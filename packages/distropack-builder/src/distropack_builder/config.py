@@ -244,7 +244,8 @@ class Gpg(_Model):
     """The OpenPGP key that signs a distribution's packages and repository."""
 
     file: Path = Path('key.gpg')
-    """The file holding the secret key, relative to build.conf's directory."""
+    """The file holding the secret key, relative to build.conf's directory; `$DISTROPACK_GPG_KEY`,
+    when set, holds the key instead (the reusable workflow's `signing-key` secret)."""
 
     id: str | None = None
     """The fingerprint or key ID of the key to use, when the file holds several."""

@@ -116,6 +116,11 @@ on:
       passphrase:
         description: The passphrase of the signing key.
         required: true
+      signing-key:
+        description: >-
+          The signing key, armored, when it is not the file `build.conf` names (`gpg.file`),
+          kept out of the repository: it replaces every distribution's key file.
+        required: false
     outputs:
       site-artifact:
         description: >-
@@ -268,6 +273,8 @@ jobs:
     if: needs.plan.outputs.changed != 'false'
     runs-on: ubuntu-24.04
     permissions: { contents: read, packages: write }
+    env:
+      DISTROPACK_GPG_KEY: ${{ secrets.signing-key }}
     strategy:
       fail-fast: false
       matrix:
@@ -356,6 +363,8 @@ jobs:
     if: always() && needs.plan.result == 'success' && inputs.publish
     runs-on: ubuntu-24.04
     permissions: { contents: read, packages: read }
+    env:
+      DISTROPACK_GPG_KEY: ${{ secrets.signing-key }}
     concurrency:
       group: distropack-publish-${{ inputs.state-registry }}
       cancel-in-progress: false

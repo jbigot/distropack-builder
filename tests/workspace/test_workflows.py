@@ -228,3 +228,10 @@ def test_bake_images_in_every_job_running_containers() -> None:
         (step,) = [s for s in jobs()[name]['steps'] if s.get('name') == 'bake the images']
         assert step['if'] == 'inputs.bake-images', name
         assert 'bake_fixture_images.py --releases' in step['run'], name
+
+
+def test_signing_key_secret_reaches_the_signing_jobs() -> None:
+    assert call()['secrets']['signing-key']['required'] is False
+    for name in ('build', 'publish'):
+        assert jobs()[name]['env']['DISTROPACK_GPG_KEY'] == '${{ secrets.signing-key }}', name
+    assert 'DISTROPACK_GPG_KEY' not in load().get('env', {})

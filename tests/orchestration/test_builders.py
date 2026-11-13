@@ -3259,3 +3259,29 @@ def test_previous_and_upgrade_exclusive(
     )
     assert status == 2
     assert '--previous and --upgrade-from-published exclude each other' in out
+
+
+# The signing key from the environment, for the reusable workflow's secret (Phase 15).
+def test_signing_key_from_the_environment(
+    run_main: Callable[..., int], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv('DISTROPACK_GPG_KEY', (FIXTURE_PROJECT / 'key.gpg').read_text())
+    status = run_main(
+        FakeRunner(environment()),
+        BOTH,
+        ['hello-lib'],
+        prepare=lambda project: (project / 'key.gpg').unlink(),
+    )
+    assert status == 0
+    release = tmp_path / 'project' / 'repositories' / 'debian' / 'dists' / 'trixie' / 'InRelease'
+    assert 'BEGIN PGP SIGNATURE' in release.read_text()
+
+
+def test_signing_key_from_the_environment_holds_no_key(
+    run_main: Callable[..., int],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv('DISTROPACK_GPG_KEY', 'not a key')
+    assert run_main(FakeRunner(environment()), BOTH, ['hello-lib']) != 0
+    assert '$DISTROPACK_GPG_KEY holds no secret key' in capsys.readouterr().err

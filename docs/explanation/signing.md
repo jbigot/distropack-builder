@@ -10,7 +10,9 @@ A run signs with one key per distribution, the `gpg` section of `build.conf` nam
 file (`key.gpg` by default), and optionally which key of that file (`id`, the end of its
 fingerprint) and which of its user ids (`uid`). The passphrase comes from the file
 `--passphrase-file` names, or from the `DISTROPACK_GPG_PASSPHRASE` environment variable, never from
-the command line.
+the command line. In CI, where the key is a secret rather than a file of the repository, the
+`DISTROPACK_GPG_KEY` environment variable holds it, armored, in place of every distribution's key
+file (the reusable workflow's `signing-key` secret sets it).
 
 ## In the builder's own process
 
