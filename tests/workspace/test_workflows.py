@@ -5,6 +5,7 @@
 """The reusable workflow, read as data: what only GitHub runs, checked as far as YAML goes."""
 
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -235,3 +236,56 @@ def test_signing_key_secret_reaches_the_signing_jobs() -> None:
     for name in ('build', 'publish'):
         assert jobs()[name]['env']['DISTROPACK_GPG_KEY'] == '${{ secrets.signing-key }}', name
     assert 'DISTROPACK_GPG_KEY' not in load().get('env', {})
+
+
+def documented_workflows() -> list[tuple[str, dict[Any, Any], str]]:
+    """Every complete workflow (`on:` and `jobs:`) in a yaml block of the pages that show one."""
+    found = []
+    pages = [
+        REPO_ROOT / 'docs' / 'how-to' / 'triggers.md',
+        REPO_ROOT / 'docs' / 'tutorial' / 'first-project.md',
+        REPO_ROOT / 'README.md',
+    ]
+    for path in pages:
+        for n, block in enumerate(
+            re.findall(r'^```yaml\n(.*?)^```', path.read_text(), re.M | re.S)
+        ):
+            data = yaml.safe_load(block)
+            if isinstance(data, dict) and True in data and 'jobs' in data:
+                found.append((f'{path.name}#{n}', data, block))
+    return found
+
+
+def test_documented_callers_match_the_workflow() -> None:
+    callers = 0
+    inputs, secrets = set(call()['inputs']), set(call()['secrets'])
+    for name, data, _ in documented_workflows():
+        for job_name, job in data['jobs'].items():
+            uses = job.get('uses', '')
+            if uses.startswith('jbigot/distropack-builder/.github/workflows/distropack.yml@'):
+                callers += 1
+                assert set(job.get('with', {})) <= inputs, (name, job_name)
+                assert set(job.get('secrets', {})) <= secrets, (name, job_name)
+                assert 'passphrase' in job['secrets'], (name, job_name)
+                assert job['permissions'] == {'contents': 'read', 'packages': 'write'}, name
+                assert 'channel' in job['with'], (name, job_name)  # one concurrency group each
+            for step in job.get('steps', []):
+                if str(step.get('uses', '')).startswith('actions/deploy-pages@'):
+                    assert step['with']['artifact_name'].endswith('.outputs.site-artifact }}')
+                    # a failed release fails the called workflow: the deploy runs all the same
+                    assert '!cancelled()' in job['if'], (name, job_name)
+    assert callers >= 7  # every trigger of the page, the tutorial's and the README's
+
+
+def test_documented_callers_lint(tmp_path: Path) -> None:
+    actionlint = shutil.which('actionlint')
+    if actionlint is None:
+        pytest.skip('actionlint is not installed')
+    workflows = tmp_path / '.github' / 'workflows'
+    workflows.mkdir(parents=True)
+    paths = []
+    for n, (_, _, block) in enumerate(documented_workflows()):
+        paths.append(workflows / f'caller{n}.yml')
+        paths[-1].write_text(block)
+    result = subprocess.run([actionlint, *map(str, paths)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr

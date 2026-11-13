@@ -10,6 +10,10 @@ The action `jbigot/distropack-builder` runs `distropack-build run` in a workflow
 `jbigot/distropack-builder/plan` lists the releases a `build.conf` selects, as a job matrix. Their
 inputs and outputs are in [the reference](../reference/action.md).
 
+To build, keep the states, check and publish a site, call the reusable workflow instead
+([Build and publish with the reusable workflow](triggers.md)): it uses these actions in the jobs it
+runs. The actions are for pipelines of your own.
+
 ## Pin a version
 
 An action runs exactly the code of what `uses:` names, with the third-party dependencies its

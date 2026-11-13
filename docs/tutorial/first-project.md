@@ -199,34 +199,44 @@ Both refuse a repository whose signatures do not check. Once the repositories ar
 
 ## Build in CI
 
-The same build runs in a GitHub Actions workflow with the action. Store the content of `key.gpg`
+The same build runs in GitHub Actions with the reusable workflow, which builds, checks the
+packages install, and publishes the repositories on GitHub Pages. Store the content of `key.gpg`
 (armored, as exported above) as the repository secret `HELLO_KEY`, the passphrase as
-`HELLO_PASSPHRASE`, and add `.github/workflows/packages.yml`:
+`HELLO_PASSPHRASE`, let Pages deploy from GitHub Actions (the repository's settings, *Pages*,
+*Source*), and add `.github/workflows/packages.yml`:
 
 ```yaml
 name: Packages
 on:
   push: { branches: [main] }
-permissions:
-  contents: read
+permissions: {}
 jobs:
-  build:
+  packages:
+    permissions: { contents: read, packages: write }
+    uses: jbigot/distropack-builder/.github/workflows/distropack.yml@<commit hash> # v1.0.0
+    with:
+      channel: stable
+      check-install: fresh
+    secrets:
+      passphrase: ${{ secrets.HELLO_PASSPHRASE }}
+      signing-key: ${{ secrets.HELLO_KEY }}
+  deploy:
+    needs: packages
+    if: ${{ !cancelled() && needs.packages.outputs.site-artifact != '' }}
     runs-on: ubuntu-24.04
+    permissions: { pages: write, id-token: write }
+    environment: { name: github-pages, url: "${{ steps.deploy.outputs.page_url }}" }
     steps:
-    - uses: actions/checkout@<commit hash> # v7.0.1
-      with: { persist-credentials: false }
-    - env: { KEY: "${{ secrets.HELLO_KEY }}" }
-      run: printf '%s\n' "$KEY" > key.gpg
-    - id: build
-      uses: jbigot/distropack-builder@<commit hash> # v1.0.0
-      with:
-        passphrase: ${{ secrets.HELLO_PASSPHRASE }}
-    - uses: actions/upload-artifact@<commit hash> # v7.0.2
-      with:
-        name: repositories
-        path: repositories
+    - id: deploy
+      uses: actions/deploy-pages@<commit hash> # v5.0.1
+      with: { artifact_name: "${{ needs.packages.outputs.site-artifact }}" }
 ```
 
-Each push to `main` then builds the packages for Debian 13 and Fedora 44 and keeps the two signed
-repositories as the run's `repositories` artifact. [Use the GitHub Action](../how-to/github-action.md)
-says how to pin the action, and how to give each distribution or each release a job of its own.
+Each push to `main` then builds the packages for Debian 13 and Fedora 44, installs each signed
+repository in a clean container, and publishes them. Set the repositories' `url` in `build.conf` to
+where Pages serves them for the pages' instructions to be right; then `check-install: upgrade`, the
+default, checks from the second publication on that what users have upgrades. Without a
+`state-registry`, every push rebuilds everything:
+[Keep the states in a registry](../how-to/state-registry.md) says how to keep what did not change,
+and [Build and publish with the reusable workflow](../how-to/triggers.md) how to trigger the
+builds otherwise.

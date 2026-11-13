@@ -15,6 +15,7 @@ One guide per task.
 - [Build for openSUSE](opensuse.md)
 - [Build snapshot channels](snapshot-channels.md)
 - [Record pending changes, and cut a release](cut-a-release.md)
+- [Build and publish with the reusable workflow](triggers.md)
 - [Use the GitHub Action](github-action.md)
 - [Keep the states in a registry](state-registry.md)
 - [Guard what gets published](publication-guards.md)
@@ -34,6 +35,7 @@ enterprise-linux
 opensuse
 snapshot-channels
 cut-a-release
+triggers
 github-action
 state-registry
 publication-guards

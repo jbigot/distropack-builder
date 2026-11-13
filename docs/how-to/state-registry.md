@@ -9,7 +9,9 @@ SPDX-License-Identifier: MIT
 A release's state ([What a release keeps between runs](../explanation/state.md)) must outlive the
 CI job that built it. `distropack-build state` keeps each one in an OCI registry, such as GitHub's
 `ghcr.io`, as one artifact per channel and release, tagged `<channel>.<release uid>`
-(`stable.debian-13-trixie`):
+(`stable.debian-13-trixie`). The reusable workflow does all of this when given a
+`state-registry` ([Build and publish with the reusable workflow](triggers.md)); a pipeline of your
+own runs the commands:
 
 ```sh
 distropack-build state pull --registry ghcr.io/example/pkgs/state --channel stable \
