@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+
+# SPDX-FileCopyrightText: 2026 Julien Bigot <julien@julien-bigot.fr>
+#
+# SPDX-License-Identifier: MIT
+
+"""Delete the versions of a ghcr package tagged by one run of the Action workflow.
+
+    ci-state-cleanup REGISTRY PREFIX...
+
+deletes every version of REGISTRY (ghcr.io/<owner>/<package path>) whose tags all start with one
+of the PREFIXes, the run's channels (`stable-<run id>-<attempt>.`), through GitHub's Packages API
+and $GITHUB_TOKEN. ghcr refuses to delete a package's last version: the package itself goes then.
+"""
+
+import os
+import sys
+import urllib.parse
+from typing import Any
+
+import httpx
+
+API = 'https://api.github.com'
+
+
+def cleanup(registry: str, prefixes: list[str], token: str, client: httpx.Client) -> list[int]:
+    """Delete the versions of registry tagged with prefixes only; their ids."""
+    _, _, path = registry.partition('/')
+    owner, _, name = path.partition('/')
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+    }
+    package = urllib.parse.quote(name, safe='')
+    for kind in ('orgs', 'users'):
+        base = f'{API}/{kind}/{owner}/packages/container/{package}'
+        response = client.get(f'{base}/versions', params={'per_page': '100'}, headers=headers)
+        if response.status_code != 404 or kind == 'users':
+            break
+    versions: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    while True:
+        response.raise_for_status()
+        versions += response.json()
+        following = response.links.get('next', {}).get('url')
+        if not following or following in seen:
+            break
+        seen.add(following)
+        response = client.get(following, headers=headers)
+    ours = [
+        int(v['id'])
+        for v in versions
+        if (tags := v['metadata']['container']['tags'])
+        and all(tag.startswith(tuple(prefixes)) for tag in tags)
+    ]
+    for number in ours:
+        response = client.delete(f'{base}/versions/{number}', headers=headers)
+        if response.status_code == 400 and 'last' in response.text:
+            client.delete(base, headers=headers).raise_for_status()
+            break
+        response.raise_for_status()
+    return ours
+
+
+def main() -> None:
+    """Delete the versions of the command line's registry tagged with its prefixes."""
+    registry, *prefixes = sys.argv[1:]
+    with httpx.Client(timeout=60) as client:
+        deleted = cleanup(registry, prefixes, os.environ['GITHUB_TOKEN'], client)
+    print(f'deleted {len(deleted)} versions of {registry}')
+
+
+if __name__ == '__main__':
+    main()

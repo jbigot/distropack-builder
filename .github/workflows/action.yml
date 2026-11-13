@@ -179,6 +179,232 @@ jobs:
         expected=$(jq -cn --arg ref "$REF" --arg sha "$SHA" '{event_type: "distropack-build",
           client_payload: {channel: "nightly", ref: $ref, commit: $sha, packages: ["pdi", "pdiplugin-mpi"]}}')
         [ "$(jq -cS . <<< "$BODY")" = "$(jq -cS . <<< "$expected")" ]
+  # The reusable workflow, called on the fixture as a packaging repository would, against states
+  # in this repository's ghcr package ci-state, under tags of this run's own channels.
+  wf-fixture:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    outputs:
+      release: ${{ steps.fixture.outputs.release }}
+      snapshot: ${{ steps.fixture.outputs.snapshot }}
+      old: ${{ steps.fixture.outputs.old }}
+      new: ${{ steps.fixture.outputs.new }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with: { persist-credentials: false }
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with: { version-file: .tool-versions }
+    # the tools of this checkout, for uscan
+    - run: uv run python tests/bake_fixture_images.py --releases
+    - id: fixture
+      env:
+        RUN: ${{ github.run_id }}-${{ github.run_attempt }}
+      run: |
+        uv run python tests/fixture_project.py fixture "$BASE_URL" \
+          --releases debian:trixie fedora:44 --packages hello-lib \
+          --channels "stable-$RUN" "weekly-$RUN" --snapshot-commits 2
+        {
+          echo "release=stable-$RUN"
+          echo "snapshot=weekly-$RUN"
+          echo "old=$(jq -r '.[0]' fixture/commits.json)"
+          echo "new=$(jq -r '.[1]' fixture/commits.json)"
+        } >> "$GITHUB_OUTPUT"
+    # what the callers' jobs cannot download: this job serves the tarballs
+    - name: prefetch the sources
+      run: |
+        python3 -m http.server 8765 -d fixture/served > /dev/null 2>&1 &
+        cd fixture/project
+        uv run --project "$GITHUB_WORKSPACE" distropack-build sources build.conf hello-lib hello-snap
+        uv run --project "$GITHUB_WORKSPACE" distropack-build fetch --download-dir downloads build.conf
+        tar -C "$GITHUB_WORKSPACE/fixture" -cf "$RUNNER_TEMP/project.tar" .
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: wf-fixture-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/project.tar
+        retention-days: 1
+  wf-first:
+    needs: wf-fixture
+    permissions: { contents: read, packages: write }
+    uses: ./.github/workflows/distropack.yml
+    with:
+      project-artifact: wf-fixture-${{ github.run_id }}-${{ github.run_attempt }}
+      working-directory: fixture
+      config: project/build.conf
+      download-dir: project/downloads
+      channel: ${{ needs.wf-fixture.outputs.release }}
+      state-registry: ghcr.io/${{ github.repository }}/ci-state
+      check-install: fresh
+      version-guard: false
+      bake-images: true
+    secrets:
+      # the fixture's, not a secret
+      passphrase: test-passphrase
+  wf-layers-1:
+    # the layer of each state the release channel's run pushed
+    needs: [wf-fixture, wf-first]
+    runs-on: ubuntu-24.04
+    permissions: { contents: read, packages: read }
+    outputs:
+      layers: ${{ steps.layers.outputs.layers }}
+    steps:
+    - id: layers
+      env:
+        TOKEN: ${{ github.token }}
+        REPOSITORY: ${{ github.repository }}
+        CHANNEL: ${{ needs.wf-fixture.outputs.release }}
+      run: |
+        auth="Authorization: Bearer $(printf %s "$TOKEN" | base64 -w0)"
+        layers=''
+        for uid in debian-13-trixie fedora-44; do
+          layer=$(curl -fsS -H "$auth" -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
+            "https://ghcr.io/v2/$REPOSITORY/ci-state/manifests/$CHANNEL.$uid" | jq -r '.layers[0].digest')
+          layers+="$uid=$layer "
+        done
+        echo "layers=$layers" >> "$GITHUB_OUTPUT"
+  wf-second:
+    needs: [wf-fixture, wf-layers-1]
+    permissions: { contents: read, packages: write }
+    uses: ./.github/workflows/distropack.yml
+    with:
+      project-artifact: wf-fixture-${{ github.run_id }}-${{ github.run_attempt }}
+      working-directory: fixture
+      config: project/build.conf
+      download-dir: project/downloads
+      channel: ${{ needs.wf-fixture.outputs.release }}
+      state-registry: ghcr.io/${{ github.repository }}/ci-state
+      check-install: fresh
+      version-guard: false
+      bake-images: true
+    secrets:
+      # the fixture's, not a secret
+      passphrase: test-passphrase
+  wf-layers-2:
+    # the layer of each state the release channel's run pushed
+    needs: [wf-fixture, wf-second]
+    runs-on: ubuntu-24.04
+    permissions: { contents: read, packages: read }
+    outputs:
+      layers: ${{ steps.layers.outputs.layers }}
+    steps:
+    - id: layers
+      env:
+        TOKEN: ${{ github.token }}
+        REPOSITORY: ${{ github.repository }}
+        CHANNEL: ${{ needs.wf-fixture.outputs.release }}
+      run: |
+        auth="Authorization: Bearer $(printf %s "$TOKEN" | base64 -w0)"
+        layers=''
+        for uid in debian-13-trixie fedora-44; do
+          layer=$(curl -fsS -H "$auth" -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
+            "https://ghcr.io/v2/$REPOSITORY/ci-state/manifests/$CHANNEL.$uid" | jq -r '.layers[0].digest')
+          layers+="$uid=$layer "
+        done
+        echo "layers=$layers" >> "$GITHUB_OUTPUT"
+  wf-changed:
+    needs: [wf-fixture, wf-layers-2]
+    permissions: { contents: read, packages: write }
+    uses: ./.github/workflows/distropack.yml
+    with:
+      project-artifact: wf-fixture-${{ github.run_id }}-${{ github.run_attempt }}
+      working-directory: fixture
+      config: project/build.conf
+      download-dir: project/downloads
+      channel: ${{ needs.wf-fixture.outputs.release }}
+      state-registry: ghcr.io/${{ github.repository }}/ci-state
+      check-install: fresh
+      version-guard: false
+      bake-images: true
+      build-if: changed
+    secrets:
+      # the fixture's, not a secret
+      passphrase: test-passphrase
+  wf-newer:
+    needs: [wf-fixture, wf-changed]
+    permissions: { contents: read, packages: write }
+    uses: ./.github/workflows/distropack.yml
+    with:
+      project-artifact: wf-fixture-${{ github.run_id }}-${{ github.run_attempt }}
+      working-directory: fixture
+      config: project/build.conf
+      download-dir: project/downloads
+      channel: ${{ needs.wf-fixture.outputs.snapshot }}
+      state-registry: ghcr.io/${{ github.repository }}/ci-state
+      check-install: fresh
+      version-guard: false
+      bake-images: true
+      snapshots: hello-snap=${{ needs.wf-fixture.outputs.new }}
+    secrets:
+      # the fixture's, not a secret
+      passphrase: test-passphrase
+  wf-older:
+    needs: [wf-fixture, wf-newer]
+    permissions: { contents: read, packages: write }
+    uses: ./.github/workflows/distropack.yml
+    with:
+      project-artifact: wf-fixture-${{ github.run_id }}-${{ github.run_attempt }}
+      working-directory: fixture
+      config: project/build.conf
+      download-dir: project/downloads
+      channel: ${{ needs.wf-fixture.outputs.snapshot }}
+      state-registry: ghcr.io/${{ github.repository }}/ci-state
+      check-install: fresh
+      version-guard: false
+      bake-images: true
+      snapshots: hello-snap=${{ needs.wf-fixture.outputs.old }}
+    secrets:
+      # the fixture's, not a secret
+      passphrase: test-passphrase
+  wf-check:
+    needs: [wf-fixture, wf-layers-1, wf-layers-2, wf-changed, wf-newer, wf-older]
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    steps:
+    - name: the second run rebuilt nothing; build-if changed built nothing and still published
+      env:
+        FIRST: ${{ needs.wf-layers-1.outputs.layers }}
+        SECOND: ${{ needs.wf-layers-2.outputs.layers }}
+        CHANGED: ${{ needs.wf-changed.outputs.changed }}
+        CHANGED_SITE: ${{ needs.wf-changed.outputs.site-artifact }}
+      run: |
+        echo "first: $FIRST"
+        echo "second: $SECOND"
+        [[ $FIRST == *debian-13-trixie=sha256:*fedora-44=sha256:* ]]
+        [ "$FIRST" = "$SECOND" ]
+        [ "$CHANGED" = false ]
+        [ -n "$CHANGED_SITE" ]
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with: { name: "${{ needs.wf-newer.outputs.site-artifact }}", path: newer }
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with: { name: "${{ needs.wf-older.outputs.site-artifact }}", path: older }
+    - name: each snapshot run published the commit it named, the older one last
+      env:
+        SNAPSHOT: ${{ needs.wf-fixture.outputs.snapshot }}
+        OLD: ${{ needs.wf-fixture.outputs.old }}
+        NEW: ${{ needs.wf-fixture.outputs.new }}
+      run: |
+        for site in newer older; do
+          mkdir "$site/tree" && tar -C "$site/tree" -xf "$site/artifact.tar"
+        done
+        packages=repositories/debian/dists/trixie/$SNAPSHOT/binary-amd64/Packages
+        grep -E "^Version: .*\.g${NEW:0:7}-" "newer/tree/$packages"
+        grep -E "^Version: .*\.g${OLD:0:7}-" "older/tree/$packages"
+        ! grep -E "^Version: .*\.g${NEW:0:7}-" "older/tree/$packages"
+  wf-cleanup:
+    needs: [wf-fixture, wf-check]
+    if: always() && needs.wf-fixture.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions: { contents: read, packages: write }
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with: { persist-credentials: false }
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with: { version-file: .tool-versions }
+    - env:
+        GITHUB_TOKEN: ${{ github.token }}
+        REPOSITORY: ${{ github.repository }}
+        RELEASE: ${{ needs.wf-fixture.outputs.release }}
+        SNAPSHOT: ${{ needs.wf-fixture.outputs.snapshot }}
+      run: uv run python .github/scripts/ci-state-cleanup "ghcr.io/$REPOSITORY/ci-state" "$RELEASE." "$SNAPSHOT."
   masked:
     needs: build
     runs-on: ubuntu-24.04

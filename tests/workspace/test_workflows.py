@@ -202,3 +202,29 @@ def test_extra_options_never_expanded() -> None:
     assert result.returncode == 0, result.stderr
     assert not (REPO_ROOT / 'pwned').exists()
     assert '--extra\0$(touch pwned)=extras/t1/$(touch pwned)' in result.stdout
+
+
+def test_artifacts_are_per_call() -> None:
+    """Two calls in one run (two channels, say) never share an artifact."""
+    for name, job in jobs().items():
+        for step in job['steps']:
+            uses = str(step.get('uses', ''))
+            if uses.startswith(('actions/upload-artifact@', 'actions/upload-pages-artifact@')):
+                assert '.key }}' in step['with']['name'], (name, step)
+    assert 'needs.plan.outputs.key' in jobs()['publish']['outputs']['site-artifact']
+
+
+def test_project_artifact_is_a_tar_extracted_in_place() -> None:
+    for name, job in jobs().items():
+        if name == 'prune':
+            continue
+        (step,) = [s for s in job['steps'] if s.get('name') == 'the project, from its artifact']
+        assert step['if'] == "inputs.project-artifact != ''"
+        assert 'project.tar' in step['run'] and 'WORKING_DIRECTORY' in step['run']
+
+
+def test_bake_images_in_every_job_running_containers() -> None:
+    for name in ('plan', 'build', 'publish'):
+        (step,) = [s for s in jobs()[name]['steps'] if s.get('name') == 'bake the images']
+        assert step['if'] == 'inputs.bake-images', name
+        assert 'bake_fixture_images.py --releases' in step['run'], name

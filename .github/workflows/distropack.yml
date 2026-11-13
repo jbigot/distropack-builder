@@ -96,8 +96,8 @@ on:
         default: true
       project-artifact:
         description: >-
-          An artifact of this run holding the project, extracted into `working-directory`
-          instead of checking out the repository.
+          An artifact of this run holding the project as `project.tar`, extracted into
+          `working-directory` instead of checking out the repository.
         type: string
         default: ''
       download-dir:
@@ -119,8 +119,8 @@ on:
     outputs:
       site-artifact:
         description: >-
-          The name of the uploaded Pages artifact, for `actions/deploy-pages`' `artifact_name`;
-          empty when nothing was published.
+          The name of the uploaded Pages artifact, for `actions/deploy-pages`' `artifact_name`
+          (each call names its own); empty when nothing was published.
         value: ${{ jobs.publish.outputs.site-artifact }}
       changed:
         description: >-
@@ -144,13 +144,22 @@ jobs:
       fallback: ${{ steps.channels.outputs.fallback }}
       channels: ${{ steps.channels.outputs.channels }}
       changed: ${{ steps.fetch.outputs.changed }}
+      key: ${{ steps.key.outputs.key }}
     steps:
+    # names this call's artifacts: a run may call the workflow more than once
+    - id: key
+      run: echo "key=$(cat /proc/sys/kernel/random/uuid)" >> "$GITHUB_OUTPUT"
     - if: inputs.project-artifact == ''
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with: { persist-credentials: false }
     - if: inputs.project-artifact != ''
       uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-      with: { name: "${{ inputs.project-artifact }}", path: "${{ inputs.working-directory }}" }
+      with: { name: "${{ inputs.project-artifact }}", path: "${{ runner.temp }}/project" }
+    # a tar, as an artifact keeps no file mode
+    - name: the project, from its artifact
+      if: inputs.project-artifact != ''
+      env: { WORKING_DIRECTORY: "${{ inputs.working-directory }}" }
+      run: mkdir -p "$WORKING_DIRECTORY" && tar -xf "$RUNNER_TEMP/project/project.tar" -C "$WORKING_DIRECTORY"
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         repository: ${{ job.workflow_repository }}
@@ -160,6 +169,9 @@ jobs:
     # No cache: this workflow publishes.
     - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       with: { enable-cache: false, version-file: .distropack-builder/.tool-versions }
+    - name: bake the images
+      if: inputs.bake-images
+      run: uv run --project .distropack-builder python .distropack-builder/tests/bake_fixture_images.py --releases
     - id: plan
       uses: ./.distropack-builder/plan
       with:
@@ -246,7 +258,7 @@ jobs:
         state-dir: ${{ steps.downloads.outputs.state-dir }}
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
-        name: distropack-sources-${{ github.run_id }}-${{ github.run_attempt }}-${{ steps.channels.outputs.channel }}
+        name: distropack-sources-${{ steps.key.outputs.key }}
         path: ${{ steps.downloads.outputs.dir }}
         retention-days: 1
         include-hidden-files: true
@@ -266,7 +278,12 @@ jobs:
       with: { persist-credentials: false }
     - if: inputs.project-artifact != ''
       uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-      with: { name: "${{ inputs.project-artifact }}", path: "${{ inputs.working-directory }}" }
+      with: { name: "${{ inputs.project-artifact }}", path: "${{ runner.temp }}/project" }
+    # a tar, as an artifact keeps no file mode
+    - name: the project, from its artifact
+      if: inputs.project-artifact != ''
+      env: { WORKING_DIRECTORY: "${{ inputs.working-directory }}" }
+      run: mkdir -p "$WORKING_DIRECTORY" && tar -xf "$RUNNER_TEMP/project/project.tar" -C "$WORKING_DIRECTORY"
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         repository: ${{ job.workflow_repository }}
@@ -277,7 +294,7 @@ jobs:
       with: { enable-cache: false, version-file: .distropack-builder/.tool-versions }
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
-        name: distropack-sources-${{ github.run_id }}-${{ github.run_attempt }}-${{ needs.plan.outputs.channel }}
+        name: distropack-sources-${{ needs.plan.outputs.key }}
         path: ${{ runner.temp }}/downloads
     - name: bake the images
       if: inputs.bake-images
@@ -330,7 +347,7 @@ jobs:
     - if: success() || failure()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
-        name: distropack-state-${{ github.run_id }}-${{ github.run_attempt }}-${{ needs.plan.outputs.channel }}-${{ matrix.uid }}
+        name: distropack-state-${{ needs.plan.outputs.key }}-${{ matrix.uid }}
         path: ${{ runner.temp }}/kept
         retention-days: 1
         if-no-files-found: ignore
@@ -343,14 +360,19 @@ jobs:
       group: distropack-publish-${{ inputs.state-registry }}
       cancel-in-progress: false
     outputs:
-      site-artifact: ${{ steps.upload.outcome == 'success' && 'github-pages' || '' }}
+      site-artifact: ${{ steps.upload.outcome == 'success' && format('distropack-site-{0}', needs.plan.outputs.key) || '' }}
     steps:
     - if: inputs.project-artifact == ''
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with: { persist-credentials: false }
     - if: inputs.project-artifact != ''
       uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-      with: { name: "${{ inputs.project-artifact }}", path: "${{ inputs.working-directory }}" }
+      with: { name: "${{ inputs.project-artifact }}", path: "${{ runner.temp }}/project" }
+    # a tar, as an artifact keeps no file mode
+    - name: the project, from its artifact
+      if: inputs.project-artifact != ''
+      env: { WORKING_DIRECTORY: "${{ inputs.working-directory }}" }
+      run: mkdir -p "$WORKING_DIRECTORY" && tar -xf "$RUNNER_TEMP/project/project.tar" -C "$WORKING_DIRECTORY"
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         repository: ${{ job.workflow_repository }}
@@ -364,7 +386,7 @@ jobs:
       run: uv run --project .distropack-builder python .distropack-builder/tests/bake_fixture_images.py --releases
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
       with:
-        pattern: distropack-state-${{ github.run_id }}-${{ github.run_attempt }}-${{ needs.plan.outputs.channel }}-*
+        pattern: distropack-state-${{ needs.plan.outputs.key }}-*
         path: ${{ runner.temp }}/kept
         merge-multiple: true
     - name: the states, this run's and the registry's
@@ -444,7 +466,7 @@ jobs:
           "${options[@]}" "$CONFIG"
     - id: upload
       uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
-      with: { path: "${{ runner.temp }}/site" }
+      with: { name: "distropack-site-${{ needs.plan.outputs.key }}", path: "${{ runner.temp }}/site" }
   prune:
     needs: [plan, publish]
     if: >-
