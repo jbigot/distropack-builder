@@ -108,9 +108,9 @@ uv build --all-packages --out-dir /tmp/dist
 .github/scripts/test-installed /tmp/dist wheel   # or sdist
 ```
 
-Nothing is tagged before the initial release (Phase 10 of the modernization plan), which also
-configures the PyPI side: the `pypi` environment of this repository and a trusted publisher per
-package naming this repository, `release.yml` and that environment.
+Nothing is tagged before the initial release (at the end of Phase 15 of the modernization plan),
+which also configures the PyPI side: the `pypi` environment of this repository and a trusted
+publisher per package naming this repository, `release.yml` and that environment.
 
 ## Licensing
 

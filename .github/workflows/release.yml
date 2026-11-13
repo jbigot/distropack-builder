@@ -7,7 +7,7 @@
 # distropack-builder-v<version>) also publishes its package to PyPI, through trusted publishing,
 # once the build reproduces the tag's version. A manual run never publishes: it is the dry run.
 # The PyPI side (the trusted publishers and the `pypi` environment) is configured at the initial
-# release, in Phase 10 of the modernization; nothing is tagged before.
+# release, at the end of Phase 15 of the modernization; nothing is tagged before.
 name: Release
 on:
   push:

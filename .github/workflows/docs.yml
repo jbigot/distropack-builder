@@ -4,7 +4,7 @@
 
 # Builds the versioned documentation site, main and every distropack-builder release, and leaves
 # it as the run's `site` artifact. Nothing is deployed: publishing it to GitHub Pages comes with
-# the initial release, in Phase 10 of the modernization. CI's `docs` job checks the working tree of
+# the initial release, at the end of Phase 15 of the modernization. CI's `docs` job checks the working tree of
 # every push; this one checks that the versions build together.
 name: Docs
 on:
