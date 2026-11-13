@@ -3172,3 +3172,90 @@ def test_site_errors_are_one_line(
     assert result.exit_code == 1
     assert result.exception is None or isinstance(result.exception, SystemExit)
     assert 'error:' in result.output
+
+
+# The upgrade from the repositories' own URLs (Phase 15).
+def test_upgrade_from_published_uses_each_url(
+    run_main: Callable[..., int], cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = built_site(run_main, cli, tmp_path)
+    from distropack_builder import published
+
+    probed: list[str] = []
+    original = published.versions
+
+    def publishing(source: Any, *args: Any, **kwargs: Any) -> published.Versions:
+        if isinstance(source, str):
+            probed.append(source)
+            return {('hello-lib', 'all'): (published.Version('0.9-1', 'c' * 64),)}
+        return original(source, *args, **kwargs)
+
+    monkeypatch.setattr(published, 'versions', publishing)
+    runner = FakeRunner()
+    status, out = check_install(
+        cli, runner, monkeypatch, '--site', str(output), '--upgrade-from-published'
+    )
+    assert status == 0, out
+    assert len(probed) == 2 and len(set(probed)) == 2, probed
+    for url in probed:
+        (call,) = [c for c in runner.calls if url in c.args[-1]]
+        assert ('debian' in call.image) == ('debian' in url)
+    assert 'installed fresh' not in out
+
+
+def test_upgrade_from_published_404_fresh(
+    run_main: Callable[..., int], cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fixture's URLs answer 404: nothing is published yet, a first publication."""
+    output = built_site(run_main, cli, tmp_path)
+    runner = FakeRunner()
+    status, out = check_install(
+        cli, runner, monkeypatch, '--site', str(output), '--upgrade-from-published'
+    )
+    assert status == 0, out
+    assert len(runner.calls) == 2
+    assert all('repo.example.invalid' not in call.args[-1] for call in runner.calls)
+    assert out.count('publishes nothing yet, installed fresh') == 2, out
+
+
+def test_upgrade_from_published_unreachable_fails_row(
+    run_main: Callable[..., int], cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = built_site(run_main, cli, tmp_path)
+    from distropack_builder import published
+
+    original = published.versions
+
+    def unreachable(source: Any, family: Any, *args: Any, **kwargs: Any) -> published.Versions:
+        if isinstance(source, str) and family == 'deb':
+            raise published.PublishedError(f'{source}: connection refused')
+        return original(source, family, *args, **kwargs)
+
+    monkeypatch.setattr(published, 'versions', unreachable)
+    runner = FakeRunner()
+    status, out = check_install(
+        cli, runner, monkeypatch, '--site', str(output), '--upgrade-from-published'
+    )
+    assert status == 1
+    assert 'install check failed: Debian GNU/Linux 13 (Trixie), channel stable' in out
+    assert 'connection refused' in out
+    assert 'install check passed: Fedora 44, channel stable' in out
+    assert [c.image for c in runner.calls] == ['fedora:44']
+
+
+def test_previous_and_upgrade_exclusive(
+    run_main: Callable[..., int], cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = built_site(run_main, cli, tmp_path)
+    status, out = check_install(
+        cli,
+        FakeRunner(),
+        monkeypatch,
+        '--site',
+        str(output),
+        '--previous',
+        'debian=https://old.test/d',
+        '--upgrade-from-published',
+    )
+    assert status == 2
+    assert '--previous and --upgrade-from-published exclude each other' in out

@@ -709,6 +709,14 @@ def make_app(
                 show_default=False,
             ),
         ] = None,
+        upgrade_from_published: Annotated[
+            bool,
+            typer.Option(
+                '--upgrade-from-published',
+                help='Upgrade every repository from its own url instead; install fresh where it'
+                ' publishes nothing yet.',
+            ),
+        ] = False,
         docker_host: Annotated[
             str | None,
             typer.Option(
@@ -725,7 +733,10 @@ def make_app(
         repository as its page says, signatures checked, and installs build.conf's check_install
         packages (default: every binary package). With --previous, it installs from the published
         URL first, then upgrades from the site: no package may be held back nor removed.
+        --upgrade-from-published does the same from each repository's url, of every channel.
         """
+        if previous and upgrade_from_published:
+            _fail(2, ValueError('--previous and --upgrade-from-published exclude each other'))
         urls: dict[str, str] = {}
         for value in previous or []:
             dist_id, separator, target = value.partition('=')
@@ -754,6 +765,8 @@ def make_app(
                 selected,
                 urls,
                 set(channel) if channel else None,
+                upgrade_from_published=upgrade_from_published,
+                notify=typer.echo,
             )
         rows = []
         for (release, name), result in sorted(

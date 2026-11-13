@@ -84,6 +84,7 @@ deployed beside the new site. It needs the signing key, as any publication.
 ```sh
 distropack-build check-install --site site
 distropack-build check-install --site site --previous debian=https://repo.example.org/debian/
+distropack-build check-install --site site --upgrade-from-published
 ```
 
 For every release and channel the site holds, a clean container of the distribution's base image
@@ -100,7 +101,13 @@ does not hold:
   that each package the site holds is installed at the site's version;
 - with `--previous DIST=URL`, it first installs from that published URL, then switches to the site and upgrades: `apt-get --no-remove dist-upgrade`, `dnf
   upgrade` without `--allowerasing`, `zypper update`, and fails when a package would be removed
-  or is left behind.
+  or is left behind;
+- with `--upgrade-from-published` instead, it does the same from each repository's own `url`,
+  every channel's (an rpm snapshot channel's repository too), so that the site about to replace
+  the published one is checked against it; where that URL publishes nothing yet, as on a first
+  publication, it installs fresh and says so, and a URL it cannot read fails that release's check.
+  Use it in a publishing workflow (the reusable workflow does); keep `--previous` for an upgrade
+  from another URL, such as a repository users are moving away from.
 
 Each result is printed, and listed in the GitHub Actions step summary; any failure exits 1. The
 containers and the network are removed however the check ends.

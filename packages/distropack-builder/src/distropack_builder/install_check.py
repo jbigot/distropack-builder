@@ -177,6 +177,21 @@ def _held(
     return held
 
 
+def previous_source(
+    url: str, family: Literal['deb', 'rpm'], release: Release, component: str
+) -> str | None:
+    """url, when it publishes anything of release (and component) to upgrade from; else None.
+
+    A repository or a release published nowhere yet (a 404) is a first publication.
+
+    Raises:
+        published.PublishedError: url could not be read.
+    """
+    with httpx.Client(follow_redirects=True, timeout=60) as client:
+        found = published.versions(url, family, release, component, client)
+    return url if found else None
+
+
 def _release_tag(release: Release) -> str:
     if targets.is_deb(release.distribution):
         return release.codename or release.uid
@@ -225,13 +240,17 @@ def check(
     previous: Mapping[str, str],
     channels: Set[str] | None = None,
     *,
+    upgrade_from_published: bool = False,
+    notify: Callable[[str], None] = lambda _: None,
     network: Callable[[Engine], AbstractContextManager[str]] | None = None,
     sidecar: Callable[..., AbstractContextManager[None]] | None = None,
 ) -> dict[tuple[Release, str], CheckResult]:
     """Install every repository of site, release by release and channel by channel.
 
     previous gives, by distribution id, the published URL to upgrade from; it applies to the
-    distribution's own repository (every deb channel, the rpm release channel).
+    distribution's own repository (every deb channel, the rpm release channel). With
+    upgrade_from_published instead, every repository upgrades from its own url, or installs fresh
+    where that url publishes nothing yet, which notify is told; one it cannot read fails its row.
     """
     network = network or private_network
     sidecar = sidecar or serve
@@ -257,6 +276,20 @@ def check(
                     item.repository.url, item.repository.name, item.repository.description
                 )
                 is_main = item.repository is config.distribs[dist_id].repository
+                upgrade = previous.get(dist_id) if is_main else None
+                if upgrade_from_published:
+                    try:
+                        upgrade = previous_source(
+                            item.repository.url, family, release, item.components[-1]
+                        )
+                    except published.PublishedError as error:
+                        results[(release, item.channel)] = CheckResult(False, str(error))
+                        continue
+                    if upgrade is None:
+                        notify(
+                            f'{release}, channel {item.channel}: {item.repository.url} publishes'
+                            ' nothing yet, installed fresh'
+                        )
                 url = f'http://site:{PORT}/{item.repository.path.as_posix()}'
                 checked = Target(
                     _MANAGERS[target.family],
@@ -264,7 +297,7 @@ def check(
                     url,
                     release,
                     item.components,
-                    previous.get(dist_id) if is_main else None,
+                    upgrade,
                 )
                 prerequisites = target.prerequisites(release.version or '')
                 commands = prerequisites[0][1] if prerequisites else ''
