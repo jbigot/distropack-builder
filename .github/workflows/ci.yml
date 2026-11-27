@@ -20,7 +20,7 @@ jobs:
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with: { persist-credentials: false }
-    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+    - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
       with: { version-file: .tool-versions }
     - run: uv run pre-commit run --all-files --show-diff-on-failure
   unit:
@@ -33,7 +33,7 @@ jobs:
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with: { persist-credentials: false }
-    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+    - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
       with: { version-file: .tool-versions }
     - if: matrix.python != '3.13'
       run: uv run --python "${{ matrix.python }}" pytest
@@ -47,7 +47,7 @@ jobs:
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with: { persist-credentials: false, fetch-depth: 0 }
-    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+    - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
       with: { version-file: .tool-versions }
     - run: uv run --python 3.13 pytest -m packaging
   e2e:
@@ -56,7 +56,7 @@ jobs:
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with: { persist-credentials: false }
-    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+    - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
       with: { version-file: .tool-versions }
     # the images of this checkout, which the registry only has once main publishes them
     - run: uv run --python 3.13 python tests/bake_fixture_images.py
@@ -73,7 +73,7 @@ jobs:
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with: { persist-credentials: false }
-    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+    - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
       with: { version-file: .tool-versions }
     - name: Runtime directory
       if: matrix.engine != 'docker'
@@ -123,6 +123,6 @@ jobs:
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with: { persist-credentials: false }
-    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+    - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
       with: { version-file: .tool-versions }
     - run: uv run --group docs sphinx-build -W --keep-going -n -b html docs "$RUNNER_TEMP/html"
